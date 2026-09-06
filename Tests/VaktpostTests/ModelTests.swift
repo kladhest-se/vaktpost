@@ -90,6 +90,23 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(cert(inDays: -1).health, .bad)
     }
 
+    func testTemperatureFallsBackToConvertingFahrenheit() {
+        // Which of the two fields is populated depends on the sensor driver.
+        let f = SystemStatus(dict(["temp_c": NSNull(), "temp_f": 122.0]))
+        XCTAssertEqual(f.temperature ?? 0, 50, accuracy: 0.01)
+        XCTAssertTrue(f.hasTemperature)
+
+        let c = SystemStatus(dict(["temp_c": 41.5, "temp_f": 106.7]))
+        XCTAssertEqual(c.temperature ?? 0, 41.5, accuracy: 0.01)
+    }
+
+    func testNoSensorIsNilRatherThanZeroDegrees() {
+        // Null must not read as 0 °C, which would look alarming and be wrong.
+        let none = SystemStatus(dict(["temp_c": NSNull(), "temp_f": NSNull()]))
+        XCTAssertNil(none.temperature)
+        XCTAssertFalse(none.hasTemperature)
+    }
+
     func testCertificateWithNoDateIsIdleNotAlarming() {
         let cert = CertificateInfo(dict(["descr": "internal CA"]), isCA: true)
         XCTAssertNil(cert.daysRemaining)
@@ -124,5 +141,45 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(Rate.bits(999), "999 bit/s")
         XCTAssertEqual(Rate.bits(1_000), "1.0 kbit/s")
         XCTAssertEqual(Rate.bits(18_400_000), "18.4 Mbit/s")
+    }
+}
+
+/// Regressions from running against a live firewall, where a screen full of
+/// good data sat under a red "Cannot reach firewall" banner.
+final class ErrorClassificationTests: XCTestCase {
+
+    private func dict(_ raw: [String: Any]) -> JSONDict {
+        let data = try! JSONSerialization.data(withJSONObject: raw)
+        let value = try! JSONDecoder().decode(JSONValue.self, from: data)
+        return JSONDict(value)!
+    }
+
+    func testCancellationIsItsOwnErrorNotATLSFailure() {
+        // Cancellation happens constantly and normally: backgrounding, a
+        // firewall switch, a refresh superseding the one in flight. Reporting
+        // it as "TLS handshake failed" told people to go and change their
+        // certificate settings for a request that was working fine.
+        XCTAssertNotEqual(APIError.cancelled, APIError.tls)
+        XCTAssertEqual(APIError.cancelled.errorDescription, "Cancelled.")
+    }
+
+    func testStandaloneFirewallIsNotReportedAsHavingCARP() {
+        // The endpoint answers on every firewall, so "did it respond" is not
+        // the same question as "does this box do HA".
+        let standalone = CARPStatus(dict(["enable": false, "maintenance_mode": false]))
+        XCTAssertFalse(standalone.isConfigured)
+    }
+
+    func testEnabledCARPIsConfigured() {
+        XCTAssertTrue(CARPStatus(dict(["enable": true])).isConfigured)
+    }
+
+    func testCARPWithVirtualIPsIsConfiguredEvenIfTheFlagIsOff() {
+        // Maintenance mode and a demoted node both leave VIPs present.
+        let withVIPs = CARPStatus(dict([
+            "enable": false,
+            "interfaces": [["interface": "lan", "vhid": "1", "status": "backup"]],
+        ]))
+        XCTAssertTrue(withVIPs.isConfigured)
     }
 }

@@ -57,9 +57,9 @@ private extension SharedSnapshot.Level {
 }
 
 private func widgetPalette(_ scheme: ColorScheme) -> Palette {
-    // The widget cannot read the app's ObservableObject, so it mirrors the
-    // default pairing: Latte in light, Mocha in dark.
-    (scheme == .light ? Flavor.latte : Flavor.mocha).palette
+    // The widget cannot read the app's ObservableObject, so it mirrors what
+    // Auto does: Latte in light, Mocha in dark.
+    (scheme == .light ? Theme.latte : Theme.mocha).palette
 }
 
 // MARK: - Views

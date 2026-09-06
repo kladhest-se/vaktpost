@@ -1,62 +1,103 @@
 import SwiftUI
 
-/// Owns the active flavour and accent, persisted to UserDefaults.
+/// The active theme and accent, persisted to UserDefaults.
 ///
-/// Note: `@AppStorage` is deliberately not used here. It is a `DynamicProperty`
+/// Five choices, one list: Auto plus the four themes. There is no separate
+/// light/dark pairing to configure — Auto is Latte in light and Mocha in dark,
+/// and anything else is that theme regardless of what iOS is doing.
+///
+/// The previous design let you pick a theme for each appearance independently.
+/// It was three controls deep for a decision most people make once, and the two
+/// grids were visually identical so half of every tap landed on the appearance
+/// you weren't currently in.
+///
+/// Note: `@AppStorage` is deliberately not used. It is a `DynamicProperty`
 /// intended for views; inside an `ObservableObject` it does not fire
-/// `objectWillChange`, so the tab tree would not repaint when the flavour
-/// changed. Plain `@Published` properties with a `didSet` write-through do.
+/// `objectWillChange`, so the tab tree would not repaint when the theme
+/// changed. `@Published` with a `didSet` write-through does.
 @MainActor
 final class ThemeManager: ObservableObject {
 
-    enum Mode: String, CaseIterable, Identifiable, Codable {
-        case fixed          // always use `fixedFlavor`
-        case followSystem   // pick `lightFlavor` / `darkFlavor` from system appearance
+    /// Auto, or one theme pinned.
+    enum Selection: Equatable, Hashable, Identifiable {
+        case auto
+        case fixed(Theme)
 
-        var id: String { rawValue }
-        var displayName: String { self == .fixed ? "Fixed" : "Follow system" }
+        var id: String { storageValue }
+
+        var storageValue: String {
+            switch self {
+            case .auto: return "auto"
+            case .fixed(let theme): return theme.rawValue
+            }
+        }
+
+        init(storageValue: String) {
+            if let theme = Theme(rawValue: storageValue) { self = .fixed(theme) }
+            else { self = .auto }
+        }
+
+        var displayName: String {
+            switch self {
+            case .auto: return "Auto"
+            case .fixed(let theme): return theme.displayName
+            }
+        }
+
+        static var all: [Selection] { [.auto] + Theme.allCases.map(Selection.fixed) }
     }
 
     private enum Key {
-        static let mode = "theme.mode"
-        static let fixed = "theme.fixed"
-        static let light = "theme.light"
-        static let dark = "theme.dark"
+        static let selection = "theme.selection"
         static let accent = "theme.accent"
+        // Read once, to carry over a choice made under the old three-control
+        // design rather than silently resetting it.
+        static let legacyMode = "theme.mode"
+        static let legacyFixed = "theme.fixed"
     }
 
-    @Published var mode: Mode { didSet { store(mode.rawValue, Key.mode) } }
-    @Published var fixedFlavor: Flavor { didSet { store(fixedFlavor.rawValue, Key.fixed) } }
-    @Published var lightFlavor: Flavor { didSet { store(lightFlavor.rawValue, Key.light) } }
-    @Published var darkFlavor: Flavor { didSet { store(darkFlavor.rawValue, Key.dark) } }
-    @Published var accent: Accent { didSet { store(accent.rawValue, Key.accent) } }
+    @Published var selection: Selection {
+        didSet { UserDefaults.standard.set(selection.storageValue, forKey: Key.selection) }
+    }
+    @Published var accent: Accent {
+        didSet { UserDefaults.standard.set(accent.rawValue, forKey: Key.accent) }
+    }
 
-    /// Pushed in by the root view so `followSystem` can resolve.
+    /// Pushed in by the root view so Auto can resolve.
     @Published var systemScheme: ColorScheme = .dark
 
     init() {
-        let d = UserDefaults.standard
-        mode = Mode(rawValue: d.string(forKey: Key.mode) ?? "") ?? .followSystem
-        fixedFlavor = Flavor(rawValue: d.string(forKey: Key.fixed) ?? "") ?? .mocha
-        lightFlavor = Flavor(rawValue: d.string(forKey: Key.light) ?? "") ?? .latte
-        darkFlavor = Flavor(rawValue: d.string(forKey: Key.dark) ?? "") ?? .macchiato
-        accent = Accent(rawValue: d.string(forKey: Key.accent) ?? "") ?? .sapphire
-    }
+        let defaults = UserDefaults.standard
+        accent = Accent(rawValue: defaults.string(forKey: Key.accent) ?? "") ?? .sapphire
 
-    private func store(_ value: String, _ key: String) {
-        UserDefaults.standard.set(value, forKey: key)
+        if let stored = defaults.string(forKey: Key.selection) {
+            selection = Selection(storageValue: stored)
+        } else if defaults.string(forKey: Key.legacyMode) == "fixed",
+                  let old = defaults.string(forKey: Key.legacyFixed),
+                  let theme = Theme(rawValue: old) {
+            selection = .fixed(theme)
+        } else {
+            selection = .auto
+        }
     }
 
     // MARK: Resolved theme
 
-    var flavor: Flavor {
-        switch mode {
-        case .fixed: return fixedFlavor
-        case .followSystem: return systemScheme == .light ? lightFlavor : darkFlavor
+    /// The theme in effect right now.
+    var current: Theme {
+        switch selection {
+        case .auto: return systemScheme == .light ? .latte : .mocha
+        case .fixed(let theme): return theme
         }
     }
 
-    var palette: Palette { flavor.palette }
+    /// nil under Auto, so SwiftUI keeps following the system.
+    var preferredColorScheme: ColorScheme? {
+        if case .fixed(let theme) = selection { return theme.colorScheme }
+        return nil
+    }
+
+    var palette: Palette { current.palette }
     var accentColor: Color { accent.color(in: palette) }
 
     // MARK: Semantic roles — views never reach for a raw colour name

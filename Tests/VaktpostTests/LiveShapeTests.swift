@@ -250,3 +250,84 @@ final class LiveShapeTests2: XCTestCase {
         XCTAssertTrue(table.isTruncated)
     }
 }
+
+/// OpenVPN, captured from the same firewall.
+final class OpenVPNShapeTests: XCTestCase {
+
+    private func dict(_ json: String) throws -> JSONDict {
+        let value = try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
+        return try XCTUnwrap(JSONDict(value))
+    }
+
+    private let serverJSON = """
+    {
+      "id": 0,
+      "name": "openvpn1 UDP4:1194",
+      "mode": "server_tls_user",
+      "port": "1194",
+      "vpnid": 1,
+      "mgmt": "server1",
+      "conns": [
+        {"common_name": "ovpn_sphere", "remote_host": "udp4:198.51.100.20:55372",
+         "virtual_addr": "10.253.11.11", "bytes_recv": 1825361100, "bytes_sent": 1610612736},
+        {"common_name": "ovpn_kak-sv-nas001", "remote_host": "udp4:198.51.100.162:43600",
+         "virtual_addr": "10.253.11.10", "bytes_recv": 1010224988, "bytes_sent": 2040109465}
+      ],
+      "routes": [
+        {"parent_id": 0, "id": 0, "common_name": "ovpn_sphere",
+         "remote_host": "udp4:198.51.100.20:55372", "virtual_addr": "10.253.11.11",
+         "last_time": "2026-09-03 11:20:42"},
+        {"parent_id": 0, "id": 1, "common_name": "ovpn_kak-sv-nas001",
+         "remote_host": "udp4:198.51.100.162:43600", "virtual_addr": "10.253.11.10",
+         "last_time": "2026-09-03 00:28:49"}
+      ]
+    }
+    """
+
+    func testServerStateIsDerivedBecauseThereIsNoStatusField() throws {
+        // 26.07 returns no `status` for OpenVPN servers. Reading one produced a
+        // permanent "UNKNOWN" pill — a placeholder presented as a reading.
+        let server = OpenVPNServerStatus(try dict(serverJSON))
+        XCTAssertNil(server.status)
+        XCTAssertEqual(server.connections.count, 2)
+        XCTAssertEqual(server.statusLabel, "2 connected")
+        XCTAssertEqual(server.health, .ok)
+    }
+
+    func testAServerWithNoClientsIsIdleNotBroken() throws {
+        // Normal for a remote-access server nobody is using right now.
+        let server = OpenVPNServerStatus(try dict("""
+        {"id": 1, "name": "openvpn2 UDP4:1195", "mode": "server_tls_user", "vpnid": 2}
+        """))
+        XCTAssertEqual(server.statusLabel, "no clients")
+        XCTAssertEqual(server.health, .idle)
+    }
+
+    func testSingularConnectionReadsNaturally() throws {
+        let server = OpenVPNServerStatus(try dict("""
+        {"name": "openvpn1", "vpnid": 1, "conns": [{"common_name": "a", "remote_host": "x"}]}
+        """))
+        XCTAssertEqual(server.statusLabel, "1 connected")
+    }
+
+    func testRoutesSupplyLastSeenPerClient() throws {
+        let server = OpenVPNServerStatus(try dict(serverJSON))
+        XCTAssertEqual(server.lastSeen(for: "ovpn_sphere"), "2026-09-03 11:20:42")
+        XCTAssertEqual(server.lastSeen(for: "ovpn_kak-sv-nas001"), "2026-09-03 00:28:49")
+        XCTAssertNil(server.lastSeen(for: "nobody"))
+    }
+
+    func testModeLabelIsReadable() throws {
+        let server = OpenVPNServerStatus(try dict(serverJSON))
+        XCTAssertEqual(server.modeLabel, "server tls user")
+    }
+
+    func testAStatusFieldStillWinsWhereOneExists() throws {
+        // The clients endpoint does report one, and older versions may.
+        let client = OpenVPNServerStatus(try dict("""
+        {"name": "vpnclient", "vpnid": 3, "status": "connected"}
+        """))
+        XCTAssertEqual(client.statusLabel, "connected")
+        XCTAssertEqual(client.health, .ok)
+    }
+}

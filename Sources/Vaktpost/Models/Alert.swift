@@ -68,6 +68,16 @@ struct VaktpostAlert: Identifiable {
                                  title: "Swap in use (\(Fmt.pct(swap)))",
                                  detail: "A firewall that swaps is usually one that will drop packets under load."))
             }
+            if let temp = sys.temperature, temp >= 70 {
+                out.append(.init(
+                    severity: temp >= 85 ? .bad : .warn,
+                    category: .system,
+                    title: String(format: "CPU at %.0f °C", temp),
+                    detail: temp >= 85
+                        ? "Thermal throttling territory. Check airflow and fan health."
+                        : "Warm. Worth watching if it climbs."
+                ))
+            }
             if let mbuf = sys.mbufUsage, mbuf >= 80 {
                 out.append(.init(severity: mbuf >= 90 ? .bad : .warn, category: .capacity,
                                  title: "mbuf at \(Fmt.pct(mbuf))",

@@ -16,8 +16,8 @@ extension Color {
 
 // MARK: - Flavour
 
-/// The four Catppuccin flavours. Latte is the light one; the rest are dark.
-enum Flavor: String, CaseIterable, Identifiable, Codable {
+/// The four themes, taken from Catppuccin. Latte is the light one.
+enum Theme: String, CaseIterable, Identifiable, Codable {
     case latte, frappe, macchiato, mocha
 
     var id: String { rawValue }
@@ -40,7 +40,7 @@ enum Flavor: String, CaseIterable, Identifiable, Codable {
 
 // MARK: - Accent
 
-/// Every Catppuccin accent colour, selectable independently of the flavour.
+/// Every Catppuccin accent colour, selectable independently of the theme.
 enum Accent: String, CaseIterable, Identifiable, Codable {
     case rosewater, flamingo, pink, mauve, red, maroon, peach
     case yellow, green, teal, sky, sapphire, blue, lavender
@@ -109,7 +109,7 @@ struct Palette {
         crust     = Color(hex: hexes[25])
     }
 
-    static let all: [Flavor: Palette] = [
+    static let all: [Theme: Palette] = [
         .latte: Palette([
             0xdc8a78, 0xdd7878, 0xea76cb, 0x8839ef, 0xd20f39, 0xe64553, 0xfe640b, 0xdf8e1d,
             0x40a02b, 0x179299, 0x04a5e5, 0x209fb5, 0x1e66f5, 0x7287fd,

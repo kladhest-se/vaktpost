@@ -143,15 +143,29 @@ final class DashboardStore: ObservableObject {
 
         var freshErrors: [Section: String] = [:]
         var fatal: String?
+        var succeeded = 0
+        var succeededSections: Set<Section> = []
 
-        func run(_ section: Section, optional: Bool = false, _ work: () async throws -> Void) async {
+        /// Runs one section and records whether it worked.
+        ///
+        /// `@discardableResult` because most callers only care that it ran;
+        /// the throughput tracker is the exception and needs to know.
+        @discardableResult
+        func run(_ section: Section, optional: Bool = false,
+                 _ work: () async throws -> Void) async -> Bool {
             // Retry a known-missing optional endpoint every 20th cycle only.
-            if optional, missingEndpoints.contains(section), refreshCount % 20 != 0 { return }
+            if optional, missingEndpoints.contains(section), refreshCount % 20 != 0 { return false }
             do {
                 try await work()
                 missingEndpoints.remove(section)
+                succeeded += 1
+                succeededSections.insert(section)
+                return true
             } catch let err as APIError {
                 switch err {
+                case .cancelled:
+                    // Superseded or backgrounded. Say nothing, change nothing.
+                    break
                 case .unauthorized, .noAPIKey, .tls, .notConfigured, .badURL:
                     fatal = err.localizedDescription
                 case .notFound:
@@ -163,17 +177,26 @@ final class DashboardStore: ObservableObject {
             } catch {
                 freshErrors[section] = error.localizedDescription
             }
+            return false
         }
 
         // Core status
         await run(.system) { self.system = try await self.client.systemStatus() }
         await run(.version) { self.version = try await self.client.systemVersion() }
         await run(.states) { self.states = try await self.client.stateTableSize() }
-        await run(.interfaces) { self.interfaces = try await self.client.interfaces() }
+        let interfacesLoaded = await run(.interfaces) {
+            self.interfaces = try await self.client.interfaces()
+        }
         await run(.gateways) { self.gateways = try await self.client.gateways() }
         await run(.services) { self.services = try await self.client.services() }
 
-        throughput.ingest(interfaces)
+        // Only sample when this cycle actually fetched counters.
+        //
+        // On a failed fetch `interfaces` keeps its previous contents, and
+        // ingesting those again produces a delta of zero over the elapsed
+        // interval — a confident "0 bit/s" on a link that was passing traffic
+        // the whole time, plus a notch in the chart that never happened.
+        if interfacesLoaded { throughput.ingest(interfaces) }
 
         // Clients
         await run(.leases) { self.leases = try await self.client.leases() }
@@ -226,7 +249,14 @@ final class DashboardStore: ObservableObject {
         }
 
         errors = freshErrors
-        connectionError = fatal
+
+        // A fatal error only counts when nothing at all got through.
+        //
+        // One unlucky request should not put "Cannot reach firewall" above a
+        // screen full of data fetched seconds ago. A real problem — a rejected
+        // key, a failed pin, an unreachable host — fails every section, so this
+        // still catches it while a transient blip stays invisible.
+        connectionError = succeeded == 0 ? fatal : nil
         lastRefresh = Date()
         alerts = VaktpostAlert.build(from: self)
         publishSnapshot()

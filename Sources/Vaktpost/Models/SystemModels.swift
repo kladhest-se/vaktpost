@@ -13,7 +13,13 @@ struct CARPStatus {
         interfaces = d.list("interfaces", "vips").compactMap { JSONDict($0) }.map(CARPInterface.init)
     }
 
-    var isConfigured: Bool { enabled != nil || !interfaces.isEmpty }
+    /// Whether this firewall does HA at all.
+    ///
+    /// `enabled != nil` was too loose: the endpoint answers on every firewall,
+    /// so a standalone box reported "configured" and the Overview carried a
+    /// permanent "CARP disabled" row telling you about a feature you are not
+    /// using. Something has to actually be switched on or present.
+    var isConfigured: Bool { enabled == true || !interfaces.isEmpty }
 
     var health: Health {
         if maintenanceMode == true { return .warn }

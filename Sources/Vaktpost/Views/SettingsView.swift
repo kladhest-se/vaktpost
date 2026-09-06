@@ -8,8 +8,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 GroupHeading(text: "Appearance")
-                themeModeSlab
-                flavourSlab
+                themeSlab
                 accentSlab
 
                 GroupHeading(text: "About")
@@ -23,60 +22,28 @@ struct SettingsView: View {
         .navigationTitle("Settings")
     }
 
-    private var themeModeSlab: some View {
-        Slab(rail: .info, title: "Theme mode") {
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("", selection: Binding(
-                    get: { theme.mode },
-                    set: { theme.mode = $0 }
-                )) {
-                    ForEach(ThemeManager.Mode.allCases) { Text($0.displayName).tag($0) }
-                }
-                .pickerStyle(.segmented)
 
-                Text(theme.mode == .followSystem
-                     ? "Uses your light flavour in light mode and your dark flavour in dark mode."
-                     : "Always uses the flavour you pick below, whatever iOS is set to.")
+
+
+
+    private var themeSlab: some View {
+        Slab(rail: .info, title: "Theme") {
+            VStack(alignment: .leading, spacing: 10) {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    ForEach(ThemeManager.Selection.all) { option in
+                        ThemeSwatch(
+                            selection: option,
+                            resolved: theme.current,
+                            isSelected: theme.selection == option
+                        )
+                        .onTapGesture { theme.selection = option }
+                    }
+                }
+                Text(theme.selection == .auto
+                     ? "Auto follows iOS: Latte in light, Mocha in dark. Currently \(theme.current.displayName)."
+                     : "\(theme.current.displayName) whatever iOS is set to.")
                     .font(.system(size: 12))
                     .foregroundStyle(theme.labelFaint)
-            }
-        }
-    }
-
-    private var flavourSlab: some View {
-        Slab(rail: .info, title: "Flavour") {
-            VStack(alignment: .leading, spacing: 14) {
-                if theme.mode == .fixed {
-                    flavourGrid(selection: Binding(
-                        get: { theme.fixedFlavor },
-                        set: { theme.fixedFlavor = $0 }
-                    ))
-                } else {
-                    Text("Light appearance")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.labelMuted)
-                    flavourGrid(selection: Binding(
-                        get: { theme.lightFlavor },
-                        set: { theme.lightFlavor = $0 }
-                    ))
-                    Hairline()
-                    Text("Dark appearance")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.labelMuted)
-                    flavourGrid(selection: Binding(
-                        get: { theme.darkFlavor },
-                        set: { theme.darkFlavor = $0 }
-                    ))
-                }
-            }
-        }
-    }
-
-    private func flavourGrid(selection: Binding<Flavor>) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-            ForEach(Flavor.allCases) { flavor in
-                FlavorSwatch(flavor: flavor, isSelected: selection.wrappedValue == flavor)
-                    .onTapGesture { selection.wrappedValue = flavor }
             }
         }
     }
@@ -120,16 +87,29 @@ struct SettingsView: View {
     }
 }
 
-struct FlavorSwatch: View {
+/// One card in the theme grid. Auto renders in whichever theme is currently
+/// resolved, so the card previews what you would actually get.
+struct ThemeSwatch: View {
     @EnvironmentObject private var theme: ThemeManager
-    let flavor: Flavor
+    let selection: ThemeManager.Selection
+    let resolved: Theme
     let isSelected: Bool
 
+    private var previewed: Theme {
+        if case .fixed(let t) = selection { return t }
+        return resolved
+    }
+
     var body: some View {
-        let p = flavor.palette
+        let p = previewed.palette
         return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(flavor.displayName)
+            HStack(spacing: 4) {
+                if case .auto = selection {
+                    Image(systemName: "circle.lefthalf.filled")
+                        .font(.system(size: 11))
+                        .foregroundStyle(p.subtext0)
+                }
+                Text(selection.displayName)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(p.text)
                 Spacer()
@@ -151,7 +131,8 @@ struct FlavorSwatch: View {
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(isSelected ? theme.accentColor : p.surface1, lineWidth: isSelected ? 2 : 1)
+                .strokeBorder(isSelected ? theme.accentColor : p.surface1,
+                              lineWidth: isSelected ? 2 : 1)
         )
     }
 }

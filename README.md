@@ -163,12 +163,11 @@ The REST API package renames model fields between releases, and several status e
 
 ## Theming
 
-`Theme/Catppuccin.swift` carries all four flavours (Latte, Frappé, Macchiato, Mocha) with all 26 named colours each, plus all 14 accents.
+`Theme/Catppuccin.swift` carries all four themes (Latte, Frappé, Macchiato, Mocha) with all 26 named colours each, plus all 14 accents.
 
-Settings offers two modes:
-
-- **Follow system** — pick one flavour for light appearance and one for dark.
-- **Fixed** — one flavour regardless of what iOS is doing.
+Settings offers one list of five: Auto, plus the four themes. Auto is Latte in
+light appearance and Mocha in dark; anything else is pinned regardless of what
+iOS is doing.
 
 Views never reference a raw colour name. They go through semantic roles on `ThemeManager` (`bg`, `card`, `label`, `ok`, `warn`, `bad`, …), so adding a flavour or retuning a role touches one file.
 
@@ -207,6 +206,10 @@ public-web/                    project website (static, no build step)
 
 - API keys are stored in the keychain, one item per firewall keyed by profile UUID, with `kSecAttrAccessibleAfterFirstUnlock`. Never in UserDefaults.
 - Auto-refresh runs only while the app is in the foreground and is cancelled on backgrounding.
+- Temperature is null on most hardware until a thermal sensor module is loaded
+  under **System → Advanced → Miscellaneous → Thermal Sensors**. On Intel
+  hardware that is the Core (coretemp) option; on AMD, amdtemp. Vaktpost reads
+  the field either way and says "no sensor loaded" when it is absent.
 - `NSAllowsArbitraryLoads` is set in Info.plist because firewalls are commonly reached by IP over a self-signed certificate. Remove it if you always connect to a properly-certificated hostname.
 
 ## Website

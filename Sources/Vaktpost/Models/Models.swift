@@ -22,7 +22,16 @@ struct SystemStatus {
         memUsage = d.double("mem_usage", "memory_usage", "mem")
         swapUsage = d.double("swap_usage", "swap")
         diskUsage = d.double("disk_usage", "disk")
-        temperature = d.double("temp_c", "temperature", "temp")
+        // Both fields are reported. Celsius is preferred; Fahrenheit is
+        // converted rather than ignored, since which one is populated varies
+        // with the sensor driver.
+        if let celsius = d.double("temp_c", "temperature", "temp") {
+            temperature = celsius
+        } else if let fahrenheit = d.double("temp_f") {
+            temperature = (fahrenheit - 32) * 5 / 9
+        } else {
+            temperature = nil
+        }
         mbufUsage = d.double("mbuf_usage", "mbuf")
         uptimeSeconds = Self.uptime(d.value("uptime_sec", "uptime_seconds", "uptime"))
 
@@ -79,6 +88,13 @@ struct SystemStatus {
         guard !load.isEmpty else { return "—" }
         return load.map { String(format: "%.2f", $0) }.joined(separator: "  ")
     }
+
+    /// Whether the firewall is reporting a temperature at all.
+    ///
+    /// Null on most hardware until a thermal sensor module is loaded under
+    /// System → Advanced → Miscellaneous. Distinguishing "no sensor" from
+    /// "cold" matters: 0 °C would be alarming and wrong.
+    var hasTemperature: Bool { temperature != nil }
 
     var hardwareDescription: String? {
         var parts: [String] = []

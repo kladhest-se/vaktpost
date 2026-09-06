@@ -7,22 +7,75 @@ struct OpenVPNServerStatus: Identifiable {
     var name: String
     var vpnID: String
     var mode: String?
-    var status: String
+    var port: String?
+    /// Absent from `status/openvpn/servers` on 26.07 — a running server simply
+    /// appears in the list. Kept optional because the clients endpoint does
+    /// report one, and older versions may.
+    var status: String?
     var connections: [OpenVPNConnection]
+    var routes: [OpenVPNRoute]
 
     init(_ d: JSONDict) {
         name = d.string("name", "description", "descr") ?? "OpenVPN"
         vpnID = d.string("vpnid", "id") ?? ""
         mode = d.string("mode")
-        status = (d.string("status") ?? "unknown").lowercased()
+        port = d.string("port")
+        status = d.string("status")
         connections = d.list("conns", "connections").compactMap { JSONDict($0) }.map(OpenVPNConnection.init)
+        routes = d.list("routes").compactMap { JSONDict($0) }.map(OpenVPNRoute.init)
     }
 
+    /// Derived from what the endpoint actually returns.
+    ///
+    /// There is no status field, so the app used to render a permanent
+    /// "UNKNOWN" pill — a placeholder dressed up as a reading. A server with
+    /// clients on it is working; one with none is idle, which is a normal
+    /// state for a remote-access server and not a fault.
     var health: Health {
-        if status.contains("up") || status.contains("server_running") || status.contains("running") { return .ok }
-        if status.contains("connected") { return .ok }
-        if status.contains("down") || status.contains("stopped") { return .bad }
-        return .idle
+        if let status, !status.isEmpty {
+            let s = status.lowercased()
+            if s.contains("up") || s.contains("running") || s.contains("connected") { return .ok }
+            if s.contains("down") || s.contains("stopped") { return .bad }
+            return .idle
+        }
+        return connections.isEmpty ? .idle : .ok
+    }
+
+    var statusLabel: String {
+        if let status, !status.isEmpty { return status }
+        switch connections.count {
+        case 0: return "no clients"
+        case 1: return "1 connected"
+        default: return "\(connections.count) connected"
+        }
+    }
+
+    /// The name already carries the protocol and port ("openvpn1 UDP4:1194"),
+    /// so the trailing slot shows the mode instead of repeating it.
+    var modeLabel: String? {
+        guard let mode, !mode.isEmpty else { return nil }
+        return mode.replacingOccurrences(of: "_", with: " ")
+    }
+
+    func lastSeen(for commonName: String) -> String? {
+        routes.first { $0.commonName == commonName }?.lastTime
+    }
+}
+
+/// A route the server holds for a connected client. Carries `last_time`, which
+/// is the closest thing available to "when did we last hear from this peer".
+struct OpenVPNRoute: Identifiable {
+    var id: String { "\(commonName)-\(virtualAddress ?? "")" }
+    var commonName: String
+    var remoteHost: String?
+    var virtualAddress: String?
+    var lastTime: String?
+
+    init(_ d: JSONDict) {
+        commonName = d.string("common_name", "user_name", "name") ?? ""
+        remoteHost = d.string("remote_host")
+        virtualAddress = d.string("virtual_addr", "virtual_address")
+        lastTime = d.string("last_time")
     }
 }
 

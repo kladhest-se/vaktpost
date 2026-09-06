@@ -53,7 +53,7 @@ struct RootView: View {
             }
         }
         .tint(theme.accentColor)
-        .preferredColorScheme(theme.mode == .fixed ? theme.fixedFlavor.colorScheme : nil)
+        .preferredColorScheme(theme.preferredColorScheme)
         .onAppear {
             theme.systemScheme = systemScheme
             guard store.isConfigured else { return }

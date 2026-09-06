@@ -82,8 +82,54 @@ and the Overview gained a hardware row from `platform` and `cpu_count`.
 verbatim from `curl`. Hand-written fixtures only test the field names their
 author already believed in, which is precisely what failed here.
 
+### Fixed after a second live run
+
+- A cancelled request was reported as a TLS handshake failure. `.cancelled` was
+  in the TLS bucket because a rejected certificate pin does surface that way —
+  but so does every ordinary cancellation: backgrounding, switching firewalls,
+  a refresh superseding the one in flight. The result was "TLS handshake
+  failed. Pin the certificate…" above a dashboard showing data fetched seconds
+  earlier.
+- A fatal connection error now requires that *no* section succeeded. One
+  unlucky request should not put "Cannot reach firewall" over a working screen.
+  A rejected key or failed pin fails everything, so it still surfaces.
+- Throughput no longer samples on a failed interface fetch. `interfaces` keeps
+  its previous contents when the fetch fails, so re-ingesting them produced a
+  zero delta over the elapsed interval — a confident "0 bit/s" on a link
+  passing traffic, and a notch in the chart that never happened.
+- CARP is hidden on firewalls that don't do HA. The endpoint answers
+  everywhere, so `enabled != nil` was true on a standalone box and the Overview
+  carried a permanent "CARP disabled" row about a feature you aren't using.
+- With Follow system, the flavour grid now marks which appearance is in effect.
+  Both grids looked identical, so tapping a swatch in the one you aren't
+  currently in appeared to do nothing.
+
+### Changed
+
+- OpenVPN servers no longer show a fabricated "UNKNOWN" status.
+  `status/openvpn/servers` returns no status field on 26.07 — a running server
+  simply appears in the list — so the pill was a placeholder dressed up as a
+  reading. It now shows what the endpoint actually supports: "2 connected", or
+  "no clients", which is a normal state for a remote-access server rather than
+  a fault. A `status` field is still preferred where one exists, since the
+  clients endpoint reports one.
+- Each connected OpenVPN client now shows "last seen", taken from the server's
+  route table.
+- The theme picker is one list of five: Auto, Latte, Frappé, Macchiato, Mocha.
+  The previous design had a mode toggle plus separate light and dark grids —
+  three controls deep for a decision made once, with two visually identical
+  grids so half of every tap landed on the appearance you weren't in. Auto is
+  Latte in light and Mocha in dark; anything else is pinned. An existing fixed
+  choice carries over. The word "flavour" is gone from the interface; the
+  palettes are still Catppuccin's.
+
 ### Added
 
+- Temperature now converts from `temp_f` when `temp_c` is null, and alerts
+  above 70 °C (bad above 85). The Resources card says "no sensor loaded"
+  rather than leaving a gap — the API returns null until a thermal sensor
+  module is enabled under System → Advanced → Miscellaneous, and that is not
+  the same as a cold firewall.
 - Installed packages under System, with versions and an alert when any has an
   update pending.
 - Blocked hosts under System, read from the `sshguard` and `virusprot` pf

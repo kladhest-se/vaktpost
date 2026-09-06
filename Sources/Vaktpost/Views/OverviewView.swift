@@ -224,6 +224,14 @@ struct OverviewView: View {
                     FieldRow(key: "Load average", value: sys.loadDescription)
                     if let t = sys.temperature {
                         FieldRow(key: "Temperature", value: String(format: "%.1f °C", t))
+                    } else {
+                        // Said once, quietly, rather than left as a gap. The
+                        // API returns null until a thermal sensor module is
+                        // loaded, and there is no way to tell that apart from
+                        // "this box has no sensor" without saying so.
+                        FieldRow(key: "Temperature",
+                                 value: "no sensor loaded",
+                                 mono: false)
                     }
                     if let hardware = sys.hardwareDescription {
                         FieldRow(key: "Hardware", value: hardware, mono: false)

@@ -17,12 +17,12 @@ struct VPNView: View {
 
                 if !store.openvpnServers.isEmpty {
                     GroupHeading(text: "OpenVPN servers")
-                    ForEach(store.openvpnServers) { OpenVPNCard(server: $0, isServer: true) }
+                    ForEach(store.openvpnServers) { OpenVPNCard(server: $0) }
                 }
 
                 if !store.openvpnClients.isEmpty {
                     GroupHeading(text: "OpenVPN clients")
-                    ForEach(store.openvpnClients) { OpenVPNCard(server: $0, isServer: false) }
+                    ForEach(store.openvpnClients) { OpenVPNCard(server: $0) }
                 }
 
                 if !store.ipsecSAs.isEmpty {
@@ -71,20 +71,16 @@ struct VPNView: View {
 struct OpenVPNCard: View {
     @EnvironmentObject private var theme: ThemeManager
     let server: OpenVPNServerStatus
-    let isServer: Bool
 
     var body: some View {
-        Slab(rail: server.health, trailing: server.mode) {
+        Slab(rail: server.health, trailing: server.modeLabel) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
+                HStack(alignment: .firstTextBaseline) {
                     Text(server.name)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(theme.label)
-                    Spacer()
-                    StatusPill(text: server.status, health: server.health)
-                }
-                if isServer {
-                    FieldRow(key: "Connections", value: "\(server.connections.count)")
+                    Spacer(minLength: 8)
+                    StatusPill(text: server.statusLabel, health: server.health)
                 }
                 if !server.connections.isEmpty {
                     Hairline()
@@ -103,12 +99,18 @@ struct OpenVPNCard: View {
                                 Text(conn.remoteHost)
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(theme.labelFaint)
-                                Spacer()
+                                    .lineLimit(1)
+                                Spacer(minLength: 6)
                                 if let rx = conn.bytesReceived, let tx = conn.bytesSent {
                                     Text("↓\(Fmt.bytes(rx))  ↑\(Fmt.bytes(tx))")
                                         .font(.system(size: 11, design: .monospaced))
                                         .foregroundStyle(theme.labelFaint)
                                 }
+                            }
+                            if let seen = server.lastSeen(for: conn.commonName), !seen.isEmpty {
+                                Text("last seen \(seen)")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(theme.labelFaint)
                             }
                         }
                         .padding(.vertical, 2)

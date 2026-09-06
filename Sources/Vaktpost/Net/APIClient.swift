@@ -13,6 +13,9 @@ enum APIError: LocalizedError, Equatable {
     case tls
     case transport(String)
     case decoding
+    /// The request was cancelled — app backgrounded, firewall switched, or a
+    /// refresh superseded. Not a failure, and never shown.
+    case cancelled
 
     var errorDescription: String? {
         switch self {
@@ -26,6 +29,7 @@ enum APIError: LocalizedError, Equatable {
         case .tls: return "TLS handshake failed. Pin the certificate or enable untrusted TLS in Settings."
         case .transport(let m): return m
         case .decoding: return "The response didn't look like the REST API v2 format."
+        case .cancelled: return "Cancelled."
         }
     }
 }
@@ -97,9 +101,24 @@ actor APIClient {
                  .serverCertificateHasBadDate,
                  .serverCertificateHasUnknownRoot,
                  .serverCertificateNotYetValid,
-                 .secureConnectionFailed,
-                 .cancelled:
+                 .secureConnectionFailed:
                 throw APIError.tls
+
+            // Cancellation is not a TLS failure.
+            //
+            // It was in this list originally, on the reasoning that a rejected
+            // pin surfaces as a cancelled task — which it does. But so does
+            // every ordinary cancellation: backgrounding the app, switching
+            // firewalls, a refresh superseding the one in flight. The result
+            // was "TLS handshake failed" on screen while the dashboard sat
+            // there showing perfectly good data it had just fetched.
+            //
+            // A genuinely rejected pin fails every request, so it still
+            // surfaces — as the connection error that appears when nothing
+            // succeeds, rather than one unlucky request poisoning the banner.
+            case .cancelled:
+                throw APIError.cancelled
+
             default:
                 throw APIError.transport(err.localizedDescription)
             }
