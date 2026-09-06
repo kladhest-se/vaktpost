@@ -1,0 +1,34 @@
+// Settings shared by the app and the widget extension.
+//
+// Build settings live here rather than in project.yml so that a value can be
+// read by something other than XcodeGen — the Makefile reads MARKETING_VERSION
+// out of iOS.xcconfig to print "0.1.0 (7)" after a build, and an .xcconfig is
+// a file both a human and an awk one-liner can follow.
+
+CLANG_ENABLE_MODULES = YES
+ENABLE_USER_SCRIPT_SANDBOXING = YES
+DEAD_CODE_STRIPPING = YES
+SWIFT_TREAT_WARNINGS_AS_ERRORS = NO
+GCC_TREAT_WARNINGS_AS_ERRORS = NO
+
+// Swift 5 language mode with minimal concurrency checking, which is below the
+// house default of 6.0 and `complete`.
+//
+// A known debt rather than a preference, and the remaining distance is
+// smaller than it was: `Health.color(_:)` is now `@MainActor` rather than
+// reaching across isolation, which the Xcode 26 toolchain rejects outright
+// even at this setting. What is left is `TrustEvaluator`, which is
+// `@unchecked Sendable` around a hand-rolled lock and would need rewriting
+// before `complete` passes.
+//
+// Note that `minimal` does not mean "no actor checking". Basic isolation
+// violations are diagnosed at every level; the setting governs how much
+// *Sendable* checking happens on top. Raising it will surface more, not
+// different, work.
+SWIFT_VERSION = 5.9
+SWIFT_STRICT_CONCURRENCY = minimal
+
+// No analytics or crash-reporting SDK is linked, so symbols stay local and
+// crashes are triaged from a device log rather than a service.
+SWIFT_OPTIMIZATION_LEVEL[config=Release] = -O
+SWIFT_COMPILATION_MODE[config=Release] = wholemodule

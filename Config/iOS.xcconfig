@@ -1,0 +1,38 @@
+#include "Shared.xcconfig"
+
+IPHONEOS_DEPLOYMENT_TARGET = 17.0
+TARGETED_DEVICE_FAMILY = 1,2
+SUPPORTS_MACCATALYST = NO
+
+// Stated explicitly. An xcconfig applied at project level can leave this empty
+// for the scheme's buildables, which xcodebuild reports as
+//
+//   IDERunDestination: Supported platforms for the buildables in the current
+//   scheme is empty.
+//
+// It is a warning rather than a failure, and it resolves to something workable,
+// but a run destination chosen by fallback is not one worth relying on.
+SUPPORTED_PLATFORMS = iphoneos iphonesimulator
+
+// arm64 only, on device and in the simulator. A generic simulator destination
+// otherwise builds an x86_64 slice that nothing here can run, and `make build`
+// pays for it on every publish check.
+ARCHS[sdk=iphoneos*] = arm64
+ARCHS[sdk=iphonesimulator*] = arm64
+
+// The version people see, and the build behind it.
+//
+// This reads the number of the *next* release from the moment work on it
+// starts, so while 0.2.0 is being built this says 0.2.0 and CHANGELOG.md's top
+// heading says `0.2.0 — Unreleased`. The heading takes a date when the archive
+// goes up. A development build and a released build therefore never share a
+// version, which is the point: a screenshot says which one it came from.
+//
+// Not bumped per build — that is what the build number is for.
+//
+// The 1 below is the fallback for a build started from Xcode rather than from
+// make. It is deliberately not a plausible number: `make build` and
+// `make archive` both override it from the counter in build.number, so a real
+// build never shows 1.
+MARKETING_VERSION = 0.1.0
+CURRENT_PROJECT_VERSION = 1

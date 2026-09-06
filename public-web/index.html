@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en" data-flavor="mocha" data-accent="sapphire">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vaktpost — a read-only pfSense dashboard for iOS</title>
+<meta name="description" content="Vaktpost is an open-source iOS app that watches a pfSense firewall over the REST API. Clients, gateways, VPN tunnels, logs and alerts, in all four Catppuccin flavours. It never writes.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<meta property="og:title" content="Vaktpost">
+<meta property="og:description" content="A read-only iOS dashboard for pfSense. Open source, Catppuccin-themed, never writes.">
+<meta property="og:type" content="website">
+</head>
+<body>
+
+<header class="bar">
+  <div class="wrap bar__inner">
+    <a class="mark" href="#top">
+      <span class="stakes" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+      Vaktpost
+    </a>
+    <div class="picker">
+      <span class="picker__label" id="flavor-label">Flavour</span>
+      <div class="flavors" role="group" aria-labelledby="flavor-label" id="flavors"></div>
+      <span class="picker__label" id="accent-label">Accent</span>
+      <div class="accents" role="group" aria-labelledby="accent-label" id="accents"></div>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+<section class="hero">
+  <div class="wrap hero__grid">
+    <div>
+      <h1>Watch the wall,<br>touch nothing.</h1>
+      <p class="hero__sub">Vaktpost is an iOS app that reads the state of a pfSense firewall — clients, gateways, tunnels, logs — and shows it in a form you can take in from a phone screen. It is open source and free.</p>
+      <p class="hero__etym">The name is Swedish for a sentry post: somewhere you watch the perimeter from and report what you see, without changing anything. That is the whole scope.</p>
+      <div class="actions">
+        <a class="btn btn--solid" href="#setup">Set it up</a>
+        <a class="btn btn--ghost" href="#source">Read the source</a>
+      </div>
+      <p class="needs">Needs pfSense CE or Plus with the community REST API package, and an API key with read privileges. iOS 17 or later.</p>
+    </div>
+
+    <div class="device" role="img" aria-label="A rendering of the Vaktpost overview screen showing a health banner, an uplink throughput chart, CPU and memory meters, and two gateway rows.">
+      <div class="screen">
+        <div class="screen__head">
+          <span class="screen__title">Overview</span>
+          <span class="screen__time">14:02</span>
+        </div>
+
+        <div class="banner">
+          <div class="banner__row">
+            <span class="dot"></span>
+            <span class="banner__text">All monitored paths healthy</span>
+          </div>
+          <div class="banner__meta">fw01 — Stockholm &nbsp; 2.8.1</div>
+        </div>
+
+        <div class="group"><span>UPLINK</span><i></i></div>
+        <div class="slab">
+          <div class="slab__rail" style="background:var(--green)"></div>
+          <div class="slab__body">
+            <div class="slab__label">WAN <b>igb0</b></div>
+            <svg class="spark" viewBox="0 0 240 44" preserveAspectRatio="none" aria-hidden="true">
+              <path d="M0 40 L0 31 L20 26 L40 30 L60 17 L80 22 L100 12 L120 20 L140 9 L160 16 L180 11 L200 21 L220 14 L240 19 L240 44 L0 44 Z"
+                    fill="var(--green)" fill-opacity=".18"/>
+              <path d="M0 31 L20 26 L40 30 L60 17 L80 22 L100 12 L120 20 L140 9 L160 16 L180 11 L200 21 L220 14 L240 19"
+                    fill="none" stroke="var(--green)" stroke-width="1.6" stroke-linejoin="round"/>
+              <path d="M0 39 L20 41 L40 38 L60 40 L80 36 L100 39 L120 35 L140 38 L160 34 L180 37 L200 33 L220 36 L240 34"
+                    fill="none" stroke="var(--sky)" stroke-width="1.6" stroke-linejoin="round"/>
+            </svg>
+            <div class="legend">
+              <div><b style="background:var(--green)"></b><span style="color:var(--text)">18.4 Mbit/s</span></div>
+              <div><b style="background:var(--sky)"></b><span style="color:var(--text)">2.1 Mbit/s</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group"><span>SYSTEM</span><i></i></div>
+        <div class="slab">
+          <div class="slab__rail" style="background:var(--sky)"></div>
+          <div class="slab__body">
+            <div class="slab__label">RESOURCES <b>up 41d 6h</b></div>
+            <div class="meter">
+              <div class="meter__row"><span>CPU</span><b>12%</b></div>
+              <div class="meter__track"><div class="meter__fill" style="width:12%;background:var(--green)"></div></div>
+            </div>
+            <div class="meter">
+              <div class="meter__row"><span>Memory</span><b>38%</b></div>
+              <div class="meter__track"><div class="meter__fill" style="width:38%;background:var(--green)"></div></div>
+            </div>
+            <div class="meter" style="margin-bottom:0">
+              <div class="meter__row"><span>States</span><b>4 102 / 98 000</b></div>
+              <div class="meter__track"><div class="meter__fill" style="width:5%;background:var(--green)"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group"><span>GATEWAYS</span><i></i></div>
+        <div class="slab">
+          <div class="slab__rail" style="background:var(--green)"></div>
+          <div class="slab__body">
+            <div class="gw">
+              <div>
+                <div class="gw__name">WAN_DHCP</div>
+                <div class="gw__stat">8.4 ms &nbsp; 0% loss</div>
+              </div>
+              <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">ONLINE</span>
+            </div>
+          </div>
+        </div>
+        <div class="slab" style="margin-bottom:0">
+          <div class="slab__rail" style="background:var(--yellow)"></div>
+          <div class="slab__body">
+            <div class="gw">
+              <div>
+                <div class="gw__name">VPN_BACKUP</div>
+                <div class="gw__stat">112 ms &nbsp; 6% loss</div>
+              </div>
+              <span class="pill" style="color:var(--yellow);background:color-mix(in srgb,var(--yellow) 18%,transparent)">HIGH LOSS</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section--sunken" id="features">
+  <div class="wrap">
+    <h2>What it shows</h2>
+    <p class="lede">Five tabs. Everything is assembled from what the REST API already exposes, with the joins and thresholds done on the phone.</p>
+
+    <div class="features">
+      <div class="feature">
+        <h3>Clients, in one list</h3>
+        <p>pfSense keeps DHCP leases, the ARP table and static mappings as three unrelated views. Vaktpost joins them on MAC into one entry per device, so you can ask whether the printer is online without checking three screens. Tap through for the filter-log lines mentioning that address.</p>
+      </div>
+      <div class="feature">
+        <h3>Throughput over time</h3>
+        <p>The API reports lifetime byte counters, not rates. Vaktpost differences consecutive samples to get bits per second and keeps about half an hour of history per interface. A counter reset starts a fresh baseline instead of drawing a spike.</p>
+      </div>
+      <div class="feature">
+        <h3>Alerts worth waking up for</h3>
+        <p>Gateways down or lossy, services stopped, disk and memory pressure, the state table filling, certificates about to expire, CARP left in maintenance mode, IPsec tunnels down. Derived on device, so the thresholds change without touching the firewall.</p>
+      </div>
+      <div class="feature">
+        <h3>Tunnels</h3>
+        <p>OpenVPN servers and their connected peers, IPsec security associations with their child SAs, WireGuard tunnels with per-peer handshake state and transfer counts.</p>
+      </div>
+      <div class="feature">
+        <h3>Rules you can actually read</h3>
+        <p>Firewall rules filtered by interface, NAT port forwards, and aliases with their contents expanded. Searchable by description, address or port. Read-only, like everything else.</p>
+      </div>
+      <div class="feature">
+        <h3>More than one firewall</h3>
+        <p>Each has its own key in the keychain, its own TLS settings and its own refresh interval. Switch from a chip row on the overview. Useful if you look after several.</p>
+      </div>
+      <div class="feature">
+        <h3>All four flavours</h3>
+        <p>Latte, Frappé, Macchiato and Mocha, with all fourteen Catppuccin accents. Pick one flavour for light appearance and another for dark, or pin one regardless of what iOS is doing. The picker at the top of this page is the same set.</p>
+      </div>
+      <div class="feature">
+        <h3>A home screen widget</h3>
+        <p>Small and medium. Health, gateway latency, interfaces up and current uplink rate, with the age of the reading shown so a stale card is obvious.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="readonly">
+  <div class="wrap">
+    <h2>It never writes</h2>
+    <div class="readonly">
+      <p>There is no <code>POST</code>, <code>PATCH</code>, <code>PUT</code> or <code>DELETE</code> anywhere in the client. Not disabled behind a setting — absent from the code. The API key you give it only needs read privileges, and if you scope it that way, the app physically cannot do anything else.</p>
+      <p>Keys live in the iOS keychain, one per firewall. They are never written to preferences, never sent anywhere but your own firewall, and never leave the device.</p>
+    </div>
+  </div>
+</section>
+
+<section class="section--sunken" id="setup">
+  <div class="wrap">
+    <h2>Setting it up</h2>
+    <p class="lede">pfSense has no REST API of its own, so this depends on the community package. Four steps on the firewall, one in the app.</p>
+    <ol class="steps">
+      <li><p>Install <code>pfSense-pkg-RESTAPI</code> on the firewall. The project documents the install at <a href="https://pfrest.org">pfrest.org</a>.</p></li>
+      <li><p>Turn on key authentication under <strong>System → REST API → Settings</strong>.</p></li>
+      <li><p>Create a key under <strong>System → REST API → Keys</strong>, tied to a user with read privileges.</p></li>
+      <li><p>Open Vaktpost, enter the firewall address and paste the key.</p></li>
+      <li><p>Pin the certificate. pfSense ships a self-signed one, so connect once with untrusted TLS allowed, then tap <strong>Pin last seen certificate</strong> in the firewall's settings. After that the connection is accepted only if that exact certificate is presented. Re-pin when you renew it.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section id="endpoints">
+  <div class="wrap">
+    <h2>What it reads</h2>
+    <p class="lede">Every call is a <code>GET</code> under <code>/api/v2</code>. Sections fail independently: a package you have not installed greys out its own card rather than the screen.</p>
+    <table>
+      <thead><tr><th>Screen</th><th>Endpoints</th></tr></thead>
+      <tbody>
+        <tr><td>Overview</td><td><code>status/system</code>, <code>system/version</code>, <code>firewall/states/size</code>, <code>status/gateways</code>, <code>status/services</code></td></tr>
+        <tr><td>Clients</td><td><code>status/dhcp_server/leases</code>, <code>diagnostics/arp_table</code>, <code>services/dhcp_server/static_mappings</code></td></tr>
+        <tr><td>Network</td><td><code>status/interfaces</code></td></tr>
+        <tr><td>Logs</td><td><code>status/logs/firewall</code>, <code>status/logs/system</code></td></tr>
+        <tr><td>VPN</td><td><code>status/openvpn/servers</code>, <code>status/ipsec/sas</code>, <code>status/wireguard/tunnels</code>, <code>status/wireguard/peers</code></td></tr>
+        <tr><td>Firewall</td><td><code>firewall/rules</code>, <code>firewall/aliases</code>, <code>firewall/nat/port_forwards</code></td></tr>
+        <tr><td>System</td><td><code>status/carp</code>, <code>diagnostics/config_history/revisions</code>, <code>system/certificates</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section--sunken" id="limits">
+  <div class="wrap">
+    <h2>What it can't do</h2>
+    <p class="lede">Worth knowing before you install it rather than after.</p>
+    <div class="limits">
+      <div class="limit">
+        <h3>No push notifications</h3>
+        <p>Alerts are computed when the app refreshes. Without a server of your own there is nothing to send a push, so the widget only advances while the app is open or iOS grants a background slot. If you need to know the moment a WAN link drops, you need a monitoring host, not a phone app.</p>
+      </div>
+      <div class="limit">
+        <h3>No traffic analysis</h3>
+        <p>pfSense has no DPI and the REST API exposes no per-client traffic accounting, so there is no top-talkers view of the kind a UniFi gateway gives you.</p>
+      </div>
+      <div class="limit">
+        <h3>No IDS or IPS view</h3>
+        <p>Suricata, Snort and pfBlockerNG have no endpoints in the REST API package, so their alerts cannot be read. Absent by necessity, not oversight.</p>
+      </div>
+      <div class="limit">
+        <h3>No changes, ever</h3>
+        <p>You cannot restart a service, toggle a rule or reboot the box from here. That is a design decision, not a missing feature.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="source">
+  <div class="wrap">
+    <h2>Building it</h2>
+    <p>The project is SwiftUI, targets iOS 17, and uses <a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a> so there is no <code>.xcodeproj</code> in version control. Clone it, run <code>make project</code>, set your development team, and build. The widget is a second target and needs an App Group, which is declared in the entitlements files.</p>
+    <p>The Catppuccin palettes are used under their MIT licence. Everything else — the layout, the design language, the code — is original to this project.</p>
+    <div class="actions" style="margin-top:1.6rem">
+      <a class="btn btn--solid" href="#">Source on GitHub</a>
+      <a class="btn btn--ghost" href="https://pfrest.org">REST API package docs</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Vaktpost is not affiliated with Netgate, with the pfSense REST API package, or with the Catppuccin project. pfSense is a trademark of Netgate.</p>
+    <p>Made in Stockholm.</p>
+  </div>
+</footer>
+
+<script src="theme.js"></script>
+</body>
+</html>

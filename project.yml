@@ -1,0 +1,124 @@
+name: Vaktpost
+options:
+  bundleIdPrefix: se.kladhest
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+# Build settings live in Config/*.xcconfig, not here, so the Makefile can read
+# MARKETING_VERSION out of a file rather than parsing this one.
+configFiles:
+  Debug: Config/iOS.xcconfig
+  Release: Config/iOS.xcconfig
+
+settings:
+  base:
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  Vaktpost:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/Vaktpost
+    dependencies:
+      - target: VaktpostWidget
+        embed: true
+    configFiles:
+      Debug: Config/iOS.xcconfig
+      Release: Config/iOS.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: se.kladhest.vaktpost
+        PRODUCT_NAME: Vaktpost
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        # The checked-in Info.plist and entitlements, used as written.
+        #
+        # NOT XcodeGen's `info:` and `entitlements:` keys. Those *generate* the
+        # files they point at, so a hand-written one is silently overwritten on
+        # every `xcodegen` run — the plist loses UILaunchScreen and the ATS
+        # exception, and the entitlements become an empty dict, taking the App
+        # Group with them. The symptom is not a build error: the app builds,
+        # then the simulator refuses to install it because the widget's
+        # NSExtension dictionary is gone.
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Vaktpost.entitlements
+
+  VaktpostTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/VaktpostTests
+    dependencies:
+      - target: Vaktpost
+    configFiles:
+      Debug: Config/iOS.xcconfig
+      Release: Config/iOS.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: se.kladhest.vaktpost.tests
+        PRODUCT_NAME: VaktpostTests
+        GENERATE_INFOPLIST_FILE: YES
+    # TEST_HOST and BUNDLE_LOADER are deliberately not set here. XcodeGen
+    # writes both when a unit-test target depends on an application target,
+    # and they have to be right for `@testable import Vaktpost` to resolve —
+    # the tests link against the app's module, not a copy of its sources.
+    #
+    # The cost is that `make test` installs and launches the app on a
+    # simulator even though every test here is a pure function. That is why
+    # the publish check runs `make build` instead.
+
+  VaktpostWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/VaktpostWidget
+      # Shared with the app rather than duplicated: the widget needs the
+      # snapshot type and the palettes, nothing else.
+      - path: Sources/Vaktpost/Shared/SharedSnapshot.swift
+      - path: Sources/Vaktpost/Theme/Catppuccin.swift
+    configFiles:
+      Debug: Config/iOS.xcconfig
+      Release: Config/iOS.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: se.kladhest.vaktpost.widget
+        PRODUCT_NAME: VaktpostWidget
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        # Written by hand, not generated — see the note on the app target. The
+        # NSExtension dictionary in this plist is what makes the bundle a
+        # widget; without it the install fails with "extensionDictionary must
+        # be set in placeholder attributes".
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Resources/WidgetInfo.plist
+        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/VaktpostWidget.entitlements
+
+# Declared rather than left to Xcode.
+#
+# Without a `schemes:` block XcodeGen writes no scheme and Xcode invents a
+# non-shared one on first open. That one has no test action, so `make test`
+# fails with "Scheme Vaktpost is not currently configured for the test action"
+# on a machine that has never opened the project — which is every CI runner.
+schemes:
+  Vaktpost:
+    build:
+      targets:
+        Vaktpost: all
+        VaktpostTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - VaktpostTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
