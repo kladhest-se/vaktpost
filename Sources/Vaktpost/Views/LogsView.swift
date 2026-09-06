@@ -5,7 +5,8 @@ struct LogsView: View {
     @EnvironmentObject private var store: DashboardStore
 
     enum Source: String, CaseIterable, Identifiable {
-        case firewall = "Firewall", system = "System"
+        case firewall = "Filter", system = "System", auth = "Auth"
+        case dhcp = "DHCP", openvpn = "VPN"
         var id: String { rawValue }
     }
 
@@ -19,8 +20,15 @@ struct LogsView: View {
     @State private var query = ""
 
     private var lines: [LogLine] {
-        var list = source == .firewall ? store.firewallLog : store.systemLog
-        if source == .firewall {
+        var list: [LogLine]
+        switch source {
+        case .firewall: list = store.firewallLog
+        case .system:   list = store.systemLog
+        case .auth:     list = store.authLog
+        case .dhcp:     list = store.dhcpLog
+        case .openvpn:  list = store.openvpnLog
+        }
+        if showsActionFilter {
             switch action {
             case .all: break
             case .blocked: list = list.filter { $0.health == .bad }
@@ -33,8 +41,18 @@ struct LogsView: View {
     }
 
     private var errorKey: DashboardStore.Section {
-        source == .firewall ? .firewallLog : .systemLog
+        switch source {
+        case .firewall: return .firewallLog
+        case .system:   return .systemLog
+        case .auth:     return .authLog
+        case .dhcp:     return .dhcpLog
+        case .openvpn:  return .openvpnLog
+        }
     }
+
+    /// Only the filter log carries a pass/block action, so the second picker
+    /// would be four inert buttons on the other four sources.
+    private var showsActionFilter: Bool { source == .firewall }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,7 +62,7 @@ struct LogsView: View {
                 }
                 .pickerStyle(.segmented)
 
-                if source == .firewall {
+                if showsActionFilter {
                     Picker("", selection: $action) {
                         ForEach(ActionFilter.allCases) { Text($0.rawValue).tag($0) }
                     }
@@ -60,8 +78,13 @@ struct LogsView: View {
                         Notice(symbol: "exclamationmark.triangle",
                                title: "Log unavailable", detail: err, health: .warn)
                     } else if lines.isEmpty {
-                        Notice(symbol: "doc.text.magnifyingglass",
-                               title: query.isEmpty ? "No log lines" : "No matches")
+                        Notice(
+                            symbol: "doc.text.magnifyingglass",
+                            title: query.isEmpty ? "No log lines" : "No matches",
+                            detail: query.isEmpty && (source == .dhcp || source == .openvpn)
+                                ? "This log is empty when the service isn't running."
+                                : nil
+                        )
                     } else {
                         ForEach(lines) { LogRow(line: $0) }
                     }

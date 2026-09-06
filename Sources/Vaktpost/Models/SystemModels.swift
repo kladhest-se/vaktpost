@@ -133,3 +133,70 @@ struct CertificateInfo: Identifiable {
         return .ok
     }
 }
+
+// MARK: - Packages
+
+struct PackageInfo: Identifiable {
+    var id: String { name }
+    var name: String
+    var shortName: String
+    var descr: String?
+    var installedVersion: String?
+    var latestVersion: String?
+    var updateAvailable: Bool
+
+    init(_ d: JSONDict) {
+        name = d.string("name") ?? "—"
+        shortName = d.string("shortname") ?? name
+            .replacingOccurrences(of: "pfSense-pkg-", with: "")
+        // Descriptions carry hard line breaks from the package manifest.
+        descr = d.string("descr", "description")?
+            .replacingOccurrences(of: "\n", with: " ")
+        installedVersion = d.string("installed_version")
+        latestVersion = d.string("latest_version")
+        updateAvailable = d.bool("update_available") ?? false
+    }
+
+    var health: Health { updateAvailable ? .warn : .ok }
+
+    var versionLine: String {
+        guard let installed = installedVersion else { return "—" }
+        if updateAvailable, let latest = latestVersion, latest != installed {
+            return "\(installed) → \(latest)"
+        }
+        return installed
+    }
+}
+
+// MARK: - pf tables
+
+/// A pf table and its contents (`diagnostics/tables`).
+///
+/// Interesting ones: `sshguard` holds addresses Login Protection has blocked,
+/// and `virusprot` holds those blocked by packages. The rest are the alias and
+/// interface-network tables pf builds for itself.
+struct FirewallTable: Identifiable {
+    var id: String { name }
+    var name: String
+    var entries: [String]
+    /// The real count, which may exceed what is retained below.
+    var entryCount: Int
+
+    /// Entries are capped because `bogons` runs to thousands of rows and there
+    /// is no reason to hold them in memory on a phone. The count stays honest.
+    private static let retain = 200
+
+    init(_ d: JSONDict) {
+        name = d.string("name", "id") ?? "—"
+        let all = d.list("entries").compactMap { $0.stringValue }
+        entryCount = all.count
+        entries = Array(all.prefix(Self.retain))
+    }
+
+    var isTruncated: Bool { entryCount > entries.count }
+
+    /// The tables worth showing a person, in the order they matter.
+    static let notable = ["sshguard", "virusprot", "snort2c"]
+
+    var isNotable: Bool { Self.notable.contains(name.lowercased()) }
+}

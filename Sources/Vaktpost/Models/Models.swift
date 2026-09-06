@@ -11,6 +11,11 @@ struct SystemStatus {
     var uptimeSeconds: Int?
     var load: [Double]           // 1/5/15 min
     var mbufUsage: Double?       // 0...100
+    var platform: String?
+    var cpuModel: String?
+    var cpuCount: Int?
+    var serial: String?
+    var biosVersion: String?
 
     init(_ d: JSONDict) {
         cpuUsage = d.double("cpu_usage", "cpu", "cpu_load")
@@ -18,17 +23,68 @@ struct SystemStatus {
         swapUsage = d.double("swap_usage", "swap")
         diskUsage = d.double("disk_usage", "disk")
         temperature = d.double("temp_c", "temperature", "temp")
-        uptimeSeconds = d.int("uptime_sec", "uptime_seconds", "uptime")
         mbufUsage = d.double("mbuf_usage", "mbuf")
+        uptimeSeconds = Self.uptime(d.value("uptime_sec", "uptime_seconds", "uptime"))
 
-        // `load_avg` may be a list of numbers or a list of strings.
-        let raw = d.list("load_avg", "load_average", "loadavg")
-        load = raw.compactMap { $0.doubleValue }
+        platform = d.string("platform")
+        cpuModel = d.string("cpu_model")
+        cpuCount = d.int("cpu_count")
+        serial = d.string("serial")
+        biosVersion = d.string("bios_version")
+
+        load = d.list("cpu_load_avg", "load_avg", "load_average", "loadavg")
+            .compactMap { $0.doubleValue }
+    }
+
+    /// Uptime, from either a count of seconds or pfSense's English phrasing.
+    ///
+    /// `status/system` returns "5 Days 01 Hour 37 Minutes 40 Seconds", not a
+    /// number. Reading that with a plain integer conversion takes the leading
+    /// 5 and stops, so the dashboard showed "up 0m" on a box that had been up
+    /// for most of a week — wrong in the least suspicious way possible, since
+    /// a freshly rebooted firewall looks exactly like that.
+    ///
+    /// Both shapes are accepted because the field is a plain number on some
+    /// versions.
+    static func uptime(_ value: JSONValue?) -> Int? {
+        guard let value else { return nil }
+        if case .number(let n) = value { return Int(n) }
+        guard let text = value.stringValue else { return nil }
+        if let plain = Int(text) { return plain }
+
+        var total = 0
+        var pending: Double?
+        var matchedAUnit = false
+
+        for token in text.split(whereSeparator: { $0 == " " || $0 == "," }) {
+            if let number = Double(token) { pending = number; continue }
+            guard let number = pending else { continue }
+            pending = nil
+
+            let unit = token.lowercased()
+            let seconds: Int
+            if unit.hasPrefix("day") { seconds = 86_400 }
+            else if unit.hasPrefix("hour") || unit.hasPrefix("hr") { seconds = 3_600 }
+            else if unit.hasPrefix("min") { seconds = 60 }
+            else if unit.hasPrefix("sec") { seconds = 1 }
+            else { continue }
+
+            total += Int(number) * seconds
+            matchedAUnit = true
+        }
+        return matchedAUnit ? total : nil
     }
 
     var loadDescription: String {
         guard !load.isEmpty else { return "—" }
         return load.map { String(format: "%.2f", $0) }.joined(separator: "  ")
+    }
+
+    var hardwareDescription: String? {
+        var parts: [String] = []
+        if let platform, !platform.isEmpty { parts.append(platform) }
+        if let cpuCount { parts.append("\(cpuCount) cores") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 
@@ -52,13 +108,25 @@ struct StateTableSize {
     var defaultMaximum: Int?
 
     init(_ d: JSONDict) {
-        current = d.int("current_states", "current", "states")
-        maximum = d.int("maximum_states", "maximum", "max")
-        defaultMaximum = d.int("default_maximum_states")
+        // No underscores in the v2 field names — `currentstates`, not
+        // `current_states`. With only the underscored spellings listed, every
+        // value read as nil and the card showed "Current states 0" on a
+        // firewall holding eleven thousand of them.
+        current = d.int("currentstates", "current_states", "current", "states")
+        maximum = d.int("maximumstates", "maximum_states", "maximum", "max")
+        defaultMaximum = d.int("defaultmaximumstates", "default_maximum_states")
     }
 
+    /// `maximumstates` is null unless somebody has overridden the limit, so the
+    /// number actually being enforced is the default. Using only the explicit
+    /// maximum meant no denominator and therefore no meter on a stock box —
+    /// which is every box.
+    var effectiveMaximum: Int? { maximum ?? defaultMaximum }
+
+    var isDefaultLimit: Bool { maximum == nil && defaultMaximum != nil }
+
     var fraction: Double? {
-        guard let c = current, let m = maximum, m > 0 else { return nil }
+        guard let c = current, let m = effectiveMaximum, m > 0 else { return nil }
         return Double(c) / Double(m)
     }
 }
@@ -76,6 +144,8 @@ struct InterfaceStat: Identifiable {
     var ipv6: String?
     var mac: String?
     var media: String?
+    var mtu: String?
+    var gateway: String?
     var inBytes: Double?
     var outBytes: Double?
     var inPackets: Double?
@@ -85,15 +155,20 @@ struct InterfaceStat: Identifiable {
     var collisions: Double?
 
     init(_ d: JSONDict) {
-        name = d.string("name", "descr", "description") ?? d.string("hwif", "if") ?? "—"
+        // `descr` is what the administrator called it ("WAN_1"); `name` is
+        // pfSense's internal handle ("wan"). The description is the one worth
+        // showing, and the one that matches the webConfigurator.
+        name = d.string("descr", "description") ?? d.string("name") ?? d.string("hwif", "if") ?? "—"
         device = d.string("hwif", "if", "device", "interface") ?? "—"
         status = (d.string("status", "linkstate") ?? "unknown").lowercased()
         enabled = d.bool("enable", "enabled")
         ipv4 = d.string("ipaddr", "ip_address", "ipv4")
-        subnetv4 = d.string("subnet", "subnetbits", "subnet_bits")
+        subnetv4 = Self.prefixLength(d.string("subnet", "subnetbits", "subnet_bits"))
         ipv6 = d.string("ipaddrv6", "ipv6")
         mac = d.string("macaddr", "mac", "mac_address")
-        media = d.string("media", "mediaopt")
+        media = d.string("media", "mediaopt")?.trimmingCharacters(in: .whitespaces)
+        mtu = d.string("mtu")
+        gateway = d.string("gateway")
         inBytes = d.double("inbytes", "in_bytes", "bytes_in")
         outBytes = d.double("outbytes", "out_bytes", "bytes_out")
         inPackets = d.double("inpkts", "in_packets", "packets_in")
@@ -103,12 +178,31 @@ struct InterfaceStat: Identifiable {
         collisions = d.double("collisions")
     }
 
+    /// Renders a subnet as a prefix length whichever way it arrives.
+    ///
+    /// `status/interfaces` returns a dotted netmask ("255.255.255.224") where
+    /// the configuration endpoints return prefix bits ("27"). Concatenating
+    /// blindly produced "178.174.216.246/255.255.255.224", which is not a
+    /// notation anybody uses.
+    static func prefixLength(_ subnet: String?) -> String? {
+        guard let subnet, !subnet.isEmpty else { return nil }
+        guard subnet.contains(".") else { return subnet }
+        let octets = subnet.split(separator: ".").compactMap { UInt8($0) }
+        guard octets.count == 4 else { return subnet }
+        return String(octets.reduce(0) { $0 + $1.nonzeroBitCount })
+    }
+
     var isUp: Bool { status.contains("up") || status == "active" }
 
+    /// Link state decides this, not the `enable` flag.
+    ///
+    /// A live WAN carrying traffic reports `"enable": false` — that field
+    /// tracks something other than administrative state, and treating it as
+    /// authoritative greyed out a working uplink.
     var health: Health {
-        if enabled == false { return .idle }
         if isUp { return .ok }
         if status.contains("no carrier") { return .warn }
+        if enabled == false { return .idle }
         return .bad
     }
 
@@ -251,7 +345,7 @@ struct ARPEntry: Identifiable {
 // MARK: - Logs
 
 struct LogLine: Identifiable {
-    enum Kind { case firewall, system }
+    enum Kind { case firewall, system, auth, dhcp, openvpn }
 
     let id = UUID()
     var kind: Kind

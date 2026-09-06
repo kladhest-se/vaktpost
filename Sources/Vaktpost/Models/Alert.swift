@@ -88,6 +88,18 @@ struct VaktpostAlert: Identifiable {
                              detail: "Running \(store.version?.current ?? "?"), \(latest) is available."))
         }
 
+        let stale = store.packagesNeedingUpdate
+        if !stale.isEmpty {
+            out.append(.init(
+                severity: .warn,
+                category: .update,
+                title: stale.count == 1
+                    ? "\(stale[0].shortName) has an update"
+                    : "\(stale.count) packages have updates",
+                detail: stale.map(\.shortName).sorted().joined(separator: ", ")
+            ))
+        }
+
         for cert in store.certificates where cert.health == .bad || cert.health == .warn {
             let days = cert.daysRemaining ?? 0
             out.append(.init(

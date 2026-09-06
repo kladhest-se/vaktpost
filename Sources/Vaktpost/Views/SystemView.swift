@@ -13,6 +13,12 @@ struct SystemView: View {
                 GroupHeading(text: "Certificates")
                 certificatesSlab
 
+                GroupHeading(text: "Blocked hosts")
+                blockedSlab
+
+                GroupHeading(text: "Packages")
+                packagesSlab
+
                 GroupHeading(text: "Config history")
                 configHistorySlab
             }
@@ -21,7 +27,11 @@ struct SystemView: View {
             .padding(.bottom, 28)
         }
         .background(theme.bg.ignoresSafeArea())
-        .refreshable { await store.refresh() }
+        .refreshable {
+            await store.refresh()
+            await store.loadTables()
+        }
+        .task { await store.loadTables() }
         .navigationTitle("System")
     }
 
@@ -58,6 +68,92 @@ struct SystemView: View {
                 Text(store.errors[.carp] ?? "CARP is not configured on this firewall.")
                     .font(.system(size: 12))
                     .foregroundStyle(theme.labelMuted)
+            }
+        }
+    }
+
+    /// Addresses Login Protection and friends are currently blocking.
+    ///
+    /// Useful mostly when the person blocked is you: a few failed API attempts
+    /// will put your own workstation in `sshguard`, and the symptom is a
+    /// connection that times out rather than one that says why.
+    @ViewBuilder
+    private var blockedSlab: some View {
+        if store.isLoadingTables && store.tables.isEmpty {
+            Slab(rail: .idle) {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Reading pf tables…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.labelMuted)
+                }
+            }
+        } else if let err = store.errors[.tables] {
+            Slab(rail: .warn) {
+                Text(err)
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.labelMuted)
+            }
+        } else if store.blockedHosts.isEmpty {
+            Slab(rail: .ok) {
+                Text("Nothing is currently blocked.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.labelMuted)
+            }
+        } else {
+            ForEach(store.blockedHosts) { table in
+                Slab(rail: .warn, title: table.name, trailing: "\(table.entryCount)") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(table.entries.prefix(25), id: \.self) { entry in
+                            Text(entry)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(theme.label)
+                                .textSelection(.enabled)
+                        }
+                        if table.entryCount > 25 {
+                            Text("+\(table.entryCount - 25) more")
+                                .font(.system(size: 11))
+                                .foregroundStyle(theme.labelFaint)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var packagesSlab: some View {
+        if store.packages.isEmpty {
+            Slab(rail: .idle) {
+                Text(store.errors[.packages] ?? "No packages installed.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.labelMuted)
+            }
+        } else {
+            let sorted = store.packages.sorted {
+                if $0.updateAvailable != $1.updateAvailable { return $0.updateAvailable }
+                return $0.shortName.localizedCaseInsensitiveCompare($1.shortName) == .orderedAscending
+            }
+            ForEach(sorted) { pkg in
+                Slab(rail: pkg.health) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(pkg.shortName)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(theme.label)
+                            Spacer()
+                            Text(pkg.versionLine)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(pkg.updateAvailable ? theme.warn : theme.labelMuted)
+                        }
+                        if let d = pkg.descr, !d.isEmpty {
+                            Text(d)
+                                .font(.system(size: 11))
+                                .foregroundStyle(theme.labelFaint)
+                                .lineLimit(2)
+                        }
+                    }
+                }
             }
         }
     }

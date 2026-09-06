@@ -54,7 +54,57 @@ rather than a list of changes.
   `@MainActor`, which costs nothing because every caller is a SwiftUI view and
   `View` is itself main-actor isolated.
 
+### Fixed against a live firewall
+
+First run against real hardware (pfSense Plus 26.07). Five field-name guesses
+were wrong, and every one failed by rendering a plausible zero rather than an
+error — which is the worst way for a dashboard to be wrong:
+
+- Uptime is `"5 Days 01 Hour 37 Minutes 40 Seconds"`, not a count of seconds.
+  Reading it as an integer took the leading 5 and stopped, so a box up for five
+  days showed "up 0m".
+- Load average is `cpu_load_avg`. None of the three names tried existed, so the
+  row read "—".
+- The state table fields have no underscores — `currentstates`, not
+  `current_states` — and `maximumstates` is null unless overridden, so the
+  enforced limit is `defaultmaximumstates`. Together those showed "Current
+  states 0" on a firewall holding 11,169, with no meter.
+- `status/interfaces` returns a dotted netmask, so addresses rendered as
+  `178.174.216.246/255.255.255.224`.
+- A live WAN reports `"enable": false`. That field tracks something other than
+  administrative state, and treating it as authoritative greyed out a working
+  uplink. Health now follows link state.
+
+Interfaces now show `descr` ("WAN_1") rather than the internal `name` ("wan"),
+and the Overview gained a hardware row from `platform` and `cpu_count`.
+
+`Tests/VaktpostTests/LiveShapeTests.swift` pins all of this to payloads pasted
+verbatim from `curl`. Hand-written fixtures only test the field names their
+author already believed in, which is precisely what failed here.
+
+### Added
+
+- Installed packages under System, with versions and an alert when any has an
+  update pending.
+- Blocked hosts under System, read from the `sshguard` and `virusprot` pf
+  tables. Loaded when that screen appears rather than on the refresh timer —
+  the tables payload is dominated by `bogons`, which is large, static and of no
+  interest here. Retained entries are capped per table; the count stays honest.
+- Three more log sources: auth (webConfigurator, SSH and API login attempts),
+  DHCP, and OpenVPN. The Logs tab now offers Filter, System, Auth, DHCP and
+  VPN; the pass/block filter appears only for the filter log, since the others
+  carry no action.
+
 ### Known gaps
+
+- `system/update` and `routing/gateway/groups` both return null on 26.07 with
+  nothing configured, so there was no shape to build against. Left alone rather
+  than guessed at.
+- No Dynamic DNS. The REST API package exposes no dyndns endpoints at all —
+  `/api/v2/services/` covers acme, bind, cron, dhcp_server, dns_forwarder,
+  dns_resolver, freeradius, haproxy, ntp, service_watchdog, ssh and
+  wake_on_lan, and nothing else. Confirmed against the OpenAPI schema on
+  26.07, not assumed.
 
 - Swift 5 language mode with `minimal` concurrency checking, against a house
   default of 6.0 and `complete`. `TrustEvaluator` is `@unchecked Sendable`

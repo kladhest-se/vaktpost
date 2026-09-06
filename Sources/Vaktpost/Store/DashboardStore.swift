@@ -10,10 +10,10 @@ final class DashboardStore: ObservableObject {
 
     enum Section: String, CaseIterable {
         case system, version, interfaces, gateways, services, leases, arp, statics
-        case firewallLog, systemLog, states
+        case firewallLog, systemLog, authLog, dhcpLog, openvpnLog, states
         case openvpn, ipsec, wireguard
         case rules, aliases, portForwards
-        case carp, configHistory, certificates
+        case carp, configHistory, certificates, packages, tables
     }
 
     // MARK: Dependencies
@@ -37,6 +37,9 @@ final class DashboardStore: ObservableObject {
     @Published var staticMappings: [StaticMapping] = []
     @Published var firewallLog: [LogLine] = []
     @Published var systemLog: [LogLine] = []
+    @Published var authLog: [LogLine] = []
+    @Published var dhcpLog: [LogLine] = []
+    @Published var openvpnLog: [LogLine] = []
 
     @Published var openvpnServers: [OpenVPNServerStatus] = []
     @Published var openvpnClients: [OpenVPNServerStatus] = []
@@ -51,6 +54,11 @@ final class DashboardStore: ObservableObject {
     @Published var carp: CARPStatus?
     @Published var configHistory: [ConfigRevision] = []
     @Published var certificates: [CertificateInfo] = []
+    @Published var packages: [PackageInfo] = []
+
+    /// Loaded on demand rather than on the refresh timer — see `loadTables()`.
+    @Published var tables: [FirewallTable] = []
+    @Published var isLoadingTables = false
 
     @Published var alerts: [VaktpostAlert] = []
 
@@ -117,10 +125,11 @@ final class DashboardStore: ObservableObject {
         interfaces = []; gateways = []; services = []
         leases = []; arp = []; staticMappings = []
         firewallLog = []; systemLog = []
+        authLog = []; dhcpLog = []; openvpnLog = []
         openvpnServers = []; openvpnClients = []; ipsecSAs = []
         wireguardTunnels = []; wireguardPeers = []
         rules = []; aliases = []; portForwards = []
-        configHistory = []; certificates = []
+        configHistory = []; certificates = []; packages = []; tables = []
         alerts = []; errors = [:]; connectionError = nil; lastRefresh = nil
     }
 
@@ -178,6 +187,15 @@ final class DashboardStore: ObservableObject {
         await run(.systemLog) {
             self.systemLog = try await self.client.systemLog(limit: self.profile.logLimit)
         }
+        await run(.authLog) {
+            self.authLog = try await self.client.authLog(limit: self.profile.logLimit)
+        }
+        await run(.dhcpLog, optional: true) {
+            self.dhcpLog = try await self.client.dhcpLog(limit: self.profile.logLimit)
+        }
+        await run(.openvpnLog, optional: true) {
+            self.openvpnLog = try await self.client.openvpnLog(limit: self.profile.logLimit)
+        }
 
         // VPN — all optional; a firewall may have none of these configured.
         await run(.openvpn, optional: true) {
@@ -203,6 +221,9 @@ final class DashboardStore: ObservableObject {
         await run(.certificates, optional: true) {
             self.certificates = try await self.client.certificates()
         }
+        await run(.packages, optional: true) {
+            self.packages = try await self.client.packages()
+        }
 
         errors = freshErrors
         connectionError = fatal
@@ -210,6 +231,27 @@ final class DashboardStore: ObservableObject {
         alerts = VaktpostAlert.build(from: self)
         publishSnapshot()
     }
+
+    /// Fetches the pf tables. Called when the System screen appears, not by
+    /// the refresh timer: the payload is dominated by `bogons`, which is large,
+    /// static, and of no interest to anybody looking at this app.
+    func loadTables() async {
+        guard isConfigured, !isLoadingTables else { return }
+        isLoadingTables = true
+        defer { isLoadingTables = false }
+        do {
+            tables = try await client.tables()
+            errors[.tables] = nil
+        } catch {
+            errors[.tables] = error.localizedDescription
+        }
+    }
+
+    var blockedHosts: [FirewallTable] {
+        tables.filter { $0.isNotable && $0.entryCount > 0 }
+    }
+
+    var packagesNeedingUpdate: [PackageInfo] { packages.filter(\.updateAvailable) }
 
     // MARK: Auto refresh
 

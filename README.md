@@ -116,10 +116,11 @@ All `GET`, all under `/api/v2`:
 | Overview | `status/system`, `system/version`, `firewall/states/size`, `status/gateways`, `status/services` |
 | Clients | `status/dhcp_server/leases`, `diagnostics/arp_table`, `services/dhcp_server/static_mappings` |
 | Network | `status/interfaces`, `diagnostics/arp_table` |
-| Logs | `status/logs/firewall`, `status/logs/system` |
+| Logs | `status/logs/firewall`, `status/logs/system`, `status/logs/auth`, `status/logs/dhcp`, `status/logs/openvpn` |
 | VPN | `status/openvpn/servers`, `status/openvpn/clients`, `status/ipsec/sas`, `status/wireguard/tunnels`, `status/wireguard/peers` |
 | Firewall | `firewall/rules`, `firewall/aliases`, `firewall/nat/port_forwards` |
-| System | `status/carp`, `diagnostics/config_history/revisions`, `system/certificates`, `system/certificate_authorities` |
+| System | `status/carp`, `diagnostics/config_history/revisions`, `system/certificates`, `system/certificate_authorities`, `system/packages` |
+| System (on demand) | `diagnostics/tables` |
 
 Each section fails independently: an uninstalled package or a privilege the key lacks degrades that one card rather than the screen. Endpoints backed by optional packages (WireGuard, static mappings, CARP) are marked optional — once one 404s, it is retried every twentieth cycle instead of every refresh, so a firewall without WireGuard doesn't pay for dead calls every thirty seconds.
 
@@ -147,7 +148,14 @@ Set up requires an App Group. `group.se.kladhest.vaktpost` is declared in both e
 
 ### What UniFi does that this cannot
 
-Speed tests, DPI traffic inspection and IDS/IPS threat dashboards depend on gateway features pfSense doesn't expose through this API — Suricata and pfBlockerNG have no v2 endpoints at all. Those are absent by necessity, not oversight.
+Speed tests, DPI traffic inspection and IDS/IPS threat dashboards depend on gateway features pfSense doesn't expose through this API — Suricata and pfBlockerNG have no v2 endpoints at all. Dynamic DNS is missing for the same reason: the package exposes no dyndns endpoints. Those are absent by necessity, not oversight.
+
+The firewall itself is the authority on what exists. To check on your own version:
+
+```sh
+curl -sk -H "X-API-Key: $KEY" https://firewall/api/v2/schema/openapi \
+  | jq -r '.paths | keys[]' | sort
+```
 
 ## Field-name tolerance
 

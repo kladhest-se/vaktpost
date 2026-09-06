@@ -189,6 +189,25 @@ actor APIClient {
             .map { LogLine($0, kind: .system) }
     }
 
+    /// The authentication log — webConfigurator, SSH and API login attempts.
+    ///
+    /// Arguably the most useful of the five on an internet-facing firewall,
+    /// and the one that tells you whether Login Protection is earning its keep.
+    func authLog(limit: Int) async throws -> [LogLine] {
+        try await getList("/api/v2/status/logs/auth", query: page(limit: limit))
+            .map { LogLine($0, kind: .auth) }
+    }
+
+    func dhcpLog(limit: Int) async throws -> [LogLine] {
+        try await getList("/api/v2/status/logs/dhcp", query: page(limit: limit))
+            .map { LogLine($0, kind: .dhcp) }
+    }
+
+    func openvpnLog(limit: Int) async throws -> [LogLine] {
+        try await getList("/api/v2/status/logs/openvpn", query: page(limit: limit))
+            .map { LogLine($0, kind: .openvpn) }
+    }
+
     func stateTableSize() async throws -> StateTableSize {
         StateTableSize(try await getObject("/api/v2/firewall/states/size"))
     }
@@ -264,6 +283,22 @@ actor APIClient {
             out += cas.map { CertificateInfo($0, isCA: true) }
         }
         return out
+    }
+
+    func packages() async throws -> [PackageInfo] {
+        try await getList("/api/v2/system/packages", query: page(limit: 100))
+            .map(PackageInfo.init)
+    }
+
+    /// Every pf table with its contents.
+    ///
+    /// Deliberately not part of the periodic refresh: `bogons` alone runs to
+    /// thousands of rows, and pulling that down every thirty seconds to render
+    /// a blocked-hosts list nobody is looking at is the kind of thing that
+    /// makes a phone warm.
+    func tables() async throws -> [FirewallTable] {
+        try await getList("/api/v2/diagnostics/tables", query: page(limit: 200))
+            .map(FirewallTable.init)
     }
 
     /// Cheap call used to validate credentials during onboarding.

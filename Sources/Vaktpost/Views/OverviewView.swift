@@ -225,6 +225,9 @@ struct OverviewView: View {
                     if let t = sys.temperature {
                         FieldRow(key: "Temperature", value: String(format: "%.1f °C", t))
                     }
+                    if let hardware = sys.hardwareDescription {
+                        FieldRow(key: "Hardware", value: hardware, mono: false)
+                    }
                 }
             } else {
                 placeholder(.system)
@@ -241,9 +244,9 @@ struct OverviewView: View {
             if let st = store.states {
                 if let frac = st.fraction {
                     Meter(
-                        label: "States in use",
+                        label: st.isDefaultLimit ? "States in use (default limit)" : "States in use",
                         value: frac,
-                        readout: "\(st.current ?? 0) / \(st.maximum ?? 0)",
+                        readout: "\(st.current ?? 0) / \(st.effectiveMaximum ?? 0)",
                         health: level(frac * 100, warn: 70, bad: 88)
                     )
                 } else {
