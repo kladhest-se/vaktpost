@@ -26,8 +26,9 @@ help:
 	@echo "  make teams           signing teams this Mac can use"
 	@echo "  make destinations    simulators available to run on"
 	@echo ""
-	@echo "  install and archive need TEAM_ID, install also needs DEVICE:"
-	@echo "    make install DEVICE=00008132-… TEAM_ID=ABCDE12345"
+	@echo "  install and archive need TEAM_ID; install also needs DEVICE."
+	@echo "  Both are printed by the commands above:"
+	@echo "    make install DEVICE=FA371128-… TEAM_ID=ABCDE12345"
 	@echo ""
 	@echo "  make web             serve public-web/ on :8000"
 	@echo "  make clean           remove the generated project and build products"
@@ -64,9 +65,30 @@ echo $$build > build.number; \
 version=$$(awk -F' = ' '/^MARKETING_VERSION/{print $$2; exit}' Config/iOS.xcconfig)
 endef
 
+# Refuses without a team, and says what to type rather than what is missing.
+#
+# The near-misses are called out by name because they are what people actually
+# type: the help text says TEAM_ID, the shell says nothing, and `TEAMS=` fails
+# with a message about TEAM_ID being unset that looks like the flag was ignored.
 REQUIRE_TEAM = \
 	if [ -z "$(TEAM_ID)" ]; then \
-		echo "TEAM_ID is not set. make teams"; exit 1; \
+		echo "TEAM_ID is not set."; \
+		if [ -n "$(TEAM)$(TEAMS)$(TEAMID)$(TEAM_IDS)" ]; then \
+			echo "  You set TEAM, TEAMS, TEAMID or TEAM_IDS. The variable is TEAM_ID."; \
+		fi; \
+		echo ""; \
+		echo "  make teams                       lists the team ids on this Mac"; \
+		echo "  make $@ TEAM_ID=ABCDE12345"; \
+		exit 1; \
+	fi
+
+REQUIRE_DEVICE = \
+	if [ -z "$(DEVICE)" ]; then \
+		echo "DEVICE is not set."; \
+		echo ""; \
+		echo "  make devices                     lists attached devices"; \
+		echo "  make install DEVICE=<identifier> TEAM_ID=$(if $(TEAM_ID),$(TEAM_ID),ABCDE12345)"; \
+		exit 1; \
 	fi
 
 # ── Compiling ────────────────────────────────────────────────────────────────
@@ -97,8 +119,14 @@ test: project
 # `xcodebuild archive`, so the .xcarchive already has a real number before the
 # Organizer opens. Without this, every archive carries build 1 and App Store
 # Connect refuses the second upload.
-archive: project
+# Validates before generating anything.
+#
+# With `project` as a prerequisite, make runs xcodegen first and only then
+# discovers TEAM_ID is missing — so a typo costs a full project regeneration
+# and buries the real message under three lines of generator output.
+archive:
 	@$(REQUIRE_TEAM)
+	@$(MAKE) --no-print-directory project
 	@echo "Signing with team $(TEAM_ID)"
 	@mkdir -p build
 	@set -e; $(bump_build); \
@@ -146,9 +174,10 @@ run: build
 	xcrun simctl install $(SIM_ID) "$$app"; \
 	xcrun simctl launch --console-pty $(SIM_ID) "$$bundle"
 
-install: project
+install:
 	@$(REQUIRE_TEAM)
-	@test -n "$(DEVICE)" || { echo "DEVICE is not set. make devices"; exit 1; }
+	@$(REQUIRE_DEVICE)
+	@$(MAKE) --no-print-directory project
 	@set -e; $(bump_build); \
 	xcodebuild build -project $(PROJECT) -scheme $(SCHEME) \
 		-destination 'id=$(DEVICE)' -allowProvisioningUpdates \
@@ -165,14 +194,35 @@ install: project
 # ── What this Mac can do ─────────────────────────────────────────────────────
 
 devices:
+	@command -v xcrun >/dev/null || { echo "No Xcode command line tools."; exit 1; }
 	@echo "Attached devices:"
 	@xcrun devicectl list devices 2>/dev/null | sed 's/^/  /' || \
 		echo "  devicectl unavailable — needs Xcode 15 or later"
+	@echo ""
+	@echo "  Copy the Identifier column into DEVICE. Only iPhones and iPads can"
+	@echo "  run this; an Apple TV in the list is not a target."
 
+# The team id, not the certificate name.
+#
+# `security find-identity` prints a certificate common name whose parenthesised
+# code is, for a development certificate, the certificate's own id and not the
+# team's. Pasting that into TEAM_ID produces a signing failure that blames
+# provisioning. The team id is the OU field of the certificate, which is what
+# this reads.
 teams:
-	@echo "Signing teams:"
-	@security find-identity -v -p codesigning 2>/dev/null | \
-		sed -n 's/.*"\(.*\)".*/  \1/p' | sort -u || echo "  none found"
+	@command -v security >/dev/null || { echo "No security tool."; exit 1; }
+	@printf '  %-12s %s\n' "TEAM_ID" "certificate"
+	@printf '  %-12s %s\n' "----------" "-----------"
+	@security find-identity -v -p codesigning 2>/dev/null \
+		| sed -n 's/.*"\(.*\)"/\1/p' | sort -u | while IFS= read -r cn; do \
+		ou=$$(security find-certificate -c "$$cn" -p 2>/dev/null \
+			| openssl x509 -noout -subject 2>/dev/null \
+			| tr ',/' '\n\n' | sed -n 's/^ *OU *= *//p' | head -1); \
+		printf '  %-12s %s\n' "$${ou:-?}" "$$cn"; \
+	done
+	@echo ""
+	@echo "  Use the left column. The code in parentheses in the certificate"
+	@echo "  name is the certificate id, not the team id."
 
 destinations:
 	@xcrun simctl list devices available 2>/dev/null | grep -E 'iPhone|iPad' | sed 's/^ */  /'

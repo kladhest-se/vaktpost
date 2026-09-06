@@ -106,6 +106,21 @@ author already believed in, which is precisely what failed here.
 
 ### Changed
 
+- `make teams` prints the team id rather than the certificate name.
+  `security find-identity` shows a common name whose parenthesised code is, for
+  a development certificate, the certificate's own id and not the team's —
+  pasting it into `TEAM_ID` fails with a provisioning error that blames the
+  wrong thing. The team id is the certificate's OU field, which is what the
+  target now reads and prints in its own column.
+- `make install` and `make archive` validate before generating the project.
+  With `project` as a prerequisite, xcodegen ran first and the real message was
+  buried under three lines of generator output.
+- Both now name the variable when a near-miss is set (`TEAM`, `TEAMS`,
+  `TEAMID`, `TEAM_IDS`) and print the exact command to run, with the values you
+  already supplied filled in.
+- `make devices` notes that only iPhones and iPads are targets, since an Apple
+  TV in the list looks equally installable.
+
 - OpenVPN servers no longer show a fabricated "UNKNOWN" status.
   `status/openvpn/servers` returns no status field on 26.07 — a running server
   simply appears in the list — so the pill was a placeholder dressed up as a
