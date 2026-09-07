@@ -19,7 +19,6 @@ struct MoreView: View {
                 link("Dynamic DNS", "globe", badge: store.staleDyndns.count) { DyndnsView() }
                 link("HAProxy", "arrow.triangle.swap", badge: store.unmonitoredBackends.count) { HAProxyView() }
                 link("Aliases", "tag", badge: 0) { AliasesView() }
-                link("UPnP", "arrow.up.arrow.down.circle", badge: 0) { UPnPView() }
                 link("System Certificates", "lock.doc", badge: store.expiringCertificateCount) { CertificatesView() }
                 link("ACME Certificates", "checkmark.seal", badge: store.stalledACME.count) { ACMEView() }
                 link("System", "server.rack", badge: 0) { SystemView() }

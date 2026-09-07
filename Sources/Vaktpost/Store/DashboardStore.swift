@@ -14,7 +14,7 @@ final class DashboardStore: ObservableObject {
         case openvpn, openvpnClients, ipsec, wireguard
         case firewall, aliases, portForwards
         case carp, configHistory, certificates, packages, tables
-        case notices, filesystems, dyndns, hostOverrides, haproxy, acme, upnp
+        case notices, filesystems, dyndns, hostOverrides, haproxy, acme
     }
 
     // MARK: Dependencies
@@ -97,11 +97,6 @@ final class DashboardStore: ObservableObject {
     @Published var acmeAccounts: [ACMEAccount] = []
     @Published var acmeInstalled = false
     private var hasLoadedACME = false
-
-    @Published var upnpMappings: [UPnPMapping] = []
-    @Published var upnpInstalled = false
-    @Published var upnpStatus: UPnPStatus?
-    private var hasLoadedUPnP = false
 
     /// Loaded on demand rather than on the refresh timer — see `loadTables()`.
     @Published var tables: [FirewallTable] = []
@@ -228,8 +223,6 @@ final class DashboardStore: ObservableObject {
         store.hasLoadedFirewallObjects = false
         store.hasLoadedHAProxy = false
         store.hasLoadedACME = false
-        store.hasLoadedUPnP = false
-        store.upnpMappings = []
         store.acmeCertificates = []; store.acmeAccounts = []
         store.haproxyFrontends = []; store.haproxyBackends = []
         store.alerts = []; store.errors = [:]; store.connectionError = nil; store.lastRefresh = nil
@@ -538,7 +531,7 @@ final class DashboardStore: ObservableObject {
         // The other three are not reachable over XML-RPC without shelling out,
         // which the snippet rules forbid; they stay as cases so the enum is
         // exhaustive and the views referencing them compile with empty data.
-        case .haproxy, .acme, .upnp, .configHistory, .tables:
+        case .haproxy, .acme, .configHistory, .tables:
             break
         }
     }
@@ -666,24 +659,6 @@ final class DashboardStore: ObservableObject {
     func issuedCertificate(for entry: ACMECertificate) -> CertificateInfo? {
         certificates.first {
             !$0.isCA && ($0.descr == entry.name || $0.descr == entry.descr)
-        }
-    }
-
-    func loadUPnP() async {
-        guard isConfigured, !hasLoadedUPnP else { return }
-        hasLoadedUPnP = true
-        do {
-            if let result = try await client.upnp() {
-                upnpInstalled = true
-                upnpStatus = result
-                upnpMappings = result.mappings
-            } else {
-                upnpInstalled = false
-            }
-            errors[.upnp] = nil
-        } catch {
-            hasLoadedUPnP = false
-            errors[.upnp] = error.localizedDescription
         }
     }
 

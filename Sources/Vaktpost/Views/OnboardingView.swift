@@ -22,8 +22,6 @@ struct OnboardingView: View {
                                       keyboard: .URL, autocap: false)
                         LabelledField(title: "Username", text: $profile.username,
                                       placeholder: "firewall account", autocap: false)
-                        LabelledField(title: "Label (optional)", text: $profile.label,
-                                      placeholder: "fw01")
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text("PASSWORD")

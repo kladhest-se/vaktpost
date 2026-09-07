@@ -80,9 +80,6 @@ struct PHPSnippet {
         "array_key_exists", "intval",
         "date", "time", "max", "min",
         // pfSense read-only accessors
-        // Reads the running miniupnpd's mapping list. The package's own status page
-        // calls it; there is no writing counterpart in this snippet.
-        "upnp_get_active_mappings", "upnp_running",
         "get_pkg_info", "get_uptime_sec", "get_temp", "get_single_sysctl", "get_load_average", "get_cpufreq",
         "get_cpu_speed", "get_cpu_count", "cpu_usage", "mem_usage", "swap_usage",
         "get_mbuf", "get_pfstate", "get_mounted_filesystems", "disk_usage",
@@ -807,81 +804,6 @@ struct PHPSnippet {
     ];
     """)
 
-    /// UPnP and NAT-PMP: what has opened a port on the firewall.
-    ///
-    /// Worth seeing because these are holes nobody wrote a rule for. A console
-    /// or a torrent client asks miniupnpd for a port and gets it, and the only
-    /// record is a lease file.
-    ///
-    /// The lease path is a compile-time constant and the file is read the same
-    /// clamped way as the logs. `is_array` guards the config read; the file may
-    /// not exist at all, which is not an error — it means nothing has asked.
-    /// UPnP: whether it is running, and nothing more.
-    ///
-    /// Active port maps are not reachable from PHP on this pfSense. The
-    /// package's status page builds its table by shelling out to
-    /// `pfctl -a miniupnpd -sn` and parsing the redirect rules, because
-    /// miniupnpd keeps its state in a pf anchor rather than in a lease file —
-    /// which is why reading /var/etc/miniupnpd.leases returned nothing while
-    /// the web UI showed a live mapping.
-    ///
-    /// Two guesses were spent on this: a lease file that does not exist, and
-    /// an accessor function that does not either. The probe below is what
-    /// established that, and it stays so a future package version that gains
-    /// one starts working without another round of guessing.
-    ///
-    /// Shelling out is what the snippet rules forbid, and the reason they do
-    /// is that `exec` cannot be audited as read-only. So this reports what it
-    /// can — installed, enabled, running — and says plainly that the mappings
-    /// are elsewhere.
-    static let upnp = PHPSnippet("upnp", """
-    global $config;
-    $installed = $config["installedpackages"];
-    $upnp = is_array($installed) ? $installed["miniupnpd"] : "";
-    $cfg = is_array($upnp) ? $upnp["config"] : "";
-    $settings = is_array($cfg) && is_iterable($cfg) ? $cfg[0] : "";
-
-    if (file_exists("/usr/local/pkg/miniupnpd.inc")) {
-      require_once '/usr/local/pkg/miniupnpd.inc';
-    }
-
-    $running = false;
-    if (function_exists("upnp_running")) { $running = upnp_running() ? true : false; }
-
-    // If a version ever grows a readable accessor, this starts returning rows
-    // without any other change.
-    $rows = [];
-    $source = "";
-    if (function_exists("upnp_get_active_mappings")) {
-      $source = "upnp_get_active_mappings";
-      $active = upnp_get_active_mappings();
-      if (is_iterable($active)) {
-        foreach ($active as $item) {
-          if (!is_array($item)) { continue; }
-          $rows[] = [
-            "protocol" => strval($item["proto"]),
-            "external_port" => strval($item["eport"]),
-            "internal_address" => strval($item["iaddr"]),
-            "internal_port" => strval($item["iport"]),
-            "interface" => strval($item["interface"]),
-            "descr" => strval($item["descr"]),
-          ];
-        }
-      }
-    }
-
-    $toreturn = [
-      "installed" => is_array($upnp),
-      "enabled" => is_array($settings) ? array_key_exists("enable", $settings) : false,
-      "running" => $running,
-      // False on every pfSense that keeps its maps in a pf anchor, which as
-      // far as this app has seen is all of them.
-      "mappings_readable" => ($source !== ""),
-      "external_interface" => is_array($settings) ? strval($settings["ext_iface"]) : "",
-      "data" => $rows,
-    ];
-    """)
-
     // MARK: - Firewall objects
 
     static let firewallRules = PHPSnippet("firewall_rules", """
@@ -1107,7 +1029,7 @@ struct PHPSnippet {
     static var all: [PHPSnippet] {
         [telemetry, firmware, packages, packageUpdates, notices, interfaces, interfaceCounters, gateways, arpTable, dhcpLeases,
          staticMappings, hostOverrides, services, openvpnServers, openvpnClients, ipsecSAs,
-         wireguard, pfTables, haproxy, acme, upnp, firewallRules, firewallAliases, portForwards, carp,
+         wireguard, pfTables, haproxy, acme, firewallRules, firewallAliases, portForwards, carp,
          certificates, dyndns, ping]
         + LogSource.allCases.map { log($0, limit: 100) }
     }

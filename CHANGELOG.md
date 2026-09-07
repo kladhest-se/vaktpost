@@ -242,6 +242,37 @@ on is how a list stops being read.
 - Acknowledged and silenced alerts are counted separately, so the same alert is
   not reported as hidden twice for two different reasons.
 
+### Two different icon failures, told apart
+
+`setAlternateIconName` returns the same unhelpful "resource temporarily
+unavailable" — POSIX `EAGAIN` — for a transient refusal and reports a generic
+error when the icon simply is not in the build. Those need different responses
+and the screen said neither.
+
+It now reads `CFBundleIcons` from the running bundle first. If the requested
+icon is not registered there, it says which ones are, because no amount of
+tapping fixes a packaging problem. If it is registered, the call is deferred to
+the next runloop turn — being inside a SwiftUI update is one of the states iOS
+declines from — and retried once after a moment, which is usually enough for a
+genuine EAGAIN.
+
+The picker shows progress while a change is settling, and says how many
+alternates the build registered when that number is short.
+
+### The icons were packaged wrong
+
+"The file doesn't exist" — `setAlternateIconName` could not find them, and the
+previews were blank for the same reason. Loose files at the bundle root are the
+old way of doing alternate icons and depend on the build system putting them in
+exactly the right place, which it did not.
+
+They are asset catalog icon sets now, with
+`ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES` listing them. Xcode generates
+the plist entries and places the images itself, which is what it has done since
+Xcode 14. The hand-written `CFBundleIcons` block came out, since it would fight
+the generated one. Previews are ordinary image sets, because an app icon set
+cannot be loaded as a normal image.
+
 ### The app has an icon, and six of them
 
 A watchtower, in coral, ocean, mint, amber, lavender and silver. Coral is the
@@ -267,6 +298,12 @@ room for both.
 
 NAT the same.
 
+### The label field is gone from first-run setup
+
+One more thing to fill in before a connection could be tested, for a name that
+matters only once there is a second firewall. Still editable when editing one;
+the list falls back to the hostname when it is empty.
+
 ### Saving a firewall left you on the edit screen
 
 It saved and reported the connection test inline, so nothing indicated the job
@@ -290,7 +327,18 @@ to hear about it. Settings has a slider; the critical point follows ten degrees
 above, so lowering the warning does not lose the difference between warm and
 serious.
 
-### UPnP: the mappings are not reachable, and the screen says so
+### UPnP removed
+
+The screen could say whether the service was on and nothing else, because the
+port maps live in a pf anchor that only `pfctl` can read. A page that exists to
+tell you it cannot tell you anything is not worth a row in the menu. Removed
+entirely — snippet, model, view and tests.
+
+The finding stands and is worth keeping in mind: three separate things on this
+firewall (blocked hosts, live HAProxy status, UPnP maps) are behind a shell, and
+that is the real boundary of what this transport can see.
+
+### Superseded: the UPnP screen
 
 Two guesses were spent finding this out. A lease file that does not exist, then
 an accessor function that does not either — the probe reported only
@@ -1306,6 +1354,37 @@ on is how a list stops being read.
 - Acknowledged and silenced alerts are counted separately, so the same alert is
   not reported as hidden twice for two different reasons.
 
+### Two different icon failures, told apart
+
+`setAlternateIconName` returns the same unhelpful "resource temporarily
+unavailable" — POSIX `EAGAIN` — for a transient refusal and reports a generic
+error when the icon simply is not in the build. Those need different responses
+and the screen said neither.
+
+It now reads `CFBundleIcons` from the running bundle first. If the requested
+icon is not registered there, it says which ones are, because no amount of
+tapping fixes a packaging problem. If it is registered, the call is deferred to
+the next runloop turn — being inside a SwiftUI update is one of the states iOS
+declines from — and retried once after a moment, which is usually enough for a
+genuine EAGAIN.
+
+The picker shows progress while a change is settling, and says how many
+alternates the build registered when that number is short.
+
+### The icons were packaged wrong
+
+"The file doesn't exist" — `setAlternateIconName` could not find them, and the
+previews were blank for the same reason. Loose files at the bundle root are the
+old way of doing alternate icons and depend on the build system putting them in
+exactly the right place, which it did not.
+
+They are asset catalog icon sets now, with
+`ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES` listing them. Xcode generates
+the plist entries and places the images itself, which is what it has done since
+Xcode 14. The hand-written `CFBundleIcons` block came out, since it would fight
+the generated one. Previews are ordinary image sets, because an app icon set
+cannot be loaded as a normal image.
+
 ### The app has an icon, and six of them
 
 A watchtower, in coral, ocean, mint, amber, lavender and silver. Coral is the
@@ -1331,6 +1410,12 @@ room for both.
 
 NAT the same.
 
+### The label field is gone from first-run setup
+
+One more thing to fill in before a connection could be tested, for a name that
+matters only once there is a second firewall. Still editable when editing one;
+the list falls back to the hostname when it is empty.
+
 ### Saving a firewall left you on the edit screen
 
 It saved and reported the connection test inline, so nothing indicated the job
@@ -1354,7 +1439,18 @@ to hear about it. Settings has a slider; the critical point follows ten degrees
 above, so lowering the warning does not lose the difference between warm and
 serious.
 
-### UPnP: the mappings are not reachable, and the screen says so
+### UPnP removed
+
+The screen could say whether the service was on and nothing else, because the
+port maps live in a pf anchor that only `pfctl` can read. A page that exists to
+tell you it cannot tell you anything is not worth a row in the menu. Removed
+entirely — snippet, model, view and tests.
+
+The finding stands and is worth keeping in mind: three separate things on this
+firewall (blocked hosts, live HAProxy status, UPnP maps) are behind a shell, and
+that is the real boundary of what this transport can see.
+
+### Superseded: the UPnP screen
 
 Two guesses were spent finding this out. A lease file that does not exist, then
 an accessor function that does not either — the probe reported only
