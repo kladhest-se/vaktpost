@@ -386,10 +386,14 @@ extension XMLRPCTests {
         XCTAssertTrue(error.localizedDescription.contains("rrd_fetch"))
     }
 
-    func testAnExcerptIsTrimmedNotPasted() {
+    func testAnExcerptIsTrimmedNotPasted() throws {
+        // `try XCTUnwrap` in a throwing test, not `try?` — the latter wraps
+        // the already-optional result in a second optional, which is what
+        // produced a line trying to chain two of them.
         let long = String(repeating: "x", count: 5_000)
-        let excerpt = try? XCTUnwrap(XMLRPCClient.excerpt(long))
-        XCTAssertLessThan(excerpt??.count ?? 0, 250)
+        let excerpt = try XCTUnwrap(XMLRPCClient.excerpt(long))
+        XCTAssertLessThan(excerpt.count, 250)
+        XCTAssertTrue(excerpt.hasSuffix("…"))
     }
 
     func testAnEmptyBodyHasNoExcerpt() {
