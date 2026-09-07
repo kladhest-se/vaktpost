@@ -159,8 +159,8 @@ final class ErrorClassificationTests: XCTestCase {
         // firewall switch, a refresh superseding the one in flight. Reporting
         // it as "TLS handshake failed" told people to go and change their
         // certificate settings for a request that was working fine.
-        XCTAssertNotEqual(APIError.cancelled, APIError.tls)
-        XCTAssertEqual(APIError.cancelled.errorDescription, "Cancelled.")
+        XCTAssertNotEqual(RPCError.cancelled, RPCError.tls)
+        XCTAssertEqual(RPCError.cancelled.errorDescription, "Cancelled.")
     }
 
     func testStandaloneFirewallIsNotReportedAsHavingCARP() {
@@ -189,13 +189,86 @@ final class ErrorClassificationTests: XCTestCase {
     }
 
     func testIsRetryableOnlyAppliesToTransportErrors() {
-        XCTAssertTrue(APIError.transport("DNS timeout").isRetryable)
-        XCTAssertFalse(APIError.unauthorized.isRetryable)
-        XCTAssertFalse(APIError.forbidden.isRetryable)
-        XCTAssertFalse(APIError.tls.isRetryable)
-        XCTAssertFalse(APIError.decoding.isRetryable)
-        XCTAssertFalse(APIError.notFound("test").isRetryable)
-        XCTAssertFalse(APIError.server(502, "").isRetryable)
-        XCTAssertFalse(APIError.cancelled.isRetryable)
+        XCTAssertTrue(RPCError.transport("DNS timeout").isRetryable)
+        XCTAssertFalse(RPCError.unauthorized.isRetryable)
+        XCTAssertFalse(RPCError.forbidden.isRetryable)
+        XCTAssertFalse(RPCError.tls.isRetryable)
+        XCTAssertFalse(RPCError.malformed.isRetryable)
+        XCTAssertFalse(RPCError.fault(1, "undefined function").isRetryable)
+        XCTAssertFalse(RPCError.noCredentials.isRetryable)
+        XCTAssertFalse(RPCError.cancelled.isRetryable)
+    }
+}
+
+/// Acknowledgement identity, which has to survive the numbers changing.
+final class AlertSignatureTests: XCTestCase {
+
+    private func alert(_ title: String, _ severity: Health,
+                       _ category: VaktpostAlert.Category) -> VaktpostAlert {
+        VaktpostAlert(severity: severity, category: category, title: title, detail: "")
+    }
+
+    func testTheSameConditionADegreeHotterKeepsItsSignature() {
+        // Otherwise acknowledging "Chipset at 81 °C" would need doing again at
+        // 82, which is worse than not offering acknowledgement at all.
+        let a = alert("Chipset at 81 °C", .warn, .capacity)
+        let b = alert("Chipset at 83 °C", .warn, .capacity)
+        XCTAssertEqual(a.signature, b.signature)
+    }
+
+    func testGettingWorseBreaksTheAcknowledgement() {
+        // Something you decided to live with at a warning is not something you
+        // decided to live with when it turns critical.
+        let warned = alert("Chipset at 96 °C", .warn, .capacity)
+        let critical = alert("Chipset at 106 °C", .bad, .capacity)
+        XCTAssertNotEqual(warned.signature, critical.signature)
+    }
+
+    func testADigitInsideANameIsPartOfTheName() {
+        // The bug this caught: stripping every digit made these one condition,
+        // so acknowledging one gateway silenced the other.
+        XCTAssertNotEqual(alert("WAN_DHCP is down", .bad, .gateway).signature,
+                          alert("WAN2_DHCP is down", .bad, .gateway).signature)
+        XCTAssertNotEqual(alert("openvpn1 has no clients", .warn, .vpn).signature,
+                          alert("openvpn2 has no clients", .warn, .vpn).signature)
+    }
+
+    func testAMeasurementIsDropped() {
+        // A word that is only a number is a reading, not a name.
+        XCTAssertEqual(alert("3 packages have updates", .warn, .update).signature,
+                       alert("4 packages have updates", .warn, .update).signature)
+        XCTAssertEqual(alert("State table 45% full", .warn, .capacity).signature,
+                       alert("State table 61% full", .warn, .capacity).signature)
+    }
+
+    func testTwoFilesystemsStayApart() {
+        XCTAssertNotEqual(alert("/var at 91%", .warn, .capacity).signature,
+                          alert("/tmp at 91%", .warn, .capacity).signature)
+    }
+
+    func testTheSameTitleInTwoCategoriesStaysDistinct() {
+        XCTAssertNotEqual(alert("Something", .warn, .capacity).signature,
+                          alert("Something", .warn, .vpn).signature)
+    }
+}
+
+extension AlertSignatureTests {
+
+    func testABareNumberIdentifierNeedsAKey() {
+        // "CARP VHID 1 backup" and "CARP VHID 2 backup" differ only by a digit
+        // the signature drops as a measurement, so the alert supplies a key.
+        let one = VaktpostAlert(severity: .bad, category: .ha,
+                                title: "CARP VHID 1 backup", detail: "", key: "vhid-1")
+        let two = VaktpostAlert(severity: .bad, category: .ha,
+                                title: "CARP VHID 2 backup", detail: "", key: "vhid-2")
+        XCTAssertNotEqual(one.signature, two.signature)
+    }
+
+    func testTheSameVirtualIPStillMatchesItself() {
+        let backup = VaktpostAlert(severity: .bad, category: .ha,
+                                   title: "CARP VHID 1 backup", detail: "", key: "vhid-1")
+        let same = VaktpostAlert(severity: .bad, category: .ha,
+                                 title: "CARP VHID 1 backup", detail: "", key: "vhid-1")
+        XCTAssertEqual(backup.signature, same.signature)
     }
 }

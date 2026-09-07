@@ -10,13 +10,20 @@ struct SystemView: View {
                 GroupHeading(text: "High availability")
                 carpSlab
 
-                GroupHeading(text: "Certificates")
-                certificatesSlab
+                GroupHeading(text: "Notices")
+                noticesSlab
+
+                GroupHeading(text: "Filesystems")
+                filesystemsSlab
 
                 GroupHeading(text: "Blocked hosts")
                 blockedSlab
 
+                GroupHeading(text: "Firmware")
+                firmwareSlab
+
                 GroupHeading(text: "Packages")
+                packageCheckSlab
                 packagesSlab
 
                 GroupHeading(text: "Config history")
@@ -121,6 +128,78 @@ struct SystemView: View {
         }
     }
 
+    /// The check is a button rather than automatic.
+    ///
+    /// It reaches the package repository over the network and takes seconds,
+    /// which is fine when somebody asks and wrong on a thirty-second timer.
+    /// Firmware, checked on demand like packages.
+    ///
+    /// The version comparison comes back with every refresh, but a person
+    /// looking at this screen wants to know it is current *now*, not as of the
+    /// last cycle — so the button forces a fresh read and says what it found.
+    @ViewBuilder
+    private var firmwareSlab: some View {
+        Slab(rail: store.version?.updateAvailable == true ? .warn : .ok, title: "pfSense") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(store.version?.current ?? "unknown version")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.label)
+                    Spacer()
+                    if store.isCheckingFirmware {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Check") {
+                            Task { await store.checkFirmware() }
+                        }
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.accentColor)
+                    }
+                }
+                if store.version?.updateAvailable == true, let latest = store.version?.latest {
+                    Text("\(latest) is available.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.warn)
+                } else {
+                    Text(store.firmwareCheckResult ?? "Up to date as of the last refresh.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.labelFaint)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var packageCheckSlab: some View {
+        Slab(rail: .info) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Check against the repository")
+                        .font(.system(size: 13))
+                        .foregroundStyle(theme.label)
+                    Spacer()
+                    if store.isCheckingPackages {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Check") {
+                            Task { await store.checkPackageUpdates() }
+                        }
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.accentColor)
+                    }
+                }
+                // The age of the answer matters as much as the answer: "no
+                // updates" from a week ago is a different claim from "no
+                // updates" from this morning.
+                Text(store.packageCheckResult
+                     ?? store.packageCheckAge.map { "Last checked \($0)." }
+                     ?? "Not checked yet. Versions here come from the configuration; checking asks the repository and takes a few seconds.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.labelFaint)
+            }
+        }
+    }
+
     @ViewBuilder
     private var packagesSlab: some View {
         if store.packages.isEmpty {
@@ -158,31 +237,51 @@ struct SystemView: View {
         }
     }
 
+    /// pfSense's own notices — the bell icon in the webConfigurator.
     @ViewBuilder
-    private var certificatesSlab: some View {
-        if store.certificates.isEmpty {
+    private var noticesSlab: some View {
+        if store.notices.isEmpty {
+            Slab(rail: .ok) {
+                Text("No pending notices.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.labelMuted)
+            }
+        } else {
+            ForEach(store.notices) { notice in
+                Slab(rail: notice.health, trailing: notice.displayTime) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        NoticeText(notice: notice)
+                        if let category = notice.category, !category.isEmpty {
+                            Text(category)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(theme.labelFaint)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Per-mount usage, rather than the single aggregate figure the REST
+    /// transport reported. A full /var stops logging while / looks fine.
+    @ViewBuilder
+    private var filesystemsSlab: some View {
+        if store.filesystems.isEmpty {
             Slab(rail: .idle) {
-                Text(store.errors[.certificates] ?? "No certificates returned.")
+                Text(store.errors[.filesystems] ?? "No filesystem data.")
                     .font(.system(size: 12))
                     .foregroundStyle(theme.labelMuted)
             }
         } else {
-            ForEach(store.certificates.sorted { ($0.daysRemaining ?? 99_999) < ($1.daysRemaining ?? 99_999) }) { cert in
-                Slab(rail: cert.health, trailing: cert.isCA ? "CA" : nil) {
-                    HStack {
-                        Text(cert.descr)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(theme.label)
-                            .lineLimit(1)
-                        Spacer()
-                        if let days = cert.daysRemaining {
-                            StatusPill(
-                                text: days < 0 ? "expired" : "\(days)d left",
-                                health: cert.health
-                            )
-                        } else {
-                            StatusPill(text: "no date", health: .idle)
-                        }
+            Slab(rail: store.fullFilesystems.isEmpty ? .ok : .warn) {
+                VStack(spacing: 10) {
+                    ForEach(store.filesystems) { fs in
+                        Meter(
+                            label: fs.mountpoint,
+                            value: (fs.percentUsed ?? 0) / 100,
+                            readout: Fmt.pct(fs.percentUsed ?? 0),
+                            health: fs.health
+                        )
                     }
                 }
             }

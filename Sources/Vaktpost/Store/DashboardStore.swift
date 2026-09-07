@@ -11,15 +11,24 @@ final class DashboardStore: ObservableObject {
     enum Section: String, CaseIterable {
         case system, version, interfaces, gateways, services, leases, arp, statics
         case firewallLog, systemLog, authLog, dhcpLog, openvpnLog, states
-        case openvpn, openvpnClients, ipsec, wireguard, wireguardPeers
+        case openvpn, openvpnClients, ipsec, wireguard
         case firewall, aliases, portForwards
         case carp, configHistory, certificates, packages, tables
+        case notices, filesystems, dyndns, hostOverrides, haproxy, acme
     }
 
     // MARK: Dependencies
 
     let registry: ServerRegistry
     let throughput = ThroughputTracker()
+
+    /// A separate, longer history for the interface detail screen, which polls
+    /// far more often than the dashboard refreshes. Kept apart so a minute
+    /// spent watching one interface does not flush the half-hour of history
+    /// every other screen is drawing from.
+    let liveThroughput = ThroughputTracker(capacity: 180)
+    @Published var liveInterfaceKey: String?
+    @Published var liveError: String?
     let vpnThroughput = ThroughputTrackerV2()
     let systemMetrics = MetricTracker<String, Double>()
     let gatewayMetrics = GatewayMetricTracker()
@@ -32,7 +41,7 @@ final class DashboardStore: ObservableObject {
         var passed: Int = 0
     }
 
-    @Published private(set) var client: APIClient
+    @Published private(set) var client: FirewallClient
     @Published private(set) var activeProfile: ServerProfile?
 
     // MARK: Data
@@ -46,6 +55,7 @@ final class DashboardStore: ObservableObject {
     @Published var leases: [DHCPLease] = []
     @Published var arp: [ARPEntry] = []
     @Published var staticMappings: [StaticMapping] = []
+    @Published var hostOverrides: [HostOverride] = []
     @Published var firewallLog: [LogLine] = []
     @Published var systemLog: [LogLine] = []
     @Published var authLog: [LogLine] = []
@@ -70,6 +80,23 @@ final class DashboardStore: ObservableObject {
     @Published var configHistory: [ConfigRevision] = []
     @Published var certificates: [CertificateInfo] = []
     @Published var packages: [PackageInfo] = []
+    @Published var notices: [SystemNotice] = []
+    @Published var filesystems: [Filesystem] = []
+    @Published var dyndns: [DyndnsEntry] = []
+
+    // HAProxy, loaded when its screen opens rather than on the timer: a
+    // firewall running it has many backends, and none of it changes minute to
+    // minute.
+    @Published var haproxyFrontends: [HAProxyFrontend] = []
+    @Published var haproxyBackends: [HAProxyBackend] = []
+    @Published var haproxyStatsAccessors: [String] = []
+    @Published var haproxyInstalled = false
+    private var hasLoadedHAProxy = false
+
+    @Published var acmeCertificates: [ACMECertificate] = []
+    @Published var acmeAccounts: [ACMEAccount] = []
+    @Published var acmeInstalled = false
+    private var hasLoadedACME = false
 
     /// Loaded on demand rather than on the refresh timer — see `loadTables()`.
     @Published var tables: [FirewallTable] = []
@@ -100,13 +127,38 @@ final class DashboardStore: ObservableObject {
     /// Endpoints backed by optional packages are retried rarely once they 404,
     /// so a firewall without WireGuard doesn't pay for four dead calls a minute.
     private var missingEndpoints: Set<Section> = []
+    /// Sections that have failed on the firewall, and how many times.
+    ///
+    /// A snippet that raises a PHP error leaves a permanent notice on the
+    /// firewall, and a refresh timer turns that into one notice every thirty
+    /// seconds — 78 of them in an afternoon, filling the bell icon and the
+    /// app's own alert list with the same bug. Retrying less often is not
+    /// enough: an app should not keep writing to somebody's firewall log
+    /// because of a defect in itself.
+    ///
+    /// So after three faults a section is abandoned for the rest of the
+    /// session. It comes back on a manual refresh, a firewall switch, or a
+    /// relaunch — all of which are a person saying "try again".
+    private var faultCounts: [Section: Int] = [:]
+    private static let faultLimit = 3
+
+    /// Previous CPU tick reading, for `deriveCPUUsage()`.
+    private var lastCPUTicks: (total: Int, idle: Int)?
     private var refreshCount = 0
 
     init(registry: ServerRegistry) {
+        let defaults = UserDefaults.standard
+        mutedAlertCategories = Set(defaults.stringArray(forKey: "alerts.hidden.v2") ?? [])
+        defaults.removeObject(forKey: "alerts.muted")   // superseded; see above
+        alertsSilenced = defaults.bool(forKey: "alerts.silenced")
+        acknowledgedAlerts = Set(defaults.stringArray(forKey: "alerts.acknowledged") ?? [])
+        favouriteInterfaces = Set(defaults.stringArray(forKey: "interfaces.favourites") ?? [])
+        let checkedAt = defaults.double(forKey: "packages.lastCheck")
+        lastPackageCheck = checkedAt > 0 ? Date(timeIntervalSince1970: checkedAt) : nil
         self.registry = registry
         let profile = registry.active ?? ServerProfile()
         self.activeProfile = registry.active
-        self.client = APIClient(profile: profile)
+        self.client = FirewallClient(profile: profile)
     }
 
     var isConfigured: Bool { activeProfile?.isUsable ?? false }
@@ -135,10 +187,12 @@ final class DashboardStore: ObservableObject {
         stopAutoRefresh()
         clearData()
         throughput.reset()
+        lastCPUTicks = nil
         vpnThroughput.reset()
         systemMetrics.reset()
         gatewayMetrics.reset()
         missingEndpoints.removeAll()
+        faultCounts.removeAll()
         activeProfile = registry.active
         await client.update(profile: registry.active ?? ServerProfile())
         guard isConfigured else {
@@ -155,14 +209,20 @@ final class DashboardStore: ObservableObject {
         store.system = nil; store.version = nil; store.states = nil; store.carp = nil
         store.interfaces = []; store.gateways = []; store.services = []
         store.leases = []; store.arp = []; store.staticMappings = []
+        store.hostOverrides = []
         store.firewallLog = []; store.systemLog = []; store.authLog = []; store.dhcpLog = []; store.openvpnLog = []
         store.openvpnServers = []; store.openvpnClients = []; store.ipsecSAs = []
         store.wireguardTunnels = []; store.wireguardPeers = []
         store.rules = []; store.aliases = []; store.portForwards = []
         store.configHistory = []; store.certificates = []; store.packages = []; store.tables = []
+        store.notices = []; store.filesystems = []; store.dyndns = []
         store.isLoadingTables = false
         store.isLoadingFirewallObjects = false
         store.hasLoadedFirewallObjects = false
+        store.hasLoadedHAProxy = false
+        store.hasLoadedACME = false
+        store.acmeCertificates = []; store.acmeAccounts = []
+        store.haproxyFrontends = []; store.haproxyBackends = []
         store.alerts = []; store.errors = [:]; store.connectionError = nil; store.lastRefresh = nil
     }
 
@@ -172,6 +232,14 @@ final class DashboardStore: ObservableObject {
     }
 
     // MARK: Refresh
+
+    /// A manual refresh clears abandoned sections: the person asking is the
+    /// signal that something may have changed.
+    func refreshManually() async {
+        faultCounts.removeAll()
+        missingEndpoints.removeAll()
+        await refresh()
+    }
 
     func refresh() async {
         guard isConfigured else { return }
@@ -195,15 +263,24 @@ final class DashboardStore: ObservableObject {
                 succeeded += 1
                 succeededSections.insert(section)
                 return true
-            } catch let err as APIError {
+            } catch let err as RPCError {
                 switch err {
                 case .cancelled:
                     break
-                case .unauthorized, .noAPIKey, .tls, .notConfigured, .badURL, .forbidden:
+                case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
                     fatal = err.localizedDescription
-                case .notFound:
+                case .fault:
+                    // A PHP error in a snippet: the function is missing on this
+                    // pfSense version, the shape is not what it expected, or
+                    // the account lacks the privilege. Every one of these
+                    // leaves a permanent notice on the firewall, so the section
+                    // is counted and eventually abandoned.
+                    let count = (faultCounts[section] ?? 0) + 1
+                    faultCounts[section] = count
                     if optional { missingEndpoints.insert(section) }
-                    freshErrors[section] = err.localizedDescription
+                    freshErrors[section] = count >= Self.faultLimit
+                        ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
+                        : err.localizedDescription
                 default:
                     freshErrors[section] = err.localizedDescription
                 }
@@ -215,6 +292,8 @@ final class DashboardStore: ObservableObject {
 
         // Core status
         await run(.system)
+        deriveCPUUsage()
+        seedFavouritesIfNeeded()
         await run(.version)
         await run(.states)
         if let current = states?.current {
@@ -245,6 +324,12 @@ final class DashboardStore: ObservableObject {
         await run(.leases)
         await run(.arp)
         await run(.statics, optional: true)
+        await run(.hostOverrides, optional: true)
+        // Aliases name clients, so they are needed on every refresh — not only
+        // when somebody opens the Firewall tab. Rules and port forwards stay
+        // on demand: 98 rules is a large payload for a screen most people
+        // never look at.
+        await run(.aliases, optional: true)
         guard !Task.isCancelled else { isRefreshing = false; return }
 
         // Logs — save previous counts before refreshing.
@@ -255,10 +340,14 @@ final class DashboardStore: ObservableObject {
         )
         await run(.firewallLog)
         prevFirewallCounts = savedCounts
-        await run(.systemLog)
-        await run(.authLog)
-        await run(.dhcpLog, optional: true)
-        await run(.openvpnLog, optional: true)
+        // Only the filter log is fetched on the timer, because the Overview
+        // shows its counts. The other four are loaded when the Logs tab is
+        // opened.
+        //
+        // Each is a quarter-megabyte read and a separate exec_php, and pfSense
+        // serialises XML-RPC — so four of them added seconds to every refresh
+        // for a screen that is usually not on the display.
+        await loadSecondaryLogsIfNeeded()
 
         buildFirewallLogIndex()
 
@@ -267,7 +356,6 @@ final class DashboardStore: ObservableObject {
         await run(.openvpnClients, optional: true)
         await run(.ipsec, optional: true)
         await run(.wireguard, optional: true)
-        await run(.wireguardPeers, optional: true)
 
         // Track VPN throughput from cumulative byte counters.
         for srv in openvpnServers {
@@ -294,9 +382,20 @@ final class DashboardStore: ObservableObject {
 
         // System detail
         await run(.carp, optional: true)
-        await run(.configHistory, optional: true)
         await run(.certificates, optional: true)
         await run(.packages, optional: true)
+
+        // Ask the repository at most every six hours, in the background.
+        //
+        // Not awaited: it takes seconds and the rest of the dashboard should
+        // not wait behind it. Without this there would be no package alert
+        // unless somebody remembered to press a button, which is not an alert.
+        if shouldCheckPackages {
+            Task { await self.checkPackageUpdates() }
+        }
+        await run(.filesystems)
+        await run(.notices, optional: true)
+        await run(.dyndns, optional: true)
         guard !Task.isCancelled else { isRefreshing = false; return }
 
         errors = freshErrors
@@ -310,6 +409,7 @@ final class DashboardStore: ObservableObject {
         connectionError = succeeded == 0 ? fatal : nil
         lastRefresh = Date()
         alerts = VaktpostAlert.build(from: self)
+        pruneAcknowledgements()
         publishSnapshot()
     }
 
@@ -321,9 +421,19 @@ final class DashboardStore: ObservableObject {
         isLoadingTables = true
         defer { isLoadingTables = false }
         do {
-            tables = try await client.tables()
-            blockedHosts = tables.filter { $0.isNotable && $0.entryCount > 0 }
-            errors[.tables] = nil
+            if let fetched = try await client.pfTables() {
+                tables = fetched
+                blockedHosts = fetched.filter { $0.isNotable && $0.entryCount > 0 }
+                errors[.tables] = nil
+            } else {
+                // Reachable only through pfctl, which is a shell, or a PHP
+                // accessor this pfSense does not have. Said plainly rather
+                // than shown as an empty list, which would read as "nothing
+                // is blocked".
+                tables = []
+                blockedHosts = []
+                errors[.tables] = "This pfSense exposes no way to read pf tables without a shell, so blocked hosts cannot be listed. Check Diagnostics → Tables in the webConfigurator."
+            }
         } catch {
             errors[.tables] = error.localizedDescription
         }
@@ -334,6 +444,7 @@ final class DashboardStore: ObservableObject {
         guard isConfigured else { return }
         await fetch(section)
         alerts = VaktpostAlert.build(from: self)
+        pruneAcknowledgements()
         publishSnapshot()
     }
 
@@ -370,6 +481,8 @@ final class DashboardStore: ObservableObject {
             arp = try await client.arpTable()
         case .statics:
             staticMappings = try await client.staticMappings()
+        case .hostOverrides:
+            hostOverrides = try await client.hostOverrides()
         case .firewallLog:
             firewallLog = try await client.firewallLog(limit: profile.logLimit)
         case .systemLog:
@@ -387,25 +500,37 @@ final class DashboardStore: ObservableObject {
         case .ipsec:
             ipsecSAs = try await client.ipsecSAs()
         case .wireguard:
-            wireguardTunnels = try await client.wireguardTunnels()
-        case .wireguardPeers:
-            wireguardPeers = try await client.wireguardPeers()
+            let wg = try await client.wireguard()
+            wireguardTunnels = wg.tunnels
+            wireguardPeers = wg.peers
         case .firewall:
             await loadFirewallObjects()
         case .aliases:
-            await loadFirewallObjects()
+            aliases = try await client.firewallAliases()
         case .portForwards:
             await loadFirewallObjects()
         case .carp:
             carp = try await client.carp()
-        case .configHistory:
-            configHistory = try await client.configHistory()
         case .certificates:
             certificates = try await client.certificates()
         case .packages:
             packages = try await client.packages()
-        case .tables:
-            await loadTables()
+        case .filesystems:
+            filesystems = try await client.filesystems()
+        case .notices:
+            notices = try await client.notices()
+        case .dyndns:
+            dyndns = try await client.dyndns()
+
+        // Sections the refresh timer does not drive.
+        //
+        // `haproxy` is loaded by its own screen — a firewall running it has
+        // dozens of backends and none of it changes minute to minute.
+        // The other three are not reachable over XML-RPC without shelling out,
+        // which the snippet rules forbid; they stay as cases so the enum is
+        // exhaustive and the views referencing them compile with empty data.
+        case .haproxy, .acme, .configHistory, .tables:
+            break
         }
     }
 
@@ -414,6 +539,138 @@ final class DashboardStore: ObservableObject {
     /// These payloads are large and relatively static. Most users never look
     /// at them, so pulling them every refresh cycle wastes bandwidth and keeps
     /// them in memory for the entire session.
+    /// The four logs that are not the filter log.
+    ///
+    /// Loaded when the Logs tab appears and refreshed while it is visible,
+    /// rather than on every cycle.
+    private(set) var wantsSecondaryLogs = false
+
+    func beginSecondaryLogs() async {
+        guard !wantsSecondaryLogs else { return }
+        wantsSecondaryLogs = true
+        await loadSecondaryLogsIfNeeded()
+    }
+
+    private func loadSecondaryLogsIfNeeded() async {
+        guard wantsSecondaryLogs else { return }
+        await runSection(.systemLog)
+        await runSection(.authLog)
+        await runSection(.dhcpLog)
+        await runSection(.openvpnLog)
+    }
+
+    /// Runs one section outside the main refresh's bookkeeping.
+    private func runSection(_ section: Section) async {
+        guard isConfigured else { return }
+        do {
+            try await fetchOne(section)
+            errors[section] = nil
+        } catch {
+            errors[section] = error.localizedDescription
+        }
+    }
+
+    func loadHAProxy() async {
+        guard isConfigured, !hasLoadedHAProxy else { return }
+        hasLoadedHAProxy = true
+        do {
+            if let result = try await client.haproxy() {
+                haproxyInstalled = true
+                haproxyFrontends = result.frontends
+                haproxyBackends = result.backends
+                haproxyStatsAccessors = result.statsAccessors
+            } else {
+                haproxyInstalled = false
+            }
+            errors[.haproxy] = nil
+        } catch {
+            hasLoadedHAProxy = false   // let a pull-to-refresh try again
+            errors[.haproxy] = error.localizedDescription
+        }
+    }
+
+    func loadACME() async {
+        guard isConfigured, !hasLoadedACME else { return }
+        hasLoadedACME = true
+        do {
+            if let result = try await client.acme() {
+                acmeInstalled = true
+                acmeCertificates = result.certificates
+                acmeAccounts = result.accounts
+            } else {
+                acmeInstalled = false
+            }
+            errors[.acme] = nil
+        } catch {
+            hasLoadedACME = false
+            errors[.acme] = error.localizedDescription
+        }
+    }
+
+    /// Polls one interface's counters until the task is cancelled.
+    ///
+    /// Driven by the detail screen's `.task`, so SwiftUI cancels it when the
+    /// screen goes away — which matters more than usual here. Every poll is an
+    /// `exec_php` that pfSense serialises against the webConfigurator, so a
+    /// monitor left running in the background would make the web UI feel slow
+    /// for as long as the app was open.
+    ///
+    /// Two seconds is a deliberate floor. It is fast enough to watch a
+    /// transfer start and stop, and slow enough that the firewall is not doing
+    /// nothing but answering this app.
+    func monitorInterface(_ key: String, interval: Duration = .seconds(2)) async {
+        liveInterfaceKey = key
+        liveThroughput.reset()
+        liveError = nil
+        defer {
+            liveInterfaceKey = nil
+            liveError = nil
+        }
+
+        while !Task.isCancelled {
+            do {
+                let counters = try await client.interfaceCounters()
+                guard !Task.isCancelled else { return }
+                liveThroughput.ingest(counters)
+                liveError = nil
+            } catch let error as RPCError {
+                if case .cancelled = error { return }
+                liveError = error.localizedDescription
+            } catch {
+                liveError = error.localizedDescription
+            }
+            try? await Task.sleep(for: interval)
+        }
+    }
+
+    /// Certificates close enough to expiry to badge.
+    var expiringCertificateCount: Int {
+        certificates.filter { !$0.isACME && ($0.health == .warn || $0.health == .bad) }.count
+    }
+
+    /// The certificate an ACME entry produced.
+    ///
+    /// Matched on name, which is what the package uses for both — a
+    /// certificate named `example.se` in the store is the one the ACME entry
+    /// `example.se` issued. Returns nil when nothing matches, which is a real
+    /// state: an entry configured but never successfully run.
+    func issuedCertificate(for entry: ACMECertificate) -> CertificateInfo? {
+        certificates.first {
+            !$0.isCA && ($0.descr == entry.name || $0.descr == entry.descr)
+        }
+    }
+
+    /// ACME entries that will not renew themselves.
+    var stalledACME: [ACMECertificate] { acmeCertificates.filter { !$0.enabled } }
+
+    /// Backends HAProxy is not health-checking.
+    ///
+    /// Worth an alert: a backend with no check keeps receiving traffic after
+    /// its servers die, and nothing else on the firewall will mention it.
+    var unmonitoredBackends: [HAProxyBackend] {
+        haproxyBackends.filter { !$0.isMonitored && !$0.servers.isEmpty }
+    }
+
     func loadFirewallObjects() async {
         guard isConfigured, !isLoadingFirewallObjects, !hasLoadedFirewallObjects else { return }
         isLoadingFirewallObjects = true
@@ -425,12 +682,8 @@ final class DashboardStore: ObservableObject {
         } catch {
             errors[.firewall] = error.localizedDescription
         }
-        do {
-            aliases = try await client.firewallAliases()
-            errors[.aliases] = nil
-        } catch {
-            errors[.aliases] = error.localizedDescription
-        }
+        // Aliases are not fetched here: the standard refresh already has them,
+        // because they name clients.
         do {
             portForwards = try await client.portForwards()
             errors[.portForwards] = nil
@@ -440,6 +693,393 @@ final class DashboardStore: ObservableObject {
     }
 
     var packagesNeedingUpdate: [PackageInfo] { packages.filter(\.updateAvailable) }
+
+    // MARK: Package updates
+
+    @Published var isCheckingPackages = false
+    @Published var packageCheckResult: String?
+
+    /// When the repository was last asked.
+    ///
+    /// Persisted so a relaunch does not repeat the check, and so the screen can
+    /// say how old the answer is — "no updates" from a week ago is not the same
+    /// claim as "no updates" from this morning.
+    @Published private(set) var lastPackageCheck: Date? {
+        didSet {
+            UserDefaults.standard.set(lastPackageCheck?.timeIntervalSince1970 ?? 0,
+                                      forKey: "packages.lastCheck")
+        }
+    }
+
+    /// Six hours.
+    ///
+    /// The check costs a network round trip from the firewall to the package
+    /// repository, and package releases happen weekly at most — so this is
+    /// about being told within a working day rather than within a minute.
+    /// Without it there would be no package alert at all unless somebody
+    /// remembered to press a button, which is not an alert.
+    private static let packageCheckInterval: TimeInterval = 6 * 3600
+
+    var packageCheckAge: String? {
+        guard let lastPackageCheck else { return nil }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f.localizedString(for: lastPackageCheck, relativeTo: Date())
+    }
+
+    private var shouldCheckPackages: Bool {
+        guard !isCheckingPackages else { return false }
+        guard let last = lastPackageCheck else { return true }
+        return Date().timeIntervalSince(last) > Self.packageCheckInterval
+    }
+
+    /// Checks installed packages against the repository.
+    ///
+    /// Deliberately manual. The call reaches the package repository over the
+    /// network and takes seconds, and doing that on a thirty-second timer
+    /// would make the firewall fetch a package index all day to answer a
+    /// question that changes weekly.
+    func checkPackageUpdates() async {
+        guard isConfigured, !isCheckingPackages else { return }
+        isCheckingPackages = true
+        packageCheckResult = nil
+        defer { isCheckingPackages = false }
+
+        do {
+            if let checked = try await client.packageUpdates() {
+                // Merge rather than replace: the repository knows versions, the
+                // configuration knows what is installed, and a package the
+                // repository has dropped should not vanish from the list.
+                let byName = Dictionary(uniqueKeysWithValues: checked.map { ($0.name, $0) })
+                packages = packages.map { byName[$0.name] ?? $0 }
+                for extra in checked where !packages.contains(where: { $0.name == extra.name }) {
+                    packages.append(extra)
+                }
+                    lastPackageCheck = Date()
+                let stale = packages.filter(\.updateAvailable).count
+                packageCheckResult = stale == 0
+                    ? "Everything is up to date."
+                    : "\(stale) package\(stale == 1 ? "" : "s") can be updated."
+            } else {
+                packageCheckResult = "This pfSense has no way to check versions without a shell."
+            }
+            errors[.packages] = nil
+        } catch {
+            packageCheckResult = nil
+            errors[.packages] = error.localizedDescription
+        }
+    }
+
+    // MARK: Firmware
+
+    @Published var isCheckingFirmware = false
+    @Published var firmwareCheckResult: String?
+
+    /// Re-reads the firmware version comparison.
+    ///
+    /// Cheap — `get_system_pkg_version()` does not hit the network the way the
+    /// package check does — but still a button, because the answer it gives is
+    /// the same one the last refresh already fetched unless something changed
+    /// on the firewall.
+    func checkFirmware() async {
+        guard isConfigured, !isCheckingFirmware else { return }
+        isCheckingFirmware = true
+        defer { isCheckingFirmware = false }
+        do {
+            version = try await client.systemVersion()
+            errors[.version] = nil
+            firmwareCheckResult = version?.updateAvailable == true
+                ? "An update is available."
+                : "Checked just now — up to date."
+        } catch {
+            firmwareCheckResult = nil
+            errors[.version] = error.localizedDescription
+        }
+    }
+
+    // MARK: Favourite interfaces
+
+    /// Interfaces pinned to the Overview.
+    ///
+    /// Fifteen interfaces is too many for a dashboard and one is too few — a
+    /// firewall with two WANs and a handful of VLANs has three or four worth
+    /// watching, and which three is a matter of what you run, not something
+    /// the app can work out. Stored by series key so a VLAN and its parent
+    /// lagg stay distinct.
+    @Published var favouriteInterfaces: Set<String> = [] {
+        didSet {
+            UserDefaults.standard.set(Array(favouriteInterfaces), forKey: "interfaces.favourites")
+        }
+    }
+
+    func toggleFavourite(_ iface: InterfaceStat) {
+        if favouriteInterfaces.contains(iface.seriesKey) {
+            favouriteInterfaces.remove(iface.seriesKey)
+        } else {
+            favouriteInterfaces.insert(iface.seriesKey)
+        }
+    }
+
+    func isFavourite(_ iface: InterfaceStat) -> Bool {
+        favouriteInterfaces.contains(iface.seriesKey)
+    }
+
+    /// What the Overview shows.
+    ///
+    /// Favourites if any are set, otherwise the WAN — the previous behaviour,
+    /// kept as the default so the dashboard is useful before anybody has
+    /// chosen anything.
+    var overviewInterfaces: [InterfaceStat] {
+        interfaces.filter { favouriteInterfaces.contains($0.seriesKey) }
+    }
+
+    /// Picks sensible defaults the first time interfaces are seen.
+    ///
+    /// WAN and LAN, because on almost every firewall those are the two worth a
+    /// glance. Chosen once and recorded, so removing one sticks — a default
+    /// that reasserts itself on every launch is not a default, it is a
+    /// setting the person does not have.
+    private func seedFavouritesIfNeeded() {
+        guard !interfaces.isEmpty else { return }
+        guard !UserDefaults.standard.bool(forKey: "interfaces.favouritesSeeded") else { return }
+        UserDefaults.standard.set(true, forKey: "interfaces.favouritesSeeded")
+
+        let wanted = interfaces.filter { iface in
+            let name = iface.name.lowercased()
+            let internalName = (iface.internalName ?? "").lowercased()
+            return internalName == "wan" || internalName == "lan"
+                || name.hasPrefix("wan") || name.hasPrefix("lan")
+        }
+        favouriteInterfaces.formUnion(wanted.map(\.seriesKey))
+    }
+
+    // MARK: Alert silencing
+
+    /// Categories the person has chosen not to be told about.
+    ///
+    /// Alerts are derived on the device from status already fetched, so this
+    /// filters what is shown rather than what is measured — a silenced
+    /// category still appears on its own screen, it just stops driving the
+    /// badge and the Overview banner.
+    @Published var mutedAlertCategories: Set<String> = [] {
+        didSet {
+            // A new key, deliberately.
+            //
+            // `alerts.muted` was written by a build where the switches meant
+            // the opposite thing, so anyone who touched that screen has a
+            // stored set that now reads inverted — every kind silenced when
+            // they had silenced nothing. Changing what a stored value means
+            // without changing where it is stored is a migration, and this is
+            // the cheapest correct one: start again from the default.
+            UserDefaults.standard.set(Array(mutedAlertCategories), forKey: "alerts.hidden.v2")
+        }
+    }
+
+    @Published var alertsSilenced: Bool = false {
+        didSet { UserDefaults.standard.set(alertsSilenced, forKey: "alerts.silenced") }
+    }
+
+    /// Individual alerts the person has acknowledged.
+    ///
+    /// Keyed by signature rather than by identity, so the same condition
+    /// reported a degree hotter stays acknowledged. Persisted, because an
+    /// acknowledgement that expires when the app is backgrounded is not one.
+    ///
+    /// This is separate from silencing a whole category: silencing says "never
+    /// tell me about certificates", acknowledging says "I have seen this one".
+    /// Most things people want to stop seeing are the second kind.
+    @Published var acknowledgedAlerts: Set<String> = [] {
+        didSet {
+            UserDefaults.standard.set(Array(acknowledgedAlerts), forKey: "alerts.acknowledged")
+        }
+    }
+
+    func acknowledge(_ alert: VaktpostAlert) {
+        acknowledgedAlerts.insert(alert.signature)
+    }
+
+    /// Forgets acknowledgements for conditions that are no longer true.
+    ///
+    /// Called after each refresh. Without it, acknowledging a gateway that was
+    /// down would silence that gateway going down again next month — the
+    /// acknowledgement would outlive the thing it was about.
+    private func pruneAcknowledgements() {
+        let present = Set(alerts.map(\.signature))
+        let stale = acknowledgedAlerts.subtracting(present)
+        if !stale.isEmpty { acknowledgedAlerts.subtract(stale) }
+    }
+
+    func unacknowledgeAll() {
+        acknowledgedAlerts.removeAll()
+    }
+
+    /// Acknowledged conditions that are still true.
+    var acknowledgedButPresent: [VaktpostAlert] {
+        alerts.filter { acknowledgedAlerts.contains($0.signature) }
+    }
+
+    /// Alerts after silencing. Everything on screen uses this; `alerts` stays
+    /// the unfiltered truth so the Alerts screen can say what is hidden.
+    var visibleAlerts: [VaktpostAlert] {
+        if alertsSilenced { return [] }
+        return alerts.filter {
+            !mutedAlertCategories.contains($0.category.rawValue)
+                && !acknowledgedAlerts.contains($0.signature)
+        }
+    }
+
+    /// Hidden by silencing, not by acknowledgement.
+    ///
+    /// Subtracting one count from the other would include acknowledged alerts,
+    /// which are reported separately — the screen would say the same alert was
+    /// hidden twice for two different reasons.
+    var silencedAlertCount: Int {
+        if alertsSilenced { return alerts.count }
+        return alerts.filter { mutedAlertCategories.contains($0.category.rawValue) }.count
+    }
+
+    /// What the firewall calls an interface.
+    ///
+    /// Clients, ARP entries and rules all identify their interface differently:
+    /// `lagg0.100` is the device, `opt7` is pfSense's internal handle, and
+    /// `VLAN_100` is what the administrator named it and what the
+    /// webConfigurator shows everywhere. Only the last is worth putting on
+    /// screen — the other two require a lookup table nobody carries in their
+    /// head.
+    ///
+    /// Falls back to the raw value, so an interface the app has not seen is
+    /// still identified rather than blank.
+    func interfaceLabel(for raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let lowered = raw.lowercased()
+        for iface in interfaces {
+            if iface.device.lowercased() == lowered { return iface.name }
+            if iface.internalName?.lowercased() == lowered { return iface.name }
+            if iface.name.lowercased() == lowered { return iface.name }
+        }
+        return raw
+    }
+
+    /// What an alias actually contains, with nested aliases flattened.
+    ///
+    /// A rule reading `alias_host_nas_hyperbackup → alias_port_hyper_backup`
+    /// is precise and tells you nothing about what it permits without opening
+    /// two other pages. Aliases can contain other aliases — that one holds
+    /// four — so this recurses, with a depth limit because pfSense does not
+    /// forbid a cycle and a stack overflow is a poor way to render a rule.
+    ///
+    /// Returns nil when the name is not an alias, so callers can tell "this is
+    /// a literal address" from "this is an alias that resolved to nothing".
+    func resolveAlias(_ name: String, depth: Int = 0) -> [String]? {
+        guard depth < 4 else { return [] }
+        guard let alias = aliases.first(where: { $0.name == name }) else { return nil }
+
+        var out: [String] = []
+        for member in alias.addresses {
+            if let nested = resolveAlias(member, depth: depth + 1) {
+                out.append(contentsOf: nested)
+            } else {
+                out.append(member)
+            }
+        }
+        // Order preserved, duplicates dropped: two nested aliases often share
+        // a host, and listing it twice reads as a mistake.
+        var seen = Set<String>()
+        return out.filter { seen.insert($0).inserted }
+    }
+
+    /// One value with its aliases replaced by what they contain.
+    ///
+    /// Takes an address or a port, never `host:port` — splitting a joined
+    /// field on ":" cannot work for IPv6, where the address is full of them.
+    /// The two halves are resolved separately by the caller.
+    ///
+    /// Long lists are capped: `alias_url_cloudflare` holds twenty-two networks
+    /// and a rule row is not the place for them.
+    func resolvedValue(_ value: String, limit: Int = 3) -> String {
+        let name = value.trimmingCharacters(in: .whitespaces)
+        guard let members = resolveAlias(name), !members.isEmpty else { return name }
+        if members.count <= limit { return members.joined(separator: ", ") }
+        return members.prefix(limit).joined(separator: ", ") + " +\(members.count - limit)"
+    }
+
+    /// A rule field expanded for display, or nil if it is not an alias.
+    ///
+    /// Capped: an alias holding a subnet list runs to hundreds, and a rule row
+    /// is not the place to print them. The count is kept honest.
+    func expandedAlias(_ name: String, limit: Int = 6) -> String? {
+        guard let members = resolveAlias(name), !members.isEmpty else { return nil }
+        if members.count <= limit { return members.joined(separator: ", ") }
+        let shown = members.prefix(limit).joined(separator: ", ")
+        return "\(shown) +\(members.count - limit) more"
+    }
+
+    /// The best name the firewall has for an address, or nil.
+    ///
+    /// Shared by the Clients list and the ARP table so one device is not
+    /// called two different things on two screens.
+    func nameForAddress(_ ip: String) -> String? {
+        if let client = clients.first(where: { $0.ip == ip }), client.name != ip {
+            return client.name
+        }
+        return nil
+    }
+
+    /// Turns cumulative CPU ticks into a percentage.
+    ///
+    /// `cpu_usage()` on pfSense reports total and idle ticks since boot, not a
+    /// rate — the same shape as the interface byte counters. A percentage is
+    /// the change in idle ticks against the change in total ticks between two
+    /// samples, so like throughput it needs two refreshes before it can show
+    /// anything, and shows nothing rather than zero until then.
+    private func deriveCPUUsage() {
+        guard var snapshot = system,
+              let total = snapshot.cpuTicksTotal,
+              let idle = snapshot.cpuTicksIdle
+        else { return }
+        defer { lastCPUTicks = (total, idle) }
+
+        guard let previous = lastCPUTicks else { return }
+        let totalDelta = total - previous.total
+        let idleDelta = idle - previous.idle
+
+        // Counters reset on reboot, and a zero interval means the same sample
+        // twice. Either way, start again rather than chart a spike.
+        guard totalDelta > 0, idleDelta >= 0, idleDelta <= totalDelta else {
+            lastCPUTicks = nil
+            return
+        }
+
+        let busy = (1 - Double(idleDelta) / Double(totalDelta)) * 100
+        snapshot.cpuUsage = min(100, max(0, busy))
+        system = snapshot
+    }
+
+    /// Dyndns entries whose last-pushed address no longer matches the address
+    /// on the interface they watch.
+    ///
+    /// This is the failure that matters and the one nothing else reports:
+    /// pfSense keeps no update history, so a dyndns client that quietly stopped
+    /// working looks identical to one that has had nothing to do. Comparing the
+    /// cache against the live interface address catches it.
+    var staleDyndns: [DyndnsEntry] {
+        dyndns.filter { entry in
+            guard entry.enabled, let cached = entry.cachedAddress, !cached.isEmpty else { return false }
+            guard let ifName = entry.interfaceName,
+                  let iface = interfaces.first(where: {
+                      $0.device == ifName || $0.name.lowercased() == ifName.lowercased()
+                  }),
+                  let current = iface.ipv4, !current.isEmpty
+            else { return false }
+            return cached != current
+        }
+    }
+
+    var criticalNotices: [SystemNotice] { notices }
+
+    var fullFilesystems: [Filesystem] {
+        filesystems.filter { $0.health == .warn || $0.health == .bad }
+    }
 
     // MARK: Auto refresh
 
@@ -497,7 +1137,8 @@ final class DashboardStore: ObservableObject {
     // MARK: Derived
 
     var clients: [NetworkClient] {
-        NetworkClient.merge(leases: leases, arp: arp, statics: staticMappings)
+        NetworkClient.merge(leases: leases, arp: arp, statics: staticMappings,
+                            overrides: hostOverrides, aliases: aliases)
     }
 
     var interfacesUp: Int { interfaces.filter(\.isUp).count }
@@ -540,8 +1181,11 @@ final class DashboardStore: ObservableObject {
         return passedRecently - prevFirewallCounts.passed
     }
 
+    /// The tab badge. Silenced categories do not contribute — a badge that
+    /// counts things the person has asked not to see is just a red dot they
+    /// learn to ignore.
     var criticalAlertCount: Int {
-        alerts.filter { $0.severity == .bad || $0.severity == .warn }.count
+        visibleAlerts.filter { $0.severity == .bad || $0.severity == .warn }.count
     }
 
     var hasVPN: Bool {

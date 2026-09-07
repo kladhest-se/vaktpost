@@ -118,7 +118,7 @@ final class LiveShapeTests: XCTestCase {
       "mtu": "1500",
       "enable": false,
       "status": "up",
-      "ipaddr": "178.174.216.246",
+      "ipaddr": "203.0.113.9",
       "subnet": "255.255.255.224",
       "linklocal": "fe80::3eec:efff:fe3d:4638%ix0",
       "ipaddrv6": null,
@@ -132,7 +132,7 @@ final class LiveShapeTests: XCTestCase {
       "outpkts": 434801069,
       "dhcplink": "up",
       "media": "10Gbase-LR ",
-      "gateway": "178.174.216.225",
+      "gateway": "203.0.113.1",
       "gatewayv6": null
     }
     """
@@ -146,7 +146,7 @@ final class LiveShapeTests: XCTestCase {
 
     func testDottedNetmaskRendersAsAPrefixLength() throws {
         let iface = InterfaceStat(try dict(interfaceJSON))
-        XCTAssertEqual(iface.addressLine, "178.174.216.246/27")
+        XCTAssertEqual(iface.addressLine, "203.0.113.9/27")
     }
 
     func testPrefixLengthAcceptsEitherNotation() {
@@ -173,7 +173,7 @@ final class LiveShapeTests: XCTestCase {
         XCTAssertEqual(iface.inBytes, 689_707_905_852)
         XCTAssertEqual(iface.outBytes, 515_608_849_408)
         XCTAssertEqual(iface.mtu, "1500")
-        XCTAssertEqual(iface.gateway, "178.174.216.225")
+        XCTAssertEqual(iface.gateway, "203.0.113.1")
         // The API pads this with a trailing space.
         XCTAssertEqual(iface.media, "10Gbase-LR")
     }

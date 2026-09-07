@@ -32,7 +32,7 @@ struct NetworkView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
             }
-            .refreshable { await store.refresh() }
+            .refreshable { await store.refreshManually() }
         }
         .background(theme.bg.ignoresSafeArea())
         .searchable(text: $query, prompt: pane == .interfaces ? "Filter interfaces" : "Filter by IP, MAC or host")
@@ -66,7 +66,28 @@ struct NetworkView: View {
                     .foregroundStyle(theme.labelFaint)
                 Spacer()
             }
-            ForEach(filteredInterfaces) { InterfaceCard(iface: $0) }
+            ForEach(filteredInterfaces) { iface in
+                // Tappable: the card is a summary, the detail screen watches
+                // the same interface at two-second resolution.
+                NavigationLink {
+                    InterfaceDetailView(iface: iface)
+                } label: {
+                    InterfaceCard(iface: iface)
+                }
+                .buttonStyle(.plain)
+                // `swipeActions` would do nothing here — it only works inside a
+                // List, and this is a LazyVStack. A long press works, and the
+                // card carries a visible star as well, since a gesture with no
+                // affordance is a feature nobody finds.
+                .contextMenu {
+                    Button {
+                        store.toggleFavourite(iface)
+                    } label: {
+                        Label(store.isFavourite(iface) ? "Remove from Overview" : "Show on Overview",
+                              systemImage: store.isFavourite(iface) ? "star.slash" : "star")
+                    }
+                }
+            }
         }
     }
 
@@ -98,19 +119,31 @@ struct NetworkView: View {
                 Slab(rail: .info) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                        let display = entry.hostname.flatMap { $0.isEmpty ? nil : $0 } ?? entry.ip
-                        Text(display)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(theme.label)
+                            // Named the same way the Clients tab does: the ARP
+                            // table writes a literal "?" when reverse DNS
+                            // fails, and a firewall alias or host override is
+                            // a better label than either.
+                            Text(store.nameForAddress(entry.ip) ?? entry.ip)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(theme.label)
                             Spacer()
-                            if let iface = entry.interfaceName {
-                                StatusPill(text: iface, health: .info)
+                            if let iface = entry.interfaceName, !iface.isEmpty {
+                                // An interface name is an identifier, not a
+                                // label — uppercasing turns "ix0" into "IX0",
+                                // which reads as the letter O.
+                                Text(store.interfaceLabel(for: iface) ?? iface)
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(theme.info)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(theme.info.opacity(0.16))
+                                    .clipShape(Capsule())
                             }
                         }
                         FieldRow(key: "IP", value: entry.ip)
                         FieldRow(key: "MAC", value: entry.mac)
-                        if let e = entry.expires, !e.isEmpty {
-                            FieldRow(key: "Expires", value: e)
+                        if let expiry = entry.expiryDescription {
+                            FieldRow(key: "Expires", value: expiry)
                         }
                     }
                 }
@@ -130,6 +163,19 @@ struct InterfaceCard: View {
         Slab(rail: iface.health) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
+                    // Filled when pinned to the Overview. Tapping the star
+                    // toggles it without opening the interface, so the two
+                    // actions on this card stay distinct.
+                    Button {
+                        store.toggleFavourite(iface)
+                    } label: {
+                        Image(systemName: store.isFavourite(iface) ? "star.fill" : "star")
+                            .font(.system(size: 12))
+                            .foregroundStyle(store.isFavourite(iface)
+                                             ? theme.accentColor : theme.labelFaint)
+                    }
+                    .buttonStyle(.plain)
+
                     Text(iface.name)
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(theme.label)
@@ -148,7 +194,7 @@ struct InterfaceCard: View {
 
                 ThroughputChart(
                     store: store,
-                    device: iface.device,
+                    device: iface.seriesKey,
                     height: 38
                 )
 

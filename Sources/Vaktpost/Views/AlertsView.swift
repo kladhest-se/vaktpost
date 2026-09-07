@@ -7,36 +7,59 @@ struct AlertsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                if store.alerts.isEmpty {
+                if !store.acknowledgedButPresent.isEmpty {
+                    Slab(rail: .idle) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("\(store.acknowledgedButPresent.count) acknowledged")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(theme.labelMuted)
+                                Spacer()
+                                Button("Show again") { store.unacknowledgeAll() }
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(theme.accentColor)
+                            }
+                            // Named rather than counted: "3 acknowledged" tells
+                            // you nothing about whether you would still stand
+                            // by having acknowledged them.
+                            ForEach(store.acknowledgedButPresent) { alert in
+                                Text(alert.title)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(theme.labelFaint)
+                            }
+                        }
+                    }
+                }
+
+                if store.silencedAlertCount > 0 {
+                    // Said plainly. A silenced alert that vanishes without
+                    // trace is indistinguishable from a condition that cleared.
+                    Text(store.alertsSilenced
+                         ? "All alerts are silenced in Settings."
+                         : "\(store.silencedAlertCount) hidden by silenced categories.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.labelFaint)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if store.visibleAlerts.isEmpty {
                     Notice(symbol: "checkmark.seal", title: "Nothing to report",
                            detail: "No gateway, service, capacity, certificate, HA or VPN condition is currently outside its threshold.",
                            health: .ok)
                 } else {
                     HStack {
-                        Text("\(store.alerts.count) condition\(store.alerts.count == 1 ? "" : "s")")
+                        Text("\(store.visibleAlerts.count) condition\(store.visibleAlerts.count == 1 ? "" : "s")")
                             .font(.system(size: 12, design: .monospaced))
                             .foregroundStyle(theme.labelFaint)
                         Spacer()
                     }
-                    ForEach(store.alerts) { alert in
-                        Slab(rail: alert.severity) {
-                            HStack(alignment: .top, spacing: 12) {
-                                Image(systemName: alert.category.symbol)
-                                    .font(.system(size: 15))
-                                    .foregroundStyle(alert.severity.color(theme))
-                                    .frame(width: 22)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(alert.title)
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundStyle(theme.label)
-                                    Text(alert.detail)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(theme.labelMuted)
-                                }
-                                Spacer(minLength: 0)
-                            }
-                        }
+                    // Long press to silence the kind. Settings has the same
+                    // switches, but nobody goes looking in Settings for a way
+                    // to stop something they are looking at right now.
+                    ForEach(store.visibleAlerts) { alert in
+                        alertRow(alert)
                     }
+
                 }
 
                 Slab(rail: .idle, title: "How these are produced") {
@@ -50,7 +73,51 @@ struct AlertsView: View {
             .padding(.bottom, 28)
         }
         .background(theme.bg.ignoresSafeArea())
-        .refreshable { await store.refresh() }
+        .refreshable { await store.refreshManually() }
         .navigationTitle("Alerts")
     }
+
+    /// One alert, with a way to stop seeing its kind.
+    ///
+    /// Long press rather than a visible control: silencing is a rare action and
+    /// a button on every row would compete with the alert itself. Settings has
+    /// the same switches, but nobody goes to Settings looking for a way to
+    /// quiet something they are staring at.
+    @ViewBuilder
+    private func alertRow(_ alert: VaktpostAlert) -> some View {
+        Slab(rail: alert.severity) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: alert.category.symbol)
+                    .font(.system(size: 15))
+                    .foregroundStyle(alert.severity.color(theme))
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(alert.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.label)
+                    Text(alert.detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.labelMuted)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+        .contextMenu {
+            // Acknowledging one condition first, because it is what people
+            // usually want: "I have seen this" rather than "never tell me
+            // about certificates again".
+            Button {
+                store.acknowledge(alert)
+            } label: {
+                Label("Acknowledge this", systemImage: "checkmark.circle")
+            }
+            Button {
+                store.mutedAlertCategories.insert(alert.category.rawValue)
+            } label: {
+                Label("Silence all \(alert.category.displayName.lowercased())",
+                      systemImage: "bell.slash")
+            }
+        }
+    }
+
 }

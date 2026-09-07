@@ -102,8 +102,12 @@ struct CertificateInfo: Identifiable {
     var validFrom: Date?
     var validUntil: Date?
     var isCA: Bool
+    /// Managed by the ACME package, and therefore shown on its own screen
+    /// rather than twice.
+    var isACME: Bool
 
     init(_ d: JSONDict, isCA: Bool = false) {
+        isACME = d.bool("is_acme") ?? false
         refID = d.string("refid", "id") ?? ""
         descr = d.string("descr", "description", "name") ?? "certificate"
         self.isCA = isCA
@@ -124,6 +128,18 @@ struct CertificateInfo: Identifiable {
             if let d = f.date(from: s) { return d }
         }
         return nil
+    }
+
+    /// How long is left, in the terms somebody actually asks in.
+    ///
+    /// "expired 3 days ago" and "3 days left" are different enough situations
+    /// that a signed number would be a poor way to say it.
+    var expiryDescription: String {
+        guard let days = daysRemaining else { return "no expiry date" }
+        if days < 0 { return "expired \(-days)d ago" }
+        if days == 0 { return "expires today" }
+        if days < 60 { return "\(days)d left" }
+        return "\(days / 30) months left"
     }
 
     var daysRemaining: Int? {
@@ -156,8 +172,21 @@ struct PackageInfo: Identifiable {
         shortName = d.string("shortname") ?? name
             .replacingOccurrences(of: "pfSense-pkg-", with: "")
         // Descriptions carry hard line breaks from the package manifest.
-        descr = d.string("descr", "description")?
-            .replacingOccurrences(of: "\n", with: " ")
+        // Manifests carry hard line breaks and markup — pfBlockerNG's runs to
+        // six lines with <br /> in it, which renders as literal tags in a
+        // one-line summary.
+        descr = d.string("descr", "description")
+            .map { raw -> String in
+                var text = raw.replacingOccurrences(of: "<br />", with: " ")
+                text = text.replacingOccurrences(of: "<br/>", with: " ")
+                text = text.replacingOccurrences(of: "<br>", with: " ")
+                text = text.replacingOccurrences(of: "\n", with: " ")
+                text = text.replacingOccurrences(of: "\t", with: " ")
+                while text.contains("  ") {
+                    text = text.replacingOccurrences(of: "  ", with: " ")
+                }
+                return text.trimmingCharacters(in: .whitespaces)
+            }
         installedVersion = d.string("installed_version")
         latestVersion = d.string("latest_version")
         updateAvailable = d.bool("update_available") ?? false
@@ -205,4 +234,337 @@ struct FirewallTable: Identifiable {
     static let notable = ["sshguard", "virusprot", "snort2c"]
 
     var isNotable: Bool { Self.notable.contains(name.lowercased()) }
+}
+
+// MARK: - Filesystems
+
+/// One mounted filesystem (`get_mounted_filesystems`).
+///
+/// The REST transport reported a single aggregate `disk_usage`, so a full
+/// `/var` on a box with a mostly-empty root looked like 40% and nobody noticed
+/// until logging stopped.
+struct Filesystem: Identifiable {
+    var id: String { mountpoint }
+    var mountpoint: String
+    var device: String?
+    var type: String?
+    var percentUsed: Double?
+    var totalSize: String?
+    var used: String?
+    var available: String?
+
+    init(_ d: JSONDict) {
+        mountpoint = d.string("mountpoint") ?? "/"
+        device = d.string("device", "filesystem")
+        type = d.string("type")
+        percentUsed = d.double("percent_used", "percent")
+        totalSize = d.string("total_size", "size")
+        used = d.string("used")
+        available = d.string("avail", "available")
+    }
+
+    var health: Health {
+        guard let percentUsed else { return .idle }
+        if percentUsed >= 92 { return .bad }
+        if percentUsed >= 80 { return .warn }
+        return .ok
+    }
+}
+
+// MARK: - Notices
+
+/// A pfSense system notice — what the bell icon in the webConfigurator shows.
+///
+/// Not reachable over the REST API at all. This is where pfSense puts the
+/// things it decided a human needed to see: failed package installs, gateway
+/// alarms, certificate problems, config-sync failures.
+struct SystemNotice: Identifiable {
+    var id: String { "\(createdAt)-\(notice)" }
+    var createdAt: String
+    var notice: String
+    var category: String?
+    var url: String?
+    var priority: Int?
+
+    init(_ d: JSONDict) {
+        createdAt = d.string("created_at", "time") ?? ""
+        // pfSense stores notices HTML-escaped, so a PHP stack trace arrives
+        // full of &gt; and &#039;.
+        notice = Self.decodeEntities(d.string("notice", "message") ?? "")
+        category = d.string("category", "id")
+        url = d.string("url")
+        priority = d.int("priority")
+    }
+
+    static func decodeEntities(_ raw: String) -> String {
+        var out = raw
+        for (entity, character) in [("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""),
+                                    ("&#039;", "'"), ("&apos;", "'"), ("&nbsp;", " ")] {
+            out = out.replacingOccurrences(of: entity, with: character)
+        }
+        // Last, or an escaped entity in the text would be decoded twice.
+        return out.replacingOccurrences(of: "&amp;", with: "&")
+    }
+
+    /// The first line, which for a PHP error is the part naming the problem.
+    ///
+    /// A notice can be an entire stack trace. Shown whole it fills the screen
+    /// and buries the five other alerts under it, so the list shows this and
+    /// offers the rest on tap.
+    var summary: String {
+        let firstLine = notice.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? notice
+        return firstLine.count > 160 ? String(firstLine.prefix(160)) + "…" : firstLine
+    }
+
+    var isMultiline: Bool { notice.contains("\n") || notice.count > 160 }
+
+    /// Whether this notice is the app's own doing.
+    ///
+    /// A snippet that throws is recorded by pfSense as a notice, which the app
+    /// then reads back and displays — so a bug in this app appears as a
+    /// firewall problem. Saying which is which seems the least it can do.
+    var isFromThisApp: Bool {
+        notice.contains("xmlrpc.php") && notice.contains("eval()")
+    }
+
+    var date: Date? {
+        guard let seconds = Double(createdAt) else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    var displayTime: String {
+        guard let date else { return createdAt }
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f.string(from: date)
+    }
+
+    /// pfSense priorities run 1 (highest) upward.
+    var health: Health {
+        guard let priority else { return .warn }
+        return priority <= 1 ? .bad : .warn
+    }
+}
+
+// MARK: - Dynamic DNS
+
+/// A dynamic DNS entry and the address it last pushed.
+///
+/// pfSense keeps no update history — only a per-entry cache file holding the
+/// last address sent, and its modification time. So "when did this last
+/// change", not "when was it last checked". An entry whose cached address no
+/// longer matches the interface it watches is the failure worth catching, and
+/// that comparison is done in `DashboardStore`.
+struct DyndnsEntry: Identifiable {
+    var id: String { "\(host)-\(type ?? "")" }
+    var host: String
+    var type: String?
+    var interfaceName: String?
+    var descr: String?
+    var enabled: Bool
+    var cachedAddress: String?
+    var updatedAt: Date?
+
+    init(_ d: JSONDict) {
+        host = d.string("host") ?? "—"
+        type = d.string("type")
+        interfaceName = d.string("interface")
+        descr = d.string("descr", "description")
+        enabled = d.bool("enabled", "enable") ?? true
+        let cached = d.string("cached_address")
+        cachedAddress = (cached?.isEmpty ?? true) ? nil : cached
+        if let seconds = d.double("updated_at"), seconds > 0 {
+            updatedAt = Date(timeIntervalSince1970: seconds)
+        }
+    }
+
+    var displayName: String {
+        if let descr, !descr.isEmpty { return descr }
+        return host
+    }
+
+    var updatedDescription: String {
+        guard let updatedAt else { return "never updated" }
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f.string(from: updatedAt)
+    }
+}
+
+// MARK: - HAProxy
+
+/// One server behind a backend.
+struct HAProxyServer: Identifiable {
+    var id: String { "\(name)-\(address):\(port)" }
+    var name: String
+    var address: String
+    var port: String
+    var enabled: Bool
+    var ssl: Bool
+    var weight: String?
+
+    init(_ d: JSONDict) {
+        name = d.string("name") ?? "—"
+        address = d.string("address") ?? ""
+        port = d.string("port") ?? ""
+        enabled = d.bool("enabled") ?? true
+        ssl = d.bool("ssl") ?? false
+        let w = d.string("weight")
+        weight = (w?.isEmpty ?? true) ? nil : w
+    }
+
+    var endpoint: String {
+        port.isEmpty ? address : "\(address):\(port)"
+    }
+
+    var health: Health { enabled ? .ok : .idle }
+
+}
+
+/// A backend, which the pfSense package calls a pool.
+struct HAProxyBackend: Identifiable {
+    var id: String { name }
+    var name: String
+    var descr: String?
+    var balance: String?
+    var checkType: String?
+    var checkURI: String?
+    var checkInterval: String?
+    var servers: [HAProxyServer]
+
+    init(_ d: JSONDict) {
+        name = d.string("name") ?? "—"
+        descr = d.string("descr")
+        balance = d.string("balance")
+        checkType = d.string("check_type")
+        checkURI = d.string("check_uri")
+        checkInterval = d.string("check_interval")
+        servers = d.list("servers").compactMap { JSONDict($0) }.map(HAProxyServer.init)
+    }
+
+    /// Whether HAProxy is checking these servers at all.
+    ///
+    /// The distinction that matters: a backend with no health check keeps
+    /// sending traffic to a server after it dies. HAProxy will happily do that
+    /// — it only knows a server is down if something told it to look.
+    var isMonitored: Bool {
+        guard let checkType, !checkType.isEmpty else { return false }
+        return checkType.lowercased() != "none"
+    }
+
+    var checkDescription: String {
+        guard isMonitored, let checkType else { return "no health check" }
+        var parts = [checkType]
+        if let uri = checkURI, !uri.isEmpty { parts.append(uri) }
+        if let interval = checkInterval, !interval.isEmpty {
+            parts.append("every \(interval)ms")
+        } else {
+            // Blank means HAProxy's own default rather than no interval, and
+            // "HTTP · " trailing into nothing reads like missing data.
+            parts.append("default interval")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Unmonitored is the condition worth flagging; a disabled server is a
+    /// choice somebody made.
+    var health: Health {
+        if servers.isEmpty { return .idle }
+        if !isMonitored { return .warn }
+        return servers.contains(where: \.enabled) ? .ok : .idle
+    }
+}
+
+/// A frontend, which the package confusingly calls a backend.
+struct HAProxyFrontend: Identifiable {
+    var id: String { name }
+    var name: String
+    var descr: String?
+    var type: String?
+    var binds: [String]
+    var aclCount: Int
+    var backendName: String?
+    var enabled: Bool
+
+    init(_ d: JSONDict) {
+        name = d.string("name") ?? "—"
+        descr = d.string("descr")
+        type = d.string("type")
+        binds = d.list("binds").compactMap { $0.stringValue }
+        aclCount = d.int("acl_count") ?? 0
+        backendName = d.string("backend")
+        // The package stores "active" here, and omits it when disabled.
+        enabled = (d.string("status") ?? "active") == "active"
+    }
+
+    var health: Health { enabled ? .ok : .idle }
+
+    var bindDescription: String {
+        binds.isEmpty ? "no bind address" : binds.joined(separator: ", ")
+    }
+
+    /// What this frontend does with a request when no default backend is set.
+    var routingDescription: String? {
+        if let backendName, !backendName.isEmpty { return backendName }
+        if aclCount > 0 { return "\(aclCount) ACL rule\(aclCount == 1 ? "" : "s")" }
+        return nil
+    }
+}
+
+// MARK: - ACME
+
+/// An ACME account key. Its server URL says production or staging.
+struct ACMEAccount: Identifiable {
+    var id: String { name }
+    var name: String
+    var descr: String?
+    var server: String?
+
+    init(_ d: JSONDict) {
+        name = d.string("name") ?? "—"
+        descr = d.string("descr")
+        server = d.string("server")
+    }
+
+    /// A staging certificate is not trusted by anything, which is worth
+    /// saying out loud when it is sitting in front of a public service.
+    var isStaging: Bool {
+        (server ?? "").lowercased().contains("staging")
+    }
+}
+
+/// An ACME certificate: the automation, not the certificate itself.
+///
+/// The certificate store says when something expires. This says whether
+/// anything is going to renew it — a Let's Encrypt certificate with 40 days
+/// left is fine if renewal is configured and a problem if it is not.
+struct ACMECertificate: Identifiable {
+    var id: String { name }
+    var name: String
+    var descr: String?
+    var account: String?
+    var renewAfter: String?
+    var enabled: Bool
+    var domains: [String]
+
+    init(_ d: JSONDict) {
+        name = d.string("name") ?? "—"
+        descr = d.string("descr")
+        account = d.string("account")
+        renewAfter = d.string("renew_after")
+        enabled = d.bool("enabled") ?? false
+        domains = d.list("domains").compactMap { $0.stringValue }
+    }
+
+    var renewalDescription: String {
+        guard enabled else { return "renewal disabled" }
+        guard let renewAfter, !renewAfter.isEmpty else { return "renews on the package default" }
+        return "renews after \(renewAfter) days"
+    }
+
+    /// A disabled entry is the condition worth flagging: the certificate will
+    /// expire and nothing will notice.
+    var health: Health { enabled ? .ok : .warn }
 }

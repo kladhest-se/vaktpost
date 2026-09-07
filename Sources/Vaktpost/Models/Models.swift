@@ -12,16 +12,38 @@ struct SystemStatus {
     var load: [Double]           // 1/5/15 min
     var mbufUsage: Double?       // 0...100
     var platform: String?
+    /// Cumulative CPU ticks. A percentage cannot be read from a single sample;
+    /// `DashboardStore` differences consecutive ones to get `cpuUsage`.
+    var cpuTicksTotal: Int?
+    var cpuTicksIdle: Int?
+    var hostname: String?
+    var temperatureSource: String?
     var cpuModel: String?
     var cpuCount: Int?
     var serial: String?
     var biosVersion: String?
 
     init(_ d: JSONDict) {
+        // Present under the REST transport, absent under XML-RPC where only
+        // raw ticks are available. Left nil rather than zero so the meter is
+        // hidden until two samples exist, instead of claiming an idle CPU.
         cpuUsage = d.double("cpu_usage", "cpu", "cpu_load")
+        cpuTicksTotal = d.int("cpu_ticks_total")
+        cpuTicksIdle = d.int("cpu_ticks_idle")
+        hostname = d.string("hostname")
+        temperatureSource = d.string("temp_source")
         memUsage = d.double("mem_usage", "memory_usage", "mem")
         swapUsage = d.double("swap_usage", "swap")
-        diskUsage = d.double("disk_usage", "disk")
+        // No single disk figure under XML-RPC — only per-filesystem rows. The
+        // worst mount is the honest summary and a more useful one than an
+        // average: a full /var stops logging while the pool looks empty.
+        if let aggregate = d.double("disk_usage", "disk") {
+            diskUsage = aggregate
+        } else {
+            diskUsage = d.list("filesystems")
+                .compactMap { JSONDict($0)?.double("percent_used", "percent") }
+                .max()
+        }
         // Both fields are reported. Celsius is preferred; Fahrenheit is
         // converted rather than ignored, since which one is populated varies
         // with the sensor driver.
@@ -35,14 +57,22 @@ struct SystemStatus {
         mbufUsage = d.double("mbuf_usage", "mbuf")
         uptimeSeconds = Self.uptime(d.value("uptime_sec", "uptime_seconds", "uptime"))
 
-        platform = d.string("platform")
+        // An object of name/descr on some versions, a plain string on others.
+        platform = d.string("platform") ?? d.dict("platform")?.string("descr", "name")
         cpuModel = d.string("cpu_model")
         cpuCount = d.int("cpu_count")
         serial = d.string("serial")
         biosVersion = d.string("bios_version")
 
-        load = d.list("cpu_load_avg", "load_avg", "load_average", "loadavg")
-            .compactMap { $0.doubleValue }
+        // A list under both transports, but hass-pfsense's telemetry shape
+        // returns an object keyed by interval, so both are accepted.
+        let rawLoad = d.list("cpu_load_avg", "load_avg", "load_average", "loadavg")
+        if rawLoad.isEmpty, let object = d.dict("cpu_load_avg", "load_average") {
+            load = ["one_minute", "five_minute", "fifteen_minute"]
+                .compactMap { object.double($0) }
+        } else {
+            load = rawLoad.compactMap { $0.doubleValue }
+        }
     }
 
     /// Uptime, from either a count of seconds or pfSense's English phrasing.
@@ -95,6 +125,37 @@ struct SystemStatus {
     /// System → Advanced → Miscellaneous. Distinguishing "no sensor" from
     /// "cold" matters: 0 °C would be alarming and wrong.
     var hasTemperature: Bool { temperature != nil }
+
+    /// What the reading is of.
+    ///
+    /// "CPU at 82 °C" is alarming; "Chipset at 82 °C" is a Tuesday. The number
+    /// is the same and the sensor is what makes the difference, so the label
+    /// follows the sysctl that answered rather than assuming a CPU die.
+    var temperatureLabel: String {
+        guard let source = temperatureSource, !source.isEmpty else { return "Temperature" }
+        if source.contains("pchtherm") { return "Chipset" }
+        if source.contains("cpu") { return "CPU" }
+        if source.contains("acpi") { return "System" }
+        return "Temperature"
+    }
+
+    /// Thresholds that suit the sensor.
+    ///
+    /// A PCH sits in the eighties under normal load and throttles above about
+    /// 105; a CPU die at 82 is worth a look and at 95 is a problem. Using one
+    /// pair of numbers for both meant a healthy chipset raised a permanent
+    /// warning nobody could act on — which is how an alert list stops being
+    /// read at all.
+    var temperatureThresholds: (warn: Double, bad: Double) {
+        // An unidentified sensor gets the cautious pair rather than the strict
+        // one. Warning at 80 on a reading that might be a chipset produces an
+        // alert nobody can act on, and an alert list with one of those in it
+        // stops being read.
+        guard let source = temperatureSource, !source.isEmpty else { return (90, 100) }
+        if source.contains("pchtherm") { return (95, 105) }
+        if source.contains("acpi") { return (85, 100) }
+        return (80, 95)
+    }
 
     var hardwareDescription: String? {
         var parts: [String] = []
@@ -162,6 +223,7 @@ struct InterfaceStat: Identifiable {
     var media: String?
     var mtu: String?
     var gateway: String?
+    var internalName: String?
     var inBytes: Double?
     var outBytes: Double?
     var inPackets: Double?
@@ -175,6 +237,9 @@ struct InterfaceStat: Identifiable {
         // pfSense's internal handle ("wan"). The description is the one worth
         // showing, and the one that matches the webConfigurator.
         name = d.string("descr", "description") ?? d.string("name") ?? d.string("hwif", "if") ?? "—"
+        // pfSense's internal handle — "lan", "opt7". Rules reference this,
+        // where clients and ARP reference the device.
+        internalName = d.string("name")
         device = d.string("hwif", "if", "device", "interface") ?? "—"
         status = (d.string("status", "linkstate") ?? "unknown").lowercased()
         enabled = d.bool("enable", "enabled")
@@ -198,7 +263,7 @@ struct InterfaceStat: Identifiable {
     ///
     /// `status/interfaces` returns a dotted netmask ("255.255.255.224") where
     /// the configuration endpoints return prefix bits ("27"). Concatenating
-    /// blindly produced "178.174.216.246/255.255.255.224", which is not a
+    /// blindly produced "203.0.113.9/255.255.255.224", which is not a
     /// notation anybody uses.
     static func prefixLength(_ subnet: String?) -> String? {
         guard let subnet, !subnet.isEmpty else { return nil }
@@ -207,6 +272,11 @@ struct InterfaceStat: Identifiable {
         guard octets.count == 4 else { return subnet }
         return String(octets.reduce(0) { $0 + $1.nonzeroBitCount })
     }
+
+    /// A stable identity for throughput history.
+    ///
+    /// `device` alone is not unique: VLANs share their parent's `hwif`.
+    var seriesKey: String { "\(name)|\(device)" }
 
     var isUp: Bool { status.contains("up") || status == "active" }
 
@@ -321,7 +391,13 @@ struct DHCPLease: Identifiable {
         starts = d.string("starts", "start")
         ends = d.string("ends", "end")
         isStatic = (d.bool("static") ?? false) || state.contains("static")
-        online = d.bool("online")
+        // `system_get_dhcpleases` reports this as the string "online" or
+        // "offline" rather than a boolean.
+        if let raw = d.string("online") {
+            online = raw.lowercased() == "online"
+        } else {
+            online = d.bool("online")
+        }
     }
 
     var health: Health {
@@ -348,9 +424,25 @@ struct ARPEntry: Identifiable {
     var expires: String?
     var type: String?
 
+    /// Seconds until the entry ages out, rendered as a duration.
+    ///
+    /// The raw value is a count of seconds — "1181" tells nobody anything,
+    /// where "19m" is immediately legible.
+    var expiryDescription: String? {
+        guard let expires, !expires.isEmpty else { return nil }
+        guard let seconds = Int(expires) else { return expires }
+        if seconds <= 0 { return "expired" }
+        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 3_600 { return "\(seconds / 60)m" }
+        return "\(seconds / 3_600)h \((seconds % 3_600) / 60)m"
+    }
+
     init(_ d: JSONDict) {
-        ip = d.string("ip", "ip_address") ?? "—"
-        mac = (d.string("mac", "mac_address") ?? "—").lowercased()
+        // `system_get_arp_table` spells these with hyphens; the REST endpoint
+        // used underscores. Both are listed so a fixture from either transport
+        // decodes.
+        ip = d.string("ip-address", "ip", "ip_address") ?? "—"
+        mac = (d.string("mac-address", "mac", "mac_address") ?? "—").lowercased()
         hostname = d.string("hostname", "dnsresolve")
         interfaceName = d.string("interface", "if")
         expires = d.string("expires")
@@ -372,6 +464,32 @@ struct LogLine: Identifiable {
     var source: String?
     var destination: String?
     var proto: String?
+
+    /// A raw log line.
+    ///
+    /// Under XML-RPC the logs are read straight off disk, so a line is a
+    /// string rather than a parsed structure. The filter log's action is
+    /// recovered from the text so the pass/block filter and the coloured rail
+    /// keep working.
+    init(text: String, kind: Kind) {
+        self.kind = kind
+        self.text = text
+        timestamp = nil
+        interfaceName = nil
+        source = nil
+        destination = nil
+        proto = nil
+
+        let lower = text.lowercased()
+        if kind == .firewall {
+            if lower.contains(",block,") || lower.contains(" block ") { action = "block" }
+            else if lower.contains(",reject,") { action = "reject" }
+            else if lower.contains(",pass,") || lower.contains(" pass ") { action = "pass" }
+            else { action = nil }
+        } else {
+            action = nil
+        }
+    }
 
     init(_ d: JSONDict, kind: Kind) {
         self.kind = kind

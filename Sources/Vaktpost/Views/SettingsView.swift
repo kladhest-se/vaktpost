@@ -11,6 +11,9 @@ struct SettingsView: View {
                 themeSlab
                 accentSlab
 
+                GroupHeading(text: "Alerts")
+                alertsSlab
+
                 GroupHeading(text: "About")
                 aboutSlab
             }
@@ -25,6 +28,63 @@ struct SettingsView: View {
 
 
 
+
+    /// Which conditions are worth being told about.
+    ///
+    /// Alerts are derived on the device, so silencing changes what is shown
+    /// rather than what is measured — everything stays visible on the Alerts
+    /// screen, it just stops driving the badge and the Overview banner.
+    private var alertsSlab: some View {
+        Slab(rail: .info) {
+            VStack(alignment: .leading, spacing: 10) {
+                // Phrased as "show", not "silence".
+                //
+                // A row of switches under "silence individual kinds" is on when
+                // the thing is silenced, which means a default of everything
+                // enabled looks like a screen full of off switches — and a
+                // screen full of off switches reads as "nothing is working".
+                // Turning something on to receive it is the direction people
+                // expect, and it makes the default state look like the default.
+                Toggle(isOn: Binding(
+                    get: { !store.alertsSilenced },
+                    set: { store.alertsSilenced = !$0 }
+                )) {
+                    Text("Show alerts")
+                        .font(.system(size: 14))
+                        .foregroundStyle(theme.label)
+                }
+                .tint(theme.accentColor)
+
+                if !store.alertsSilenced {
+                    Hairline()
+                    Text("Kinds to show")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.labelMuted)
+
+                    ForEach(VaktpostAlert.Category.allCases, id: \.rawValue) { category in
+                        Toggle(isOn: Binding(
+                            get: { !store.mutedAlertCategories.contains(category.rawValue) },
+                            set: { shown in
+                                if shown { store.mutedAlertCategories.remove(category.rawValue) }
+                                else { store.mutedAlertCategories.insert(category.rawValue) }
+                            }
+                        )) {
+                            HStack(spacing: 8) {
+                                Image(systemName: category.symbol)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(theme.labelMuted)
+                                    .frame(width: 18)
+                                Text(category.displayName)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(theme.label)
+                            }
+                        }
+                        .tint(theme.accentColor)
+                    }
+                }
+            }
+        }
+    }
 
     private var themeSlab: some View {
         Slab(rail: .info, title: "Theme") {
@@ -41,7 +101,7 @@ struct SettingsView: View {
                 }
                 Text(theme.selection == .auto
                      ? "Auto follows iOS: Latte in light, Mocha in dark. Currently \(theme.current.displayName)."
-                     : "\(theme.current.displayName) whatever iOS is set to.")
+                     : "\(theme.current.displayName), whatever iOS is set to.")
                     .font(.system(size: 12))
                     .foregroundStyle(theme.labelFaint)
             }
@@ -71,12 +131,13 @@ struct SettingsView: View {
     private var aboutSlab: some View {
         Slab(rail: .info, title: "Vaktpost") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("A read-only dashboard for pfSense CE and Plus, talking to the community REST API package over /api/v2.")
+                Text("A read-only dashboard for pfSense CE and Plus, talking to the firewall's built-in XML-RPC service. Nothing to install.")
                     .font(.system(size: 13))
                     .foregroundStyle(theme.labelMuted)
                 Hairline()
-                FieldRow(key: "Requires", value: "pfSense-pkg-RESTAPI", mono: false)
-                FieldRow(key: "Auth", value: "X-API-Key", mono: false)
+                FieldRow(key: "Transport", value: "xmlrpc.php", mono: false)
+                FieldRow(key: "Auth", value: "webConfigurator login", mono: false)
+                FieldRow(key: "Privilege", value: "System - HA node sync", mono: false)
                 FieldRow(key: "Writes", value: "none", mono: false)
                 FieldRow(key: "Firewalls", value: "\(store.registry.servers.count)", mono: false)
                 Text("Not affiliated with Netgate or the Catppuccin project. pfSense is a trademark of Netgate.")

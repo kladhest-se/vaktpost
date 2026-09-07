@@ -50,19 +50,12 @@ struct RootView: View {
                             .badge(store.criticalAlertCount)
                     }
 
-                    if store.isRefreshing {
-                        HStack {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                            Text("Refreshing…")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(theme.hairline.opacity(0.5))
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .shadow(color: theme.label.opacity(0.1), radius: 4, y: 2)
-                    }
+                    // No refresh indicator here at all.
+                    //
+                    // Every screen is inside a `refreshable` scroll view, which
+                    // draws its own spinner when a refresh is running. A second
+                    // one floating above the tab content was both redundant and
+                    // in the way — it sat over the title while scrolling.
                 }
             } else {
                 OnboardingView()

@@ -75,7 +75,7 @@ struct ServerCard: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(theme.label)
                         if isActive { StatusPill(text: "active", health: .ok) }
-                        if !server.hasKey { StatusPill(text: "no key", health: .warn) }
+                        if !server.hasCredentials { StatusPill(text: "no password", health: .warn) }
                     }
                     Text(server.baseURL)
                         .font(.system(size: 11, design: .monospaced))
@@ -114,7 +114,7 @@ struct ServerEditView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State var profile: ServerProfile
-    @State private var apiKey = ""
+    @State private var password = ""
     @State private var showKey = false
     @State private var isTesting = false
     @State private var message: String?
@@ -133,18 +133,20 @@ struct ServerEditView: View {
                         LabelledField(title: "Base URL", text: $profile.baseURL,
                                       placeholder: "https://192.168.1.1",
                                       keyboard: .URL, autocap: false)
+                        LabelledField(title: "Username", text: $profile.username,
+                                      placeholder: "admin", autocap: false)
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("API KEY")
+                            Text("PASSWORD")
                                 .font(.system(size: 11, weight: .semibold))
                                 .tracking(0.8)
                                 .foregroundStyle(theme.labelFaint)
                             HStack {
                                 Group {
                                     if showKey {
-                                        TextField("paste key", text: $apiKey)
+                                        TextField("password", text: $password)
                                     } else {
-                                        SecureField("paste key", text: $apiKey)
+                                        SecureField("password", text: $password)
                                     }
                                 }
                                 .textInputAutocapitalization(.never)
@@ -273,7 +275,7 @@ struct ServerEditView: View {
                 .disabled(isTesting || profile.baseURL.isEmpty)
             }
         }
-        .onAppear { apiKey = Keychain.apiKey(for: profile.id) ?? "" }
+        .onAppear { password = Keychain.password(for: profile.id) ?? "" }
         .confirmationDialog("Remove this firewall?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
                 Task {
@@ -291,8 +293,8 @@ struct ServerEditView: View {
         isTesting = true
         defer { isTesting = false }
 
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch Keychain.setAPIKey(trimmedKey, for: profile.id) {
+        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch Keychain.setPassword(trimmedPassword, for: profile.id) {
         case .success:
             break
         case .failure(let error):

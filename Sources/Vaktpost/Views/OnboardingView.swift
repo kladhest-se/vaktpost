@@ -5,7 +5,7 @@ struct OnboardingView: View {
     @EnvironmentObject private var store: DashboardStore
 
     @State private var profile = ServerProfile()
-    @State private var apiKey = ""
+    @State private var password = ""
     @State private var isTesting = false
     @State private var message: String?
     @State private var messageHealth: Health = .idle
@@ -20,15 +20,17 @@ struct OnboardingView: View {
                         LabelledField(title: "Base URL", text: $profile.baseURL,
                                       placeholder: "https://192.168.1.1",
                                       keyboard: .URL, autocap: false)
+                        LabelledField(title: "Username", text: $profile.username,
+                                      placeholder: "firewall account", autocap: false)
                         LabelledField(title: "Label (optional)", text: $profile.label,
                                       placeholder: "fw01")
 
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("API KEY")
+                            Text("PASSWORD")
                                 .font(.system(size: 11, weight: .semibold))
                                 .tracking(0.8)
                                 .foregroundStyle(theme.labelFaint)
-                            SecureField("paste key", text: $apiKey)
+                            SecureField("password", text: $password)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .font(.system(size: 14, design: .monospaced))
@@ -58,7 +60,7 @@ struct OnboardingView: View {
                             .foregroundStyle(theme.palette.crust)
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
-                        .disabled(isTesting || profile.baseURL.isEmpty || apiKey.isEmpty)
+                        .disabled(isTesting || profile.baseURL.isEmpty || password.isEmpty)
 
                         if let message {
                             Text(message)
@@ -70,10 +72,10 @@ struct OnboardingView: View {
 
                 Slab(rail: .idle, title: "Before you start") {
                     VStack(alignment: .leading, spacing: 8) {
-                        step("1", "Install the REST API package on the firewall.")
-                        step("2", "Enable key authentication under System → REST API → Settings.")
-                        step("3", "Create a key under System → REST API → Keys and paste it above.")
-                        step("4", "Give the key a read-only privilege set — Vaktpost never issues writes.")
+                        step("1", "Nothing to install — this uses pfSense's built-in XML-RPC service.")
+                        step("2", "Set System → Advanced → Max Processes to 5 or more.")
+                        step("3", "Give the account the System - HA node sync privilege, which is administrator-equivalent. Read SECURITY.md first.")
+                        step("4", "Use a dedicated account, not your own login — this app never writes, but that privilege can.")
                     }
                 }
             }
@@ -123,12 +125,12 @@ struct OnboardingView: View {
 
         var p = profile
         p.normalize()
-        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch Keychain.setAPIKey(trimmedKey, for: p.id) {
+        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch Keychain.setPassword(trimmedPassword, for: p.id) {
         case .success:
             break
         case .failure(let error):
-            message = error.errorDescription ?? "Failed to save API key."
+            message = error.errorDescription ?? "Failed to save the password."
             messageHealth = .bad
             return
         }

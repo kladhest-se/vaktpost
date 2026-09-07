@@ -67,7 +67,7 @@ struct ClientsView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
             }
-            .refreshable { await store.refresh() }
+            .refreshable { await store.refreshManually() }
         }
         .background(theme.bg.ignoresSafeArea())
         .searchable(text: $query, prompt: "Name, IP or MAC")
@@ -77,6 +77,7 @@ struct ClientsView: View {
 
 struct ClientRow: View {
     @EnvironmentObject private var theme: ThemeManager
+    @EnvironmentObject private var store: DashboardStore
     let client: NetworkClient
 
     var body: some View {
@@ -99,7 +100,7 @@ struct ClientRow: View {
                         .foregroundStyle(theme.labelFaint)
                     Spacer()
                     if let iface = client.interfaceName, !iface.isEmpty {
-                        Text(iface)
+                        Text(store.interfaceLabel(for: iface) ?? iface)
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .foregroundStyle(theme.labelFaint)
                     }
@@ -128,17 +129,23 @@ struct ClientDetailView: View {
                             Spacer()
                             StatusPill(text: client.presence, health: client.health)
                         }
+                        Text("from \(client.nameSource)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.labelFaint)
                         Hairline()
                         FieldRow(key: "IP", value: client.ip)
                         FieldRow(key: "MAC", value: client.mac)
-                        if let h = client.hostname, !h.isEmpty {
-                            FieldRow(key: "Hostname", value: h)
-                        }
-                        if let d = client.descr, !d.isEmpty {
-                            FieldRow(key: "Description", value: d, mono: false)
+
+                        // Every name this device has, not only the one that
+                        // won the title. The firewall alias is usually the one
+                        // to search a rule for, even where the DNS name reads
+                        // better at the top of a card.
+                        ForEach(client.knownNames, id: \.value) { entry in
+                            FieldRow(key: entry.source, value: entry.value,
+                                     mono: entry.source != "Description")
                         }
                         if let iface = client.interfaceName, !iface.isEmpty {
-                            FieldRow(key: "Interface", value: iface)
+                            FieldRow(key: "Interface", value: store.interfaceLabel(for: iface) ?? iface)
                         }
                         FieldRow(key: "Known from", value: client.sourceSummary, mono: false)
                     }

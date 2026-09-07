@@ -141,6 +141,9 @@ struct WireGuardTunnel: Identifiable {
     var listenPort: String?
     var enabled: Bool?
     var peerCount: Int
+    var status: String?
+    var bytesReceived: Double?
+    var bytesSent: Double?
 
     init(_ d: JSONDict) {
         name = d.string("name", "tun") ?? "wg"
@@ -149,9 +152,24 @@ struct WireGuardTunnel: Identifiable {
         listenPort = d.string("listen_port", "listenport")
         enabled = d.bool("enabled", "enable")
         peerCount = d.int("peer_count") ?? d.list("peers").count
+        status = d.string("status")
+        bytesReceived = d.double("transfer_rx")
+        bytesSent = d.double("transfer_tx")
     }
 
-    var health: Health { (enabled ?? true) ? .ok : .idle }
+    var isUp: Bool { status?.lowercased() == "up" }
+
+    var health: Health {
+        if enabled == false { return .idle }
+        if let status, !status.isEmpty { return isUp ? .ok : .bad }
+        return .ok
+    }
+
+    var statusLabel: String {
+        if enabled == false { return "disabled" }
+        if let status, !status.isEmpty { return status }
+        return "enabled"
+    }
 }
 
 struct WireGuardPeer: Identifiable {
@@ -164,6 +182,7 @@ struct WireGuardPeer: Identifiable {
     var bytesReceived: Double?
     var bytesSent: Double?
     var allowedIPs: [String]
+    var enabled: Bool
 
     init(_ d: JSONDict) {
         tunnel = d.string("tun", "tunnel", "parent_id") ?? ""
@@ -174,14 +193,52 @@ struct WireGuardPeer: Identifiable {
         bytesReceived = d.double("transfer_rx", "bytes_received", "rx")
         bytesSent = d.double("transfer_tx", "bytes_sent", "tx")
         allowedIPs = d.list("allowed_ips", "allowedips").compactMap { $0.stringValue }
+        enabled = d.bool("enabled", "enable") ?? true
+    }
+
+    /// When this peer last completed a handshake.
+    ///
+    /// A Unix timestamp, and `"0"` for a peer that has never connected —
+    /// which is a real and different state from one whose handshake is merely
+    /// old, so the two are not collapsed.
+    var handshakeDate: Date? {
+        guard let raw = latestHandshake, let seconds = Double(raw), seconds > 0 else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    var hasLiveStatus: Bool { latestHandshake != nil }
+
+    var handshakeDescription: String {
+        guard let handshakeDate else {
+            return latestHandshake == nil ? "no status" : "never connected"
+        }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: handshakeDate, relativeTo: Date())
     }
 
     var shortKey: String {
         publicKey.count > 14 ? String(publicKey.prefix(10)) + "…" : publicKey
     }
 
+    /// WireGuard rehandshakes roughly every two minutes while traffic flows,
+    /// so a handshake inside five minutes means the peer is up now. Older than
+    /// that and it is idle rather than broken — a laptop that closed its lid is
+    /// not a fault.
     var health: Health {
-        guard let hs = latestHandshake, !hs.isEmpty, hs != "0" else { return .idle }
-        return .ok
+        guard enabled else { return .idle }
+        guard let handshakeDate else {
+            // Never connected is worth flagging; no status at all is not.
+            return latestHandshake == nil ? .info : .warn
+        }
+        return Date().timeIntervalSince(handshakeDate) < 300 ? .ok : .info
+    }
+
+    var statusLabel: String {
+        guard enabled else { return "disabled" }
+        guard handshakeDate != nil else {
+            return latestHandshake == nil ? "configured" : "never connected"
+        }
+        return health == .ok ? "connected" : "idle"
     }
 }

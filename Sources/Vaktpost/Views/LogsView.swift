@@ -94,10 +94,11 @@ struct LogsView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
             }
-            .refreshable { await store.refresh() }
+            .refreshable { await store.refreshManually() }
         }
         .background(theme.bg.ignoresSafeArea())
         .searchable(text: $query, prompt: "Search log text")
+        .task { await store.beginSecondaryLogs() }
         .navigationTitle("Logs")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {

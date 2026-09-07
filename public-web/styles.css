@@ -303,7 +303,6 @@ h3 { font: 600 1.02rem/1.3 var(--sans); margin: 0 0 .35rem; }
   background: var(--surface0); padding: .1em .35em; border-radius: 4px;
 }
 
-.limits { display: grid; gap: 1.2rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .limit { padding-left: 1rem; border-left: var(--rail) solid var(--peach); }
 .limit p { font-size: .93rem; color: var(--subtext0); margin: 0; max-width: 44ch; }
 
@@ -327,3 +326,95 @@ footer {
   font-size: .85rem; color: var(--overlay1);
 }
 footer p { max-width: 62ch; margin: 0 0 .6rem; }
+
+
+
+
+/* Nine short entries, two or three abreast depending on width. Deliberately
+   not a table: the old one listed endpoint paths, which told a reader nothing
+   about whether the app does what they need. */
+.screens {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 26px 32px;
+  margin-top: 28px;
+}
+
+.screens h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.screens p {
+  margin: 0;
+  color: var(--subtext0);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+
+/* Three more renderings, so the page shows what the app looks like rather than
+   only describing it. Every colour here is a theme token, so the picker at the
+   top recolours these the same way it recolours the hero. */
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 28px;
+  margin: 30px 0 44px;
+}
+
+.gallery__item { margin: 0; }
+
+.gallery__item figcaption {
+  margin-top: 12px;
+  color: var(--subtext0);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* The hero device is sized for one large rendering; these sit three abreast. */
+.device--small { max-width: none; }
+.device--small .screen { padding: 12px; }
+.device--small .screen__title { font-size: 15px; }
+.device--small .slab__body { padding: 9px 11px; }
+.device--small .gw__name { font-size: 12px; }
+.device--small .gw__stat { font-size: 10px; }
+
+/* A search field that is only a picture of one. */
+.fakefield {
+  margin-bottom: 9px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: var(--surface0);
+  color: var(--overlay1);
+  font-size: 11px;
+}
+
+.segments {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  margin-bottom: 10px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--surface0);
+}
+
+.segments span {
+  padding: 5px 4px;
+  border-radius: 7px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--subtext0);
+}
+
+.segments .is-on {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.spark--tall { height: 62px; }
+
+.legend--wide { justify-content: space-between; }

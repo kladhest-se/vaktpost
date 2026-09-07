@@ -16,6 +16,14 @@ struct ServerProfile: Codable, Identifiable, Equatable {
     var allowUntrustedTLS: Bool = false
     /// Lowercase hex SHA-256 of the leaf certificate's DER.
     var pinnedFingerprint: String = ""
+    /// webConfigurator username. The account needs the "System - HA node sync"
+    /// privilege, which is administrator-equivalent — see SECURITY.md.
+    /// Empty rather than "admin".
+    ///
+    /// A pre-filled username is a suggestion, and the suggestion here was the
+    /// account nobody should be using — the setup notes ask for a dedicated
+    /// one, and the field should not argue with them.
+    var username: String = ""
     var refreshSeconds: Int = 30
     var logLimit: Int = 100
 
@@ -23,8 +31,8 @@ struct ServerProfile: Codable, Identifiable, Equatable {
     var host: String { URL(string: baseURL)?.host ?? baseURL }
     var displayName: String { label.isEmpty ? host : label }
 
-    var hasKey: Bool { Keychain.apiKey(for: id) != nil }
-    var isUsable: Bool { isConfigured && hasKey }
+    var hasCredentials: Bool { !username.isEmpty && Keychain.password(for: id) != nil }
+    var isUsable: Bool { isConfigured && hasCredentials }
 
     /// Normalises a user-typed URL: adds https://, strips trailing slashes.
     mutating func normalize() {
@@ -55,8 +63,19 @@ final class ServerRegistry: ObservableObject {
 
     var hasUsableServer: Bool { active?.isUsable ?? false }
 
-    init() {
-        let d = UserDefaults.standard
+    /// Where profiles are stored.
+    ///
+    /// Injectable so tests can use an isolated suite. They previously wrote to
+    /// `UserDefaults.standard`, which in a host-app test bundle *is* the app's
+    /// own defaults on that simulator — so "the registry starts clean with no
+    /// stored data" passed on a fresh simulator and failed on one where
+    /// somebody had configured a firewall. A test that depends on the state of
+    /// the machine running it is worse than no test.
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        let d = defaults
         if let data = d.data(forKey: Self.listKey),
            let list = try? JSONDecoder().decode([ServerProfile].self, from: data) {
             servers = list
@@ -66,10 +85,11 @@ final class ServerRegistry: ObservableObject {
             // Migrate the single-server layout used before multi-firewall support.
             legacy.id = UUID()
             servers = [legacy]
-            if let key = Keychain.legacyAPIKey() {
-                _ = Keychain.setAPIKey(key, for: legacy.id)
-                Keychain.deleteLegacy()
-            }
+            // A stored API key is deliberately not carried over. It is not a
+            // password, and this build authenticates as a webConfigurator user
+            // — reusing it would fail with a confusing 401 rather than asking
+            // for what is now needed.
+            Keychain.deleteLegacy()
             d.removeObject(forKey: "server.profile")
             persist()
         }
@@ -106,7 +126,7 @@ final class ServerRegistry: ObservableObject {
     }
 
     private func persist() {
-        let d = UserDefaults.standard
+        let d = defaults
         if let data = try? JSONEncoder().encode(servers) {
             d.set(data, forKey: Self.listKey)
         }
@@ -145,11 +165,27 @@ enum KeychainError: LocalizedError {
 
 /// One keychain item per firewall, keyed by profile UUID. Accessible after
 /// first unlock so a background refresh on a locked device still works.
+/// One keychain item per firewall, holding a webConfigurator password.
+///
+/// This is a heavier secret than the API key it replaced. A key was scoped to
+/// the REST API and revocable on its own; this password also opens the
+/// webConfigurator and SSH, and cannot be revoked without changing it
+/// everywhere it is used. The service name is new so an upgrade does not
+/// silently reinterpret an old API key as a password.
 enum Keychain {
-    private static let service = "se.kladhest.vaktpost.apikey"
+    private static let service = "se.kladhest.vaktpost.password"
+
+    /// Where the REST build kept its API keys.
+    ///
+    /// Named separately because the service string changed with the transport,
+    /// and a rename alone would leave the old key in the keychain forever:
+    /// `deleteLegacy()` would look under the new service, find nothing, and
+    /// report success. A credential that outlives the build that used it is
+    /// the kind of thing nobody notices until it turns up in a keychain dump.
+    private static let legacyService = "se.kladhest.vaktpost.apikey"
     private static let legacyAccount = "default"
 
-    static func setAPIKey(_ key: String, for id: UUID) -> Result<Void, KeychainError> {
+    static func setPassword(_ key: String, for id: UUID) -> Result<Void, KeychainError> {
         delete(for: id)
         guard !key.isEmpty, let data = key.data(using: .utf8) else {
             return .failure(.emptyKey)
@@ -169,16 +205,16 @@ enum Keychain {
         return .failure(.keychainError(status))
     }
 
-    static func apiKey(for id: UUID) -> String? { read(account: id.uuidString) }
+    static func password(for id: UUID) -> String? { read(account: id.uuidString) }
 
     static func delete(for id: UUID) { delete(account: id.uuidString) }
 
-    static func legacyAPIKey() -> String? { read(account: legacyAccount) }
-    static func deleteLegacy() { delete(account: legacyAccount) }
+    static func legacyAPIKey() -> String? { read(account: legacyAccount, service: legacyService) }
+    static func deleteLegacy() { delete(account: legacyAccount, service: legacyService) }
 
     // MARK: Internals
 
-    private static func read(account: String) -> String? {
+    private static func read(account: String, service: String = service) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -193,7 +229,7 @@ enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
-    private static func delete(account: String) {
+    private static func delete(account: String, service: String = service) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

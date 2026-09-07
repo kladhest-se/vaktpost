@@ -4,7 +4,15 @@ A read-only iOS dashboard for **pfSense CE / pfSense Plus**, built in SwiftUI, t
 
 *Vaktpost* is Swedish for a sentry post — somewhere you watch the perimeter from and report what you see, without touching the wall itself. That is exactly the scope of this app.
 
-It talks to the community [pfSense REST API package](https://pfrest.org) over `/api/v2` using API-key auth. It never issues a write — no `POST`, `PATCH`, `PUT` or `DELETE` exists anywhere in the client.
+It talks to pfSense's **built-in XML-RPC service**. Nothing needs to be
+installed on the firewall.
+
+**Read [SECURITY.md](SECURITY.md) before using this.** XML-RPC requires an
+account with the "System - HA node sync" privilege, which is
+administrator-equivalent, and that password is stored on the phone and sent on
+every request. The app's read-only behaviour is enforced by an audited
+allowlist of PHP snippets rather than by the transport, which is a weaker
+guarantee than the REST build it replaced.
 
 **Tabs:** Overview · Clients · Network · Logs · More (Alerts, VPN, Firewall, System, Firewalls, Settings). Plus a home screen widget.
 
@@ -88,7 +96,20 @@ only ever `"GET"`, no write helper on `APIClient`, and no `URLSession`
 constructed outside it. The claim on the website is checked rather than
 remembered.
 
-## Firewall setup
+## Firewall setup (XML-RPC)
+
+1. **System → Advanced → Admin Access → Max Processes**: set to 5 or more.
+   XML-RPC polling competes with the webConfigurator for PHP workers.
+2. Create a dedicated user. LDAP and RADIUS accounts do authenticate over
+   XML-RPC — unlike the REST API, it uses the webConfigurator's normal auth
+   path — but a domain password replayed twice a minute from a phone is worth
+   avoiding. Use a local account you can disable on its own.
+3. Give it the **System - HA node sync** privilege. This is the only privilege
+   that makes XML-RPC work, and it is administrator-equivalent.
+4. In Vaktpost, enter the firewall address, that username and its password.
+5. Connect once, then **Pin last seen certificate** in the firewall's settings.
+
+## Previous firewall setup (REST, no longer used)
 
 1. Install `pfSense-pkg-RESTAPI` on the firewall.
 2. **System → REST API → Settings** — enable key authentication.
@@ -107,9 +128,47 @@ Two options, in order of preference:
 
 If you front the firewall with a proper certificate (ACME package, or HAProxy in front), leave both off and normal validation applies.
 
-## Endpoints used
+## What it runs
 
-All `GET`, all under `/api/v2`:
+Every call is `pfsense.exec_php` with one snippet from
+`Sources/Vaktpost/Net/PHPSnippets.swift`. That file is the whole surface: if a
+line of PHP is not in it, this app cannot send it.
+
+| Screen | Snippet |
+|---|---|
+| Overview | `telemetry`, `firmware`, `gateways`, `services` |
+| Clients | `dhcp_leases`, `arp_table`, `static_mappings` |
+| Network | `interfaces` |
+| Logs | `log_filter`, `log_system`, `log_auth`, `log_dhcpd`, `log_openvpn` |
+| VPN | `openvpn_servers`, `openvpn_clients`, `ipsec_sas`, `wireguard_tunnels` |
+| Firewall | `firewall_rules`, `firewall_aliases`, `port_forwards` |
+| System | `carp`, `certificates`, `notices`, `dyndns` (+ filesystems from `telemetry`) |
+
+### New in this transport
+
+Things the REST API could not reach at all:
+
+- **Dynamic DNS**, with the last address each entry pushed and when. An entry
+  whose cached address no longer matches its interface raises an alert — that
+  is the failure that otherwise goes unnoticed, since pfSense keeps no update
+  history.
+- **System notices** — the bell icon in the webConfigurator.
+- **Per-filesystem usage** instead of one aggregate figure. A full `/var` stops
+  logging while `/` still looks fine. Note that pfSense computes ZFS dataset
+  usage against the pool's free space, so on a large pool every dataset reads
+  0% — accurate, and not much use. UFS and tmpfs mounts report normally.
+- **Real mbuf counts**, which the REST endpoint returned as null.
+
+### Lost in this transport
+
+- Installed package inventory and update flags.
+- Configuration revision history.
+- pf table browsing, and with it the blocked-hosts list.
+
+Each needs either a shell or a PHP function that writes, so the snippet rules
+exclude them. They are still present as empty sections rather than removed.
+
+## Endpoints used by the previous REST build
 
 | Screen | Endpoint |
 |---|---|

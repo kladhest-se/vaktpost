@@ -5,6 +5,19 @@ import SwiftUI
 enum Health {
     case ok, warn, bad, idle, info
 
+    /// A stable name, for anything that needs to persist a severity — alert
+    /// acknowledgements survive relaunches, so they cannot key on a case's
+    /// memory representation.
+    var name: String {
+        switch self {
+        case .ok: return "ok"
+        case .warn: return "warn"
+        case .bad: return "bad"
+        case .idle: return "idle"
+        case .info: return "info"
+        }
+    }
+
     /// `@MainActor` because `ThemeManager` is, and this reads its semantic
     /// roles. `Health` is a plain enum, so without the annotation this method
     /// is nonisolated and every `health.color(theme)` crosses an isolation
@@ -226,6 +239,13 @@ enum Fmt {
 
     static func pct(_ v: Double) -> String { String(format: "%.0f%%", v) }
 
+    static func date(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f.string(from: d)
+    }
+
     static func bytesPerSec(_ bps: Double) -> String {
         let units = ["B/s", "KiB/s", "MiB/s", "GiB/s"]
         var v = bps
@@ -430,6 +450,12 @@ struct ThroughputChart: View {
         store.throughput.points(for: device)
     }
 
+    /// The series key carries the interface and its device; only the first is
+    /// worth showing a person.
+    private var shortDevice: String {
+        device.split(separator: "|").first.map(String.init) ?? device
+    }
+
     var body: some View {
         if points.count > 1 {
             VStack(alignment: .leading, spacing: 6) {
@@ -445,8 +471,18 @@ struct ThroughputChart: View {
                         .foregroundStyle(theme.labelFaint)
                 }
             }
-        } else {
-            Text("Collecting samples — a rate needs two refreshes.")
+        } else if showExplanatoryText {
+            // Only on the Network tab, where the chart is the point of the
+            // card. Elsewhere an empty frame with a caption is noise — the
+            // totals beside it already say more than a chart with no line.
+            //
+            // The count and the interface are both named: "collecting samples"
+            // on its own cannot distinguish "this started a moment ago" from
+            // "no sample will ever arrive", which is exactly the ambiguity
+            // that made the throughput bug hard to see.
+            Text(points.isEmpty
+                 ? "Collecting samples for \(shortDevice) — none yet."
+                 : "Collecting samples for \(shortDevice) — 1 so far.")
                 .font(.system(size: 12))
                 .foregroundStyle(theme.labelFaint)
         }
@@ -492,8 +528,18 @@ struct StateTrendLine: View {
     let values: [Int]
     let max: Int
 
-    private var peak: Double { Double(values.max() ?? 1) }
     private var latest: Int { values.last ?? 0 }
+
+    /// Scaled to the data rather than to zero — see SingleMetricSparkline.
+    /// A state table steady at 10,856 out of 1,621,000 is otherwise a flat
+    /// line pinned to the bottom of an empty box.
+    private var bounds: (low: Double, high: Double) {
+        let doubles = values.map(Double.init)
+        guard let low = doubles.min(), let high = doubles.max() else { return (0, 1) }
+        if high - low < 0.001 { return (low - Swift.max(high * 0.15, 1), high + Swift.max(high * 0.15, 1)) }
+        let padding = (high - low) * 0.1
+        return (low - padding, high + padding)
+    }
     private var trend: String {
         guard values.count >= 2 else { return "" }
         let recent = Array(values.suffix(3))
@@ -506,14 +552,24 @@ struct StateTrendLine: View {
     }
 
     var body: some View {
+        // Same rule as every other chart here: nothing until there is a line.
+        // The Path guarded on it, the frame and the overlay did not — so a
+        // single sample drew an empty grey box with "10 256 →" floating in it,
+        // under a meter that had already said the same thing.
+        if values.count > 1 { chart }
+    }
+
+    private var chart: some View {
         GeometryReader { geo in
             Path { path in
                 guard values.count > 1 else { return }
                 let step = geo.size.width / CGFloat(values.count - 1)
+                let span = Swift.max(bounds.high - bounds.low, 0.001)
                 let pts = values.enumerated().map { idx, v in
                     CGPoint(
                         x: CGFloat(idx) * step,
-                        y: geo.size.height - (CGFloat(v) / Swift.max(peak, 1.0) * geo.size.height * 0.9) - 1
+                        y: geo.size.height
+                            - (CGFloat((Double(v) - bounds.low) / span) * geo.size.height * 0.9) - 1
                     )
                 }
                 path.move(to: CGPoint(x: pts[0].x, y: geo.size.height))
@@ -543,14 +599,54 @@ struct SingleMetricSparkline: View {
     let label: String
     var height: CGFloat = 32
 
-    private var peak: Double { values.max() ?? 1 }
     private var latest: Double { values.last ?? 0 }
+
+    /// Where the y-axis starts and ends.
+    ///
+    /// Scaled to the data, not to zero. Memory sitting at a steady 8% drawn
+    /// against a zero baseline is a filled area covering nine tenths of the
+    /// frame — which renders as a solid grey block and looks like a broken
+    /// chart rather than a flat line.
+    ///
+    /// A completely flat series gets an artificial span so the line lands in
+    /// the middle instead of against an edge.
+    private var bounds: (low: Double, high: Double) {
+        guard let low = values.min(), let high = values.max() else { return (0, 1) }
+        if high - low < 0.001 {
+            let padding = Swift.max(high * 0.15, 1)
+            return (low - padding, high + padding)
+        }
+        // A tenth of the span as headroom, so the extremes are not on the edge.
+        let padding = (high - low) * 0.1
+        return (low - padding, high + padding)
+    }
+
+    /// The span the history covers, which is what a chart adds over a meter.
+    private var range: String {
+        guard let low = values.min(), let high = values.max() else { return "" }
+        return low.rounded() == high.rounded()
+            ? "steady at \(Fmt.pct(high))"
+            : "\(Fmt.pct(low))–\(Fmt.pct(high))"
+    }
 
     @State private var showTooltip = false
     @State private var tooltipValue: Double?
     @State private var tooltipX: CGFloat?
 
     var body: some View {
+        // Nothing at all until there is a line to draw.
+        //
+        // The Path already guarded on this, but the frame and the footer did
+        // not — so a metric with no history rendered an empty box under a
+        // caption reading "Memory 0%", directly beneath the live meter saying
+        // 8%. Two readings, one of them invented. On first launch every metric
+        // is in that state, so the Overview showed each one twice.
+        if values.count > 1 {
+            chart
+        }
+    }
+
+    private var chart: some View {
         VStack(alignment: .leading, spacing: 2) {
             GeometryReader { geo in
                 ZStack {
@@ -558,10 +654,13 @@ struct SingleMetricSparkline: View {
                     Path { path in
                         guard values.count > 1 else { return }
                         let step = geo.size.width / CGFloat(values.count - 1)
+                        let span = Swift.max(bounds.high - bounds.low, 0.001)
                         let points = values.enumerated().map { idx, v in
                             CGPoint(
                                 x: CGFloat(idx) * step,
-                                y: geo.size.height - (CGFloat(v / Swift.max(peak, 1)) * geo.size.height * 0.9) - 1
+                                y: geo.size.height
+                                    - (CGFloat((v - bounds.low) / span) * geo.size.height * 0.9)
+                                    - 1
                             )
                         }
                         path.move(to: CGPoint(x: points[0].x, y: geo.size.height))
@@ -577,7 +676,9 @@ struct SingleMetricSparkline: View {
                             p.addLine(to: CGPoint(x: x, y: geo.size.height))
                         }
 .stroke(theme.label.opacity(0.3), style: StrokeStyle(lineWidth: 1))
-                        let y = geo.size.height - (CGFloat(val / Swift.max(peak, 1)) * geo.size.height * 0.9) - 1
+                        let span = Swift.max(bounds.high - bounds.low, 0.001)
+                        let y = geo.size.height
+                            - (CGFloat((val - bounds.low) / span) * geo.size.height * 0.9) - 1
                         Circle()
                             .fill(theme.accentColor)
                             .frame(width: 5, height: 5)
@@ -600,14 +701,20 @@ struct SingleMetricSparkline: View {
             .frame(height: height)
             .background(theme.hairline.opacity(0.15))
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            // The range, not the current value.
+            //
+            // The meter immediately above already gives the label and the
+            // latest reading, so repeating both here printed "Memory 8%"
+            // directly under a bar that said "Memory 8%". What the history
+            // adds is where the value has been.
             HStack {
-                Text("\(label)")
-                    .font(.system(size: 10))
-                    .foregroundStyle(theme.labelMuted)
-                Spacer()
-                Text(Fmt.pct(latest))
+                Text(range)
                     .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(theme.labelMuted)
+                    .foregroundStyle(theme.labelFaint)
+                Spacer()
+                Text("\(values.count) samples")
+                    .font(.system(size: 10))
+                    .foregroundStyle(theme.labelFaint)
             }
         }
     }
@@ -653,6 +760,13 @@ struct GatewayTrend: View {
     }
 
     var body: some View {
+        // The gateway card already prints delay and loss above this. With one
+        // sample there is no trend and no line either, so this rendered as a
+        // stray "0ms →" repeating what was directly above it.
+        if delayPoints.count > 1 { chart }
+    }
+
+    private var chart: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 if let delay = latestDelay {
@@ -720,7 +834,16 @@ struct VPNSparklineRow: View {
     private var outPeak: Double { outPoints.map(\.outBps).max() ?? 1 }
     private var peak: Double { max(inPeak, outPeak) }
 
+    /// Nothing at all until there is a line to draw.
+    ///
+    /// An empty frame with "↓ — ↑ —" under it is not a chart waiting to fill,
+    /// it is a rectangle of noise: it takes vertical space, draws attention,
+    /// and says less than the transfer totals already shown above it.
     var body: some View {
+        if inPoints.count > 1 || outPoints.count > 1 { chart }
+    }
+
+    private var chart: some View {
         VStack(alignment: .leading, spacing: 4) {
             GeometryReader { geo in
                 ZStack(alignment: .bottom) {
@@ -783,12 +906,53 @@ struct VPNSparklineRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
 
             HStack(spacing: 8) {
-                Text("↓ \(latestIn.map(Fmt.bytesPerSec) ?? "-"))/s")
+                // The closing paren belongs to `map`, not to the interpolation
+                // — written the other way it printed "↓ -)/s", and appended a
+                // second unit onto a value that already carries one.
+                Text("↓ \(latestIn.map(Fmt.bytesPerSec) ?? "—")")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(theme.ok)
-                Text("↑ \(latestOut.map(Fmt.bytesPerSec) ?? "-"))/s")
+                Text("↑ \(latestOut.map(Fmt.bytesPerSec) ?? "—")")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(theme.info)
+            }
+        }
+    }
+}
+
+/// A system notice, which may be one line or an entire stack trace.
+///
+/// Collapsed by default: shown whole, a PHP backtrace fills the screen and
+/// buries everything below it. Tapping expands.
+struct NoticeText: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let notice: SystemNotice
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if notice.isFromThisApp {
+                // Owning it. A snippet that throws is recorded by pfSense as a
+                // notice, which this app then reads back and shows — so its own
+                // bug arrives looking like a firewall fault.
+                StatusPill(text: "raised by Vaktpost", health: .warn)
+            }
+
+            Text(expanded ? notice.notice : notice.summary)
+                .font(.system(size: 13, design: notice.isMultiline ? .monospaced : .default))
+                .foregroundStyle(theme.label)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if notice.isMultiline {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                } label: {
+                    Text(expanded ? "Show less" : "Show full notice")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.accentColor)
+                }
+                .buttonStyle(.plain)
             }
         }
     }

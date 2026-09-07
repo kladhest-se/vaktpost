@@ -38,8 +38,22 @@ enum HealthThresholds {
 /// already fetched, which means the rules live in one readable place rather
 /// than being scattered as red text across cards.
 struct VaktpostAlert: Identifiable {
-    enum Category: String {
+    enum Category: String, CaseIterable {
         case gateway, service, system, certificate, update, capacity, ha, vpn, connection
+
+        var displayName: String {
+            switch self {
+            case .gateway: return "Gateways"
+            case .service: return "Services"
+            case .system: return "System notices"
+            case .certificate: return "Certificates"
+            case .update: return "Updates"
+            case .capacity: return "Capacity"
+            case .ha: return "High availability"
+            case .vpn: return "VPN"
+            case .connection: return "Connection"
+            }
+        }
 
         var symbol: String {
             switch self {
@@ -57,10 +71,47 @@ struct VaktpostAlert: Identifiable {
     }
 
     let id = UUID()
+
     var severity: Health
     var category: Category
     var title: String
     var detail: String
+
+    /// What distinguishes this alert from others of its kind, when the title
+    /// alone cannot.
+    ///
+    /// Needed where the identifier is a bare number: "CARP VHID 1 backup" and
+    /// "CARP VHID 2 backup" differ only by a digit that the signature drops as
+    /// a measurement. Two different virtual IPs, one acknowledgement.
+    var key: String? = nil
+
+    /// A stable identity for acknowledgement, ignoring the numbers.
+    ///
+    /// "Chipset at 81 °C" and "Chipset at 83 °C" are the same condition told
+    /// twice. Acknowledging by exact title would mean re-acknowledging on
+    /// every degree, which is worse than not offering it — so digits are
+    /// stripped and the category kept, giving `capacity:Chipset at  °C`.
+    ///
+    /// Severity is part of it deliberately: acknowledging a warning should not
+    /// silence the same condition when it becomes critical. Something you
+    /// decided to live with at 81° is not something you decided to live with
+    /// at 105°.
+    var signature: String {
+        // Only whole numeric words are dropped, not every digit.
+        //
+        // Stripping all digits turned "WAN_DHCP is down" and "WAN2_DHCP is
+        // down" into the same string, so acknowledging one gateway silenced
+        // the other — which is the opposite of what acknowledging is for. A
+        // digit inside an identifier is part of its name; a word that is only
+        // a number is a measurement.
+        let normalised = title
+            .split(separator: " ", omittingEmptySubsequences: false)
+            .map { word -> Substring in
+                word.first?.isNumber == true ? "" : word
+            }
+            .joined(separator: " ")
+        return "\(category.rawValue):\(severity.name):\(key ?? ""):\(normalised)"
+    }
 
     @MainActor
     static func build(from store: DashboardStore) -> [VaktpostAlert] {
@@ -101,14 +152,21 @@ struct VaktpostAlert: Identifiable {
                                  title: "Swap in use (\(Fmt.pct(swap)))",
                                  detail: "A firewall that swaps is usually one that will drop packets under load."))
             }
-            if let temp = sys.temperature, temp >= HealthThresholds.tempWarn {
+            // Thresholds follow the sensor, not a single pair of numbers.
+            //
+            // A chipset sits in the eighties under normal load; a CPU die at
+            // the same temperature is worth looking at. One pair for both made
+            // a healthy PCH raise a permanent warning nobody could act on,
+            // which is how an alert list stops being read.
+            let tempLimits = sys.temperatureThresholds
+            if let temp = sys.temperature, temp >= tempLimits.warn {
                 out.append(.init(
-                    severity: temp >= HealthThresholds.tempBad ? .bad : .warn,
-                    category: .system,
-                    title: String(format: "CPU at %.0f °C", temp),
-                    detail: temp >= HealthThresholds.tempBad
+                    severity: temp >= tempLimits.bad ? .bad : .warn,
+                    category: .capacity,
+                    title: String(format: "%@ at %.0f °C", sys.temperatureLabel, temp),
+                    detail: temp >= tempLimits.bad
                         ? "Thermal throttling territory. Check airflow and fan health."
-                        : "Warm. Worth watching if it climbs."
+                        : "Warm for this sensor. Worth watching if it climbs."
                 ))
             }
             if let mbuf = sys.mbufUsage, mbuf >= HealthThresholds.mbufWarn {
@@ -129,6 +187,76 @@ struct VaktpostAlert: Identifiable {
             out.append(.init(severity: .warn, category: .update,
                              title: "Update available",
                              detail: "Running \(store.version?.current ?? "?"), \(latest) is available."))
+        }
+
+        // The firewall's own notices, one alert each.
+        for notice in store.criticalNotices where !notice.isFromThisApp {
+            out.append(.init(
+                severity: notice.health,
+                category: .system,
+                title: notice.summary.isEmpty ? "System notice" : notice.summary,
+                detail: notice.displayTime
+            ))
+        }
+
+        // The app's own failures, collapsed into one.
+        //
+        // A failing snippet writes a notice on every refresh, so within an hour
+        // the badge read 50 and every entry was the same PHP error. That buries
+        // the gateway or certificate alert somebody actually needs to see, and
+        // an app that floods its own alert list with its own bugs is worse than
+        // one that stays quiet about them.
+        // Only recent ones, and only as one alert.
+        //
+        // Notices persist on the firewall until somebody clears them, so a bug
+        // fixed twenty minutes ago still has eighty entries sitting in the log.
+        // Reporting those as "a snippet is failing" is false: nothing is
+        // failing now. The whole history stays visible under System → Notices,
+        // where it belongs; only something that failed in the last quarter of
+        // an hour is worth an alert.
+        let ours = store.criticalNotices.filter(\.isFromThisApp)
+        let recent = ours.filter { notice in
+            guard let when = notice.date else { return true }   // undated: assume current
+            return Date().timeIntervalSince(when) < 900
+        }
+        if let latest = recent.first {
+            let historical = ours.count - recent.count
+            out.append(.init(
+                severity: .warn,
+                category: .system,
+                title: recent.count == 1
+                    ? "A Vaktpost snippet is failing"
+                    : "A Vaktpost snippet is failing (\(recent.count) times recently)",
+                detail: historical > 0
+                    ? "\(latest.summary) — plus \(historical) older notices from failures already fixed. Clear them from the bell icon in the webConfigurator."
+                    : "\(latest.summary) — these accumulate on the firewall. Clear them from the bell icon once fixed."
+            ))
+        } else if ours.count >= 10 {
+            // Nothing failing now, but the log is full of what used to.
+            out.append(.init(
+                severity: .info,
+                category: .system,
+                title: "\(ours.count) old Vaktpost notices on the firewall",
+                detail: "Nothing has failed in the last 15 minutes. Clear these from the bell icon in the webConfigurator."
+            ))
+        }
+
+        for fs in store.fullFilesystems {
+            out.append(.init(
+                severity: fs.health,
+                category: .capacity,
+                title: "\(fs.mountpoint) at \(Fmt.pct(fs.percentUsed ?? 0))",
+                detail: "A full filesystem stops logging long before it stops routing."
+            ))
+        }
+
+        for entry in store.staleDyndns {
+            out.append(.init(
+                severity: .warn,
+                category: .system,
+                title: "\(entry.displayName) may be stale",
+                detail: "Last pushed \(entry.cachedAddress ?? "?") on \(entry.updatedDescription); the interface has a different address now."
+            ))
         }
 
         let stale = store.packagesNeedingUpdate
@@ -162,7 +290,8 @@ struct VaktpostAlert: Identifiable {
             for vip in carp.interfaces where vip.health == .bad {
                 out.append(.init(severity: .bad, category: .ha,
                                  title: "CARP VHID \(vip.vhid) \(vip.status)",
-                                 detail: "On \(vip.interfaceName)."))
+                                 detail: "On \(vip.interfaceName).",
+                                 key: "vhid-\(vip.vhid)"))
             }
         }
 

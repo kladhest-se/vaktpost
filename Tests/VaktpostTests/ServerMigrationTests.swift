@@ -5,6 +5,11 @@ import Security
 /// Regression test for the migration from the legacy single-server layout
 /// (where `ServerProfile` and its API key were stored under hardcoded keys)
 /// to the multi-firewall layout backed by `servers.list`.
+///
+/// The profile still migrates. The credential deliberately does not: a REST
+/// API key is not a webConfigurator password, and carrying it across would
+/// produce a 401 that looks like a wrong password rather than a prompt for the
+/// thing now required.
 final class ServerMigrationTests: XCTestCase {
 
     private let listKey = "servers.list"
@@ -12,11 +17,27 @@ final class ServerMigrationTests: XCTestCase {
     private let legacyProfileKey = "server.profile"
     private let service = "se.kladhest.vaktpost.apikey"
 
+    /// An isolated store, one per test.
+    ///
+    /// These tests used `UserDefaults.standard`, which in a host-app test
+    /// bundle is the app's own defaults on that simulator. "The registry starts
+    /// clean when nothing is stored" then passed on a fresh simulator and
+    /// failed on one where a firewall had been configured — the test was
+    /// reading the real profile. A test whose result depends on the state of
+    /// the machine running it is worse than no test.
+    private var defaults: UserDefaults!
+    private var suiteName: String!
+
+    override func setUp() {
+        super.setUp()
+        suiteName = "vaktpost.tests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)
+    }
+
     override func tearDown() {
         super.tearDown()
-        UserDefaults.standard.removeObject(forKey: listKey)
-        UserDefaults.standard.removeObject(forKey: activeKey)
-        UserDefaults.standard.removeObject(forKey: legacyProfileKey)
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults = nil
         Keychain.deleteLegacy()
         deleteKeychainItem(account: "default")
     }
@@ -32,14 +53,14 @@ final class ServerMigrationTests: XCTestCase {
 
     /// When a single-server profile exists under the old key, `ServerRegistry`
     /// migrates it into the multi-firewall list and moves the keychain item.
-    func testLegacyProfileIsMigratedToList() async {
+    func testLegacyProfileIsMigratedToList() async throws {
         let legacyProfile = ServerProfile(
             baseURL: "https://firewall.example",
             label: "Test firewall",
             refreshSeconds: 30
         )
         let profileData = try! JSONEncoder().encode(legacyProfile)
-        UserDefaults.standard.set(profileData, forKey: legacyProfileKey)
+        defaults.set(profileData, forKey: legacyProfileKey)
 
         // Store a legacy keychain item under the "default" account used by old versions.
         guard let data = "legacy-key-123".data(using: .utf8) else { return }
@@ -52,27 +73,32 @@ final class ServerMigrationTests: XCTestCase {
         SecItemAdd(query as CFDictionary, nil)
 
         await MainActor.run {
-            _ = ServerRegistry()
+            _ = ServerRegistry(defaults: defaults)
         }
 
         // The old key should be gone.
-        XCTAssertNil(UserDefaults.standard.data(forKey: legacyProfileKey))
+        XCTAssertNil(defaults.data(forKey: legacyProfileKey))
 
         // The multi-firewall list should contain exactly one server.
-        let listData = UserDefaults.standard.data(forKey: listKey)
-        XCTAssertNotNil(listData)
-        let servers = try! JSONDecoder().decode([ServerProfile].self, from: listData!)
+        //
+        // `XCTUnwrap` rather than a force unwrap: when this was `listData!`
+        // the test did not fail, it crashed — taking the whole run with it and
+        // producing a macOS crash report instead of a test result. A failing
+        // assertion tells you which expectation was wrong; a crash tells you
+        // nothing and hides every test that would have run after it.
+        let listData = try XCTUnwrap(defaults.data(forKey: listKey))
+        let servers = try JSONDecoder().decode([ServerProfile].self, from: listData)
         XCTAssertEqual(servers.count, 1)
         XCTAssertEqual(servers[0].baseURL, "https://firewall.example")
         XCTAssertEqual(servers[0].label, "Test firewall")
 
         // The keychain item should have been migrated.
-        XCTAssertEqual(Keychain.apiKey(for: servers[0].id), "legacy-key-123")
+        XCTAssertEqual(Keychain.password(for: servers[0].id), nil)
         XCTAssertNil(Keychain.legacyAPIKey())
 
         // The registry should pick it up as active.
         await MainActor.run {
-            let registry = ServerRegistry()
+            let registry = ServerRegistry(defaults: defaults)
             XCTAssertEqual(registry.active?.id, servers[0].id)
         }
     }
@@ -83,10 +109,10 @@ final class ServerMigrationTests: XCTestCase {
         let profile = ServerProfile(baseURL: "https://new.example", label: "New")
         let list = [profile]
         let listData = try! JSONEncoder().encode(list)
-        UserDefaults.standard.set(listData, forKey: listKey)
+        defaults.set(listData, forKey: listKey)
 
         await MainActor.run {
-            let registry = ServerRegistry()
+            let registry = ServerRegistry(defaults: defaults)
             XCTAssertEqual(registry.servers.count, 1)
             XCTAssertEqual(registry.active?.baseURL, "https://new.example")
         }
@@ -95,7 +121,7 @@ final class ServerMigrationTests: XCTestCase {
     /// When neither legacy nor new data exists, the registry starts clean.
     func testEmptyStateProducesNoServers() async {
         await MainActor.run {
-            let registry = ServerRegistry()
+            let registry = ServerRegistry(defaults: defaults)
             XCTAssertTrue(registry.servers.isEmpty)
             XCTAssertNil(registry.active)
         }
@@ -106,13 +132,13 @@ final class ServerMigrationTests: XCTestCase {
         var badProfile = ServerProfile(baseURL: "not a url", label: "Bad")
         badProfile.normalize() // won't help — no host
         let profileData = try! JSONEncoder().encode(badProfile)
-        UserDefaults.standard.set(profileData, forKey: legacyProfileKey)
+        defaults.set(profileData, forKey: legacyProfileKey)
 
         await MainActor.run {
-            _ = ServerRegistry()
+            _ = ServerRegistry(defaults: defaults)
         }
 
         // The legacy key is still there (migration was skipped).
-        XCTAssertNotNil(UserDefaults.standard.data(forKey: legacyProfileKey))
+        XCTAssertNotNil(defaults.data(forKey: legacyProfileKey))
     }
 }

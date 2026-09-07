@@ -5,7 +5,7 @@ struct FirewallView: View {
     @EnvironmentObject private var store: DashboardStore
 
     enum Pane: String, CaseIterable, Identifiable {
-        case rules = "Rules", nat = "NAT", aliases = "Aliases"
+        case rules = "Rules", nat = "NAT"
         var id: String { rawValue }
     }
 
@@ -27,7 +27,8 @@ struct FirewallView: View {
                     HStack(spacing: 8) {
                         chip("All", selected: interfaceFilter == nil) { interfaceFilter = nil }
                         ForEach(interfaceOptions, id: \.self) { iface in
-                            chip(iface, selected: interfaceFilter == iface) {
+                            chip(store.interfaceLabel(for: iface) ?? iface,
+                                 selected: interfaceFilter == iface) {
                                 interfaceFilter = interfaceFilter == iface ? nil : iface
                             }
                         }
@@ -42,23 +43,31 @@ struct FirewallView: View {
                     switch pane {
                     case .rules: rulesPane
                     case .nat: natPane
-                    case .aliases: aliasesPane
                     }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
             }
-            .refreshable { await store.refresh() }
+            .refreshable { await store.refreshManually() }
         }
         .background(theme.bg.ignoresSafeArea())
+        // Rules, NAT and aliases are fetched when this screen opens rather
+        // than on the refresh timer — 98 rules is a large payload for a tab
+        // most people never open. Nothing called this, so the tab was empty.
+        .task { await store.loadFirewallObjects() }
         .searchable(text: $query, prompt: "Search description, address or port")
         .navigationTitle("Firewall")
     }
 
     // MARK: Rules
 
+    /// The interfaces that have rules, labelled the way the firewall labels
+    /// them. Rules reference pfSense's internal handle — "lan", "opt7" — which
+    /// is not what anybody calls the VLAN.
     private var interfaceOptions: [String] {
-        Array(Set(store.rules.map(\.interfaceName))).sorted()
+        Array(Set(store.rules.map(\.interfaceName))).sorted {
+            (store.interfaceLabel(for: $0) ?? $0) < (store.interfaceLabel(for: $1) ?? $1)
+        }
     }
 
     private var filteredRules: [FirewallRule] {
@@ -107,7 +116,7 @@ struct FirewallView: View {
         } else {
             countLine("\(filteredForwards.count) port forwards")
             ForEach(filteredForwards) { pf in
-                Slab(rail: pf.health, trailing: pf.interfaceName) {
+                Slab(rail: pf.health, trailing: store.interfaceLabel(for: pf.interfaceName)) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text(pf.descr.isEmpty ? "(no description)" : pf.descr)
@@ -116,36 +125,42 @@ struct FirewallView: View {
                             Spacer()
                             if pf.disabled { StatusPill(text: "disabled", health: .idle) }
                         }
-                        FieldRow(key: (pf.proto ?? "any").uppercased(), value: "\(pf.destination) → \(pf.targetLabel)")
+                        natField("Protocol", (pf.proto ?? "any").uppercased())
+                        // Shown only when it narrows anything. "From any" on
+                        // every forward is a row that never varies, which is a
+                        // row nobody reads.
+                        if pf.sourceSide.address != "any" {
+                            natField("From", store.resolvedValue(pf.sourceSide.address))
+                        }
+                        natField("To", store.resolvedValue(pf.destinationSide.address))
+                        if let port = pf.destinationSide.port, !port.isEmpty {
+                            natField("Port", store.resolvedValue(port))
+                        }
+                        natField("Forwards to", store.resolvedValue(pf.target))
+                        if let local = pf.localPort, !local.isEmpty {
+                            natField("Local port", store.resolvedValue(local))
+                        }
                     }
                 }
             }
         }
     }
 
+    private func natField(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(theme.labelFaint)
+                .frame(width: 74, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(theme.label)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
     // MARK: Aliases
-
-    private var filteredAliases: [FirewallAliasEntry] {
-        guard !query.isEmpty else { return store.aliases }
-        let q = query.lowercased()
-        return store.aliases.filter {
-            $0.name.lowercased().contains(q)
-                || ($0.descr ?? "").lowercased().contains(q)
-                || $0.addresses.contains { $0.lowercased().contains(q) }
-        }
-    }
-
-    @ViewBuilder
-    private var aliasesPane: some View {
-        if let err = store.errors[.aliases] {
-            Notice(symbol: "exclamationmark.triangle", title: "Aliases unavailable", detail: err, health: .warn)
-        } else if filteredAliases.isEmpty {
-            Notice(symbol: "tag.slash", title: query.isEmpty ? "No aliases" : "No matches")
-        } else {
-            countLine("\(filteredAliases.count) aliases")
-            ForEach(filteredAliases) { AliasRow(alias: $0) }
-        }
-    }
 
     // MARK: Bits
 
@@ -174,10 +189,30 @@ struct FirewallView: View {
 
 struct RuleRow: View {
     @EnvironmentObject private var theme: ThemeManager
+    @EnvironmentObject private var store: DashboardStore
     let rule: FirewallRule
 
+    /// A fixed-width label and a value that wraps under itself.
+    ///
+    /// The label column is narrow and constant so the values line up down the
+    /// card; addresses are the thing being compared between rules, and ragged
+    /// left edges make that harder than it needs to be.
+    private func ruleField(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(theme.labelFaint)
+                .frame(width: 58, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(theme.label)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
     var body: some View {
-        Slab(rail: rule.health, trailing: rule.interfaceName) {
+        Slab(rail: rule.health, trailing: store.interfaceLabel(for: rule.interfaceName)) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     StatusPill(text: rule.type.isEmpty ? "rule" : rule.type, health: rule.health)
@@ -192,9 +227,21 @@ struct RuleRow: View {
                             .foregroundStyle(theme.labelFaint)
                     }
                 }
-                Text("\(rule.source)  →  \(rule.destination)")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(theme.label)
+                // Labelled fields rather than one line of arrows.
+                //
+                // A resolved alias list followed by `→ wanip:80, 443` is a
+                // wall: it wraps mid-address, and which
+                // side is the source depends on spotting the arrow. Four short
+                // rows say the same thing and can be read a line at a time.
+                ruleField("From", store.resolvedValue(rule.sourceSide.address))
+                if let port = rule.sourceSide.port, !port.isEmpty {
+                    ruleField("Src port", store.resolvedValue(port))
+                }
+                ruleField("To", store.resolvedValue(rule.destinationSide.address))
+                if let port = rule.destinationSide.port, !port.isEmpty {
+                    ruleField("Port", store.resolvedValue(port))
+                }
+
                 if !rule.descr.isEmpty {
                     Text(rule.descr)
                         .font(.system(size: 12))
@@ -205,55 +252,3 @@ struct RuleRow: View {
     }
 }
 
-struct AliasRow: View {
-    @EnvironmentObject private var theme: ThemeManager
-    let alias: FirewallAliasEntry
-    @State private var expanded = false
-
-    var body: some View {
-        Slab(rail: .info, trailing: alias.type) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(alias.name)
-                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(theme.label)
-                    Spacer()
-                    Text("\(alias.addresses.count)")
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
-                        .foregroundStyle(theme.labelFaint)
-                }
-                if let d = alias.descr, !d.isEmpty {
-                    Text(d)
-                        .font(.system(size: 12))
-                        .foregroundStyle(theme.labelMuted)
-                }
-                if !alias.addresses.isEmpty {
-                    let shown = expanded ? alias.addresses : Array(alias.addresses.prefix(5))
-                    ForEach(Array(shown.enumerated()), id: \.offset) { idx, addr in
-                        HStack {
-                            Text(addr)
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(theme.label)
-                            Spacer()
-                            if idx < alias.details.count {
-                                Text(alias.details[idx])
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(theme.labelFaint)
-                                    .lineLimit(1)
-                            }
-                        }
-                    }
-                    if alias.addresses.count > 5 {
-                        Button {
-                            withAnimation { expanded.toggle() }
-                        } label: {
-                            Text(expanded ? "Show less" : "Show all \(alias.addresses.count)")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(theme.accentColor)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}

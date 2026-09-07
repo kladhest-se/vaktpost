@@ -24,7 +24,14 @@ final class ThroughputTracker: ObservableObject {
     }
 
     /// Roughly 30 minutes at the default 30s refresh.
-    private let capacity = 60
+    private let capacity: Int
+
+    /// 60 points is half an hour at the default refresh, and two minutes at
+    /// the interface screen's two-second poll. The live screen asks for more
+    /// so its chart covers a useful span rather than the last ninety seconds.
+    init(capacity: Int = 60) {
+        self.capacity = capacity
+    }
 
     private var last: [String: Reading] = [:]
     @Published private(set) var series: [String: [Point]] = [:]
@@ -32,7 +39,14 @@ final class ThroughputTracker: ObservableObject {
     func ingest(_ interfaces: [InterfaceStat], at now: Date = Date()) {
         for iface in interfaces {
             guard let inBytes = iface.inBytes, let outBytes = iface.outBytes else { continue }
-            let key = iface.device
+            // Keyed by the interface, not by its hardware device.
+            //
+            // Every VLAN on a lagg reports the same `hwif`, so keying on that
+            // put five interfaces in one series: each refresh differenced one
+            // VLAN's counters against another's, produced a negative delta,
+            // and cleared the history as if the counter had reset. The series
+            // never grew past a single point.
+            let key = iface.seriesKey
             defer { last[key] = Reading(at: now, inBytes: inBytes, outBytes: outBytes) }
 
             guard let previous = last[key] else { continue }

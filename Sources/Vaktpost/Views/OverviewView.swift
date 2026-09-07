@@ -22,8 +22,8 @@ struct OverviewView: View {
 
                 if store.criticalAlertCount > 0 { alertsTeaser }
 
-                GroupHeading(text: "Uplink")
-                wanSlab
+                GroupHeading(text: store.favouriteInterfaces.isEmpty ? "Uplink" : "Interfaces")
+                uplinkSlabs
 
                 GroupHeading(text: "System")
                 systemSlab
@@ -51,7 +51,7 @@ struct OverviewView: View {
             .padding(.bottom, 28)
         }
         .background(theme.bg.ignoresSafeArea())
-        .refreshable { await store.refresh() }
+        .refreshable { await store.refreshManually() }
         .navigationTitle("Overview")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -116,10 +116,10 @@ struct OverviewView: View {
 
     private var alertsTeaser: some View {
         NavigationLink { AlertsView() } label: {
-            Slab(rail: store.alerts.first?.severity ?? .warn, title: "Alerts",
+            Slab(rail: store.visibleAlerts.first?.severity ?? .warn, title: "Alerts",
                  trailing: "\(store.criticalAlertCount)") {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(store.alerts.prefix(3)) { alert in
+                    ForEach(store.visibleAlerts.prefix(3)) { alert in
                         HStack(spacing: 8) {
                             Image(systemName: alert.category.symbol)
                                 .font(.system(size: 12))
@@ -132,8 +132,8 @@ struct OverviewView: View {
                             Spacer()
                         }
                     }
-                    if store.alerts.count > 3 {
-                        Text("+\(store.alerts.count - 3) more")
+                    if store.visibleAlerts.count > 3 {
+                        Text("+\(store.visibleAlerts.count - 3) more")
                             .font(.system(size: 11))
                             .foregroundStyle(theme.labelFaint)
                     }
@@ -143,29 +143,41 @@ struct OverviewView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: WAN
+    // MARK: Interfaces
 
+    /// The interfaces worth watching: whatever has been starred on the Network
+    /// tab, or the uplink if nothing has.
     @ViewBuilder
-    private var wanSlab: some View {
-        if let wan = store.wanInterface {
-            Slab(rail: wan.health, title: wan.name, trailing: wan.device) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(wan.addressLine)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(theme.labelMuted)
-                    ThroughputChart(
-                        store: store,
-                        device: wan.device,
-                        height: 56,
-                        showExplanatoryText: true
-                    )
-                }
-            }
-        } else {
+    private var uplinkSlabs: some View {
+        let shown = store.overviewInterfaces
+        if shown.isEmpty {
             Slab(rail: .idle) {
                 Text("No interface identified as the uplink yet.")
                     .font(.system(size: 13))
                     .foregroundStyle(theme.labelMuted)
+            }
+        } else {
+            ForEach(shown) { iface in
+                // Tappable, like the Network tab: the same interface, watched
+                // at two-second resolution instead of thirty.
+                NavigationLink {
+                    InterfaceDetailView(iface: iface)
+                } label: {
+                    Slab(rail: iface.health, title: iface.name, trailing: iface.device) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(iface.addressLine)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(theme.labelMuted)
+                            ThroughputChart(
+                                store: store,
+                                device: iface.seriesKey,
+                                height: 56,
+                                showExplanatoryText: true
+                            )
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
             }
         }
     }
