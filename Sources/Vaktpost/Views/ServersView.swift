@@ -112,6 +112,8 @@ struct ServerEditView: View {
     @EnvironmentObject private var store: DashboardStore
     @EnvironmentObject private var registry: ServerRegistry
     @Environment(\.dismiss) private var dismiss
+    @State private var offerPinning = false
+    @State private var pendingFingerprint: String?
 
     @State var profile: ServerProfile
     @State private var password = ""
@@ -276,6 +278,22 @@ struct ServerEditView: View {
             }
         }
         .onAppear { password = Keychain.password(for: profile.id) ?? "" }
+        .confirmationDialog("Pin this certificate?", isPresented: $offerPinning,
+                            titleVisibility: .visible) {
+            Button("Pin it") {
+                if let pendingFingerprint {
+                    profile.pinnedFingerprint = pendingFingerprint
+                    profile.allowUntrustedTLS = false
+                    Task {
+                        await store.saved(profile)
+                        dismiss()
+                    }
+                }
+            }
+            Button("Not now", role: .cancel) { dismiss() }
+        } message: {
+            Text("The connection worked. Pinning means only this exact certificate is accepted from now on, which stops anything else answering for your firewall. You will need to pin again when you renew it.")
+        }
         .confirmationDialog("Remove this firewall?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
                 Task {
@@ -285,7 +303,7 @@ struct ServerEditView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Its API key is deleted from the keychain.")
+            Text("Its password is deleted from the keychain.")
         }
     }
 
@@ -298,7 +316,7 @@ struct ServerEditView: View {
         case .success:
             break
         case .failure(let error):
-            message = error.errorDescription ?? "Failed to save API key."
+            message = error.errorDescription ?? "Failed to save the password."
             messageHealth = .bad
             return
         }
@@ -307,20 +325,44 @@ struct ServerEditView: View {
         profile = p
         await store.saved(p)
 
-        if registry.active?.id == p.id {
-            do {
-                let version = try await store.client.ping()
+        guard registry.active?.id == p.id else {
+            // Not the active firewall, so there is nothing to test against.
+            // Saving is the whole action; staying open would leave the person
+            // wondering what else the screen wanted.
+            dismiss()
+            return
+        }
+
+        do {
+            let version = try await store.client.ping()
+
+            // Offer to pin what we just connected to.
+            //
+            // pfSense ships a self-signed certificate, so the first connection
+            // is necessarily made with untrusted TLS allowed. That is the one
+            // moment the app knows the certificate is the right one — the
+            // person is looking at the firewall they just typed in — and it is
+            // the moment to fix it in place. Asking rather than pinning
+            // silently, because pinning is a commitment that breaks the
+            // connection when the certificate is renewed.
+            if profile.pinnedFingerprint.isEmpty,
+               profile.allowUntrustedTLS,
+               let seen = await store.client.lastSeenFingerprint {
+                pendingFingerprint = seen
                 message = "Connected — pfSense \(version)"
                 messageHealth = .ok
-            } catch {
-                message = error.localizedDescription
-                messageHealth = .bad
+                offerPinning = true
+                return
             }
-        } else {
-            message = "Saved (untested — tap to test)"
-            messageHealth = .warn
+
+            message = "Connected — pfSense \(version)"
+            messageHealth = .ok
+            dismiss()
+        } catch {
+            // Stays open: the error is the reason to still be here.
+            message = error.localizedDescription
+            messageHealth = .bad
         }
-        isTesting = false
     }
 }
 

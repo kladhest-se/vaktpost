@@ -62,6 +62,13 @@ actor FirewallClient {
         return payload.list("data").compactMap { JSONDict($0) }.map(PackageInfo.init)
     }
 
+    /// UPnP mappings, or nil when the package is not installed.
+    func upnp() async throws -> UPnPStatus? {
+        let payload = try await rpc.runObject(.upnp)
+        guard payload.bool("installed") == true else { return nil }
+        return UPnPStatus(payload)
+    }
+
     func notices() async throws -> [SystemNotice] {
         try await rpc.runList(.notices).map(SystemNotice.init)
     }

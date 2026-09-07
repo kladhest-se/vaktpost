@@ -36,3 +36,6 @@ ARCHS[sdk=iphonesimulator*] = arm64
 // build never shows 1.
 MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
+
+// The primary icon. Alternates are loose files, declared in Info.plist.
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon

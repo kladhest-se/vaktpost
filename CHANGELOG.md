@@ -242,6 +242,99 @@ on is how a list stops being read.
 - Acknowledged and silenced alerts are counted separately, so the same alert is
   not reported as hidden twice for two different reasons.
 
+### The app has an icon, and six of them
+
+A watchtower, in coral, ocean, mint, amber, lavender and silver. Coral is the
+primary one in the asset catalog — the app had no catalog at all until now —
+and the other five are loose bundle files, which is what `setAlternateIconName`
+resolves. Settings has a picker.
+
+Worth noting the filenames matter: `Icon-ocean@2x.png` at the bundle root, not
+the size-suffixed names an asset catalog uses. I generated the wrong ones first
+and they would have failed silently at runtime.
+
+The website header uses the icon too, switching to whichever of the six is
+nearest the chosen accent.
+
+### A firewall rule opens, rather than explaining itself in the list
+
+Ninety-eight rules at five lines each is a list nobody scrolls. Rows are two
+lines now — what the rule does, and its description — and everything else moved
+to a detail screen: both sides with ports, the interface, IP version, whether
+it logs, and the tracker, which is how you find the rule again in the
+webConfigurator. Aliases show their name *and* contents there, where there is
+room for both.
+
+NAT the same.
+
+### Saving a firewall left you on the edit screen
+
+It saved and reported the connection test inline, so nothing indicated the job
+was done. Success dismisses now; failure stays open, because the error is the
+reason to still be there.
+
+### It offers to pin the certificate
+
+pfSense ships a self-signed certificate, so the first connection is necessarily
+made with untrusted TLS allowed — and that is the one moment the app knows the
+certificate is the right one, because the person is looking at the firewall
+they just typed in. It now offers to pin it there. Asked rather than done
+silently: pinning breaks the connection when the certificate is renewed, and
+that should not be a surprise.
+
+### The temperature threshold is yours to set
+
+80.5 °C on a chipset does not trigger the built-in 95 °C warning, which is the
+right default and the wrong answer for somebody who knows their board and wants
+to hear about it. Settings has a slider; the critical point follows ten degrees
+above, so lowering the warning does not lose the difference between warm and
+serious.
+
+### UPnP: the mappings are not reachable, and the screen says so
+
+Two guesses were spent finding this out. A lease file that does not exist, then
+an accessor function that does not either — the probe reported only
+`upnp_running` and `upnp_action`, and no lease file at all.
+
+miniupnpd keeps its port maps in a pf anchor. pfSense's own status page builds
+its table by running `pfctl -a miniupnpd -sn` and parsing the output, and
+shelling out is exactly what the snippet rules forbid, for the reason that
+`exec` cannot be audited as read-only.
+
+So the screen shows what is knowable — installed, enabled, running, which
+interface — and says plainly where the mappings are instead of showing an empty
+list. That distinction is the point: "no ports are open" and "this app cannot
+see which ports are open" render identically, and the first is far more
+comforting than it deserves to be. A running UPnP daemon is a standing offer to
+open ports on request, so it is coloured as a warning even though the resulting
+ports cannot be listed.
+
+The call to `upnp_get_active_mappings` stays, so a package version that gains
+one starts working with no other change.
+
+### The old UPnP screen note
+
+The first version read `/var/etc/miniupnpd.leases` directly, which came back
+empty against a firewall whose webConfigurator was showing a live mapping. The
+lease file is not where pfSense keeps them.
+
+It now calls `upnp_get_active_mappings()` from the package's own include, which
+is what the status page uses, and reports which functions and files it found
+when that is not there — so a wrong guess is corrected in one round trip
+instead of by trying paths one at a time. The model reads both plausible field
+namings, since the accessor is undocumented and one guess has already been
+wrong.
+
+The expiry column is gone: the lease file had a timestamp and the accessor does
+not, and showing "no expiry" for everything would be inventing a fact.
+
+### The old UPnP screen note
+
+Ports opened because a device asked, rather than because somebody wrote a rule
+— the one place where what is open and what is in the rules can differ. Shows
+the route, what the firewall knows the device as, and how long the lease has
+left. Installed-but-off is said plainly rather than shown as an empty list.
+
 ### The publish gate caught a leak, and was missing more
 
 The secrets check stopped a publish over an internal hostname in test fixtures
@@ -1212,6 +1305,99 @@ on is how a list stops being read.
   dedicated account, and the field should not argue with them.
 - Acknowledged and silenced alerts are counted separately, so the same alert is
   not reported as hidden twice for two different reasons.
+
+### The app has an icon, and six of them
+
+A watchtower, in coral, ocean, mint, amber, lavender and silver. Coral is the
+primary one in the asset catalog — the app had no catalog at all until now —
+and the other five are loose bundle files, which is what `setAlternateIconName`
+resolves. Settings has a picker.
+
+Worth noting the filenames matter: `Icon-ocean@2x.png` at the bundle root, not
+the size-suffixed names an asset catalog uses. I generated the wrong ones first
+and they would have failed silently at runtime.
+
+The website header uses the icon too, switching to whichever of the six is
+nearest the chosen accent.
+
+### A firewall rule opens, rather than explaining itself in the list
+
+Ninety-eight rules at five lines each is a list nobody scrolls. Rows are two
+lines now — what the rule does, and its description — and everything else moved
+to a detail screen: both sides with ports, the interface, IP version, whether
+it logs, and the tracker, which is how you find the rule again in the
+webConfigurator. Aliases show their name *and* contents there, where there is
+room for both.
+
+NAT the same.
+
+### Saving a firewall left you on the edit screen
+
+It saved and reported the connection test inline, so nothing indicated the job
+was done. Success dismisses now; failure stays open, because the error is the
+reason to still be there.
+
+### It offers to pin the certificate
+
+pfSense ships a self-signed certificate, so the first connection is necessarily
+made with untrusted TLS allowed — and that is the one moment the app knows the
+certificate is the right one, because the person is looking at the firewall
+they just typed in. It now offers to pin it there. Asked rather than done
+silently: pinning breaks the connection when the certificate is renewed, and
+that should not be a surprise.
+
+### The temperature threshold is yours to set
+
+80.5 °C on a chipset does not trigger the built-in 95 °C warning, which is the
+right default and the wrong answer for somebody who knows their board and wants
+to hear about it. Settings has a slider; the critical point follows ten degrees
+above, so lowering the warning does not lose the difference between warm and
+serious.
+
+### UPnP: the mappings are not reachable, and the screen says so
+
+Two guesses were spent finding this out. A lease file that does not exist, then
+an accessor function that does not either — the probe reported only
+`upnp_running` and `upnp_action`, and no lease file at all.
+
+miniupnpd keeps its port maps in a pf anchor. pfSense's own status page builds
+its table by running `pfctl -a miniupnpd -sn` and parsing the output, and
+shelling out is exactly what the snippet rules forbid, for the reason that
+`exec` cannot be audited as read-only.
+
+So the screen shows what is knowable — installed, enabled, running, which
+interface — and says plainly where the mappings are instead of showing an empty
+list. That distinction is the point: "no ports are open" and "this app cannot
+see which ports are open" render identically, and the first is far more
+comforting than it deserves to be. A running UPnP daemon is a standing offer to
+open ports on request, so it is coloured as a warning even though the resulting
+ports cannot be listed.
+
+The call to `upnp_get_active_mappings` stays, so a package version that gains
+one starts working with no other change.
+
+### The old UPnP screen note
+
+The first version read `/var/etc/miniupnpd.leases` directly, which came back
+empty against a firewall whose webConfigurator was showing a live mapping. The
+lease file is not where pfSense keeps them.
+
+It now calls `upnp_get_active_mappings()` from the package's own include, which
+is what the status page uses, and reports which functions and files it found
+when that is not there — so a wrong guess is corrected in one round trip
+instead of by trying paths one at a time. The model reads both plausible field
+namings, since the accessor is undocumented and one guess has already been
+wrong.
+
+The expiry column is gone: the lease file had a timestamp and the accessor does
+not, and showing "no expiry" for everything would be inventing a fact.
+
+### The old UPnP screen note
+
+Ports opened because a device asked, rather than because somebody wrote a rule
+— the one place where what is open and what is in the rules can differ. Shows
+the route, what the firewall knows the device as, and how long the lease has
+left. Installed-but-off is said plainly rather than shown as an empty list.
 
 ### The publish gate caught a leak, and was missing more
 

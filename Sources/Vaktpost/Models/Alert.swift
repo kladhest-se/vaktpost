@@ -158,7 +158,14 @@ struct VaktpostAlert: Identifiable {
             // the same temperature is worth looking at. One pair for both made
             // a healthy PCH raise a permanent warning nobody could act on,
             // which is how an alert list stops being read.
-            let tempLimits = sys.temperatureThresholds
+            // An explicit setting wins over the sensor-derived guess. The
+            // critical point moves with it, staying ten degrees above, so a
+            // person lowering the warning does not silently lose the
+            // distinction between warm and serious.
+            var tempLimits = sys.temperatureThresholds
+            if let warn = store.temperatureWarnOverride {
+                tempLimits = (warn: warn, bad: max(warn + 10, tempLimits.bad))
+            }
             if let temp = sys.temperature, temp >= tempLimits.warn {
                 out.append(.init(
                     severity: temp >= tempLimits.bad ? .bad : .warn,

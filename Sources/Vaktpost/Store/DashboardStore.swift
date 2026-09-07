@@ -14,7 +14,7 @@ final class DashboardStore: ObservableObject {
         case openvpn, openvpnClients, ipsec, wireguard
         case firewall, aliases, portForwards
         case carp, configHistory, certificates, packages, tables
-        case notices, filesystems, dyndns, hostOverrides, haproxy, acme
+        case notices, filesystems, dyndns, hostOverrides, haproxy, acme, upnp
     }
 
     // MARK: Dependencies
@@ -98,6 +98,11 @@ final class DashboardStore: ObservableObject {
     @Published var acmeInstalled = false
     private var hasLoadedACME = false
 
+    @Published var upnpMappings: [UPnPMapping] = []
+    @Published var upnpInstalled = false
+    @Published var upnpStatus: UPnPStatus?
+    private var hasLoadedUPnP = false
+
     /// Loaded on demand rather than on the refresh timer — see `loadTables()`.
     @Published var tables: [FirewallTable] = []
     @Published var blockedHosts: [FirewallTable] = []
@@ -152,6 +157,8 @@ final class DashboardStore: ObservableObject {
         defaults.removeObject(forKey: "alerts.muted")   // superseded; see above
         alertsSilenced = defaults.bool(forKey: "alerts.silenced")
         acknowledgedAlerts = Set(defaults.stringArray(forKey: "alerts.acknowledged") ?? [])
+        let tempWarn = defaults.double(forKey: "alerts.tempWarn")
+        temperatureWarnOverride = tempWarn > 0 ? tempWarn : nil
         favouriteInterfaces = Set(defaults.stringArray(forKey: "interfaces.favourites") ?? [])
         let checkedAt = defaults.double(forKey: "packages.lastCheck")
         lastPackageCheck = checkedAt > 0 ? Date(timeIntervalSince1970: checkedAt) : nil
@@ -221,6 +228,8 @@ final class DashboardStore: ObservableObject {
         store.hasLoadedFirewallObjects = false
         store.hasLoadedHAProxy = false
         store.hasLoadedACME = false
+        store.hasLoadedUPnP = false
+        store.upnpMappings = []
         store.acmeCertificates = []; store.acmeAccounts = []
         store.haproxyFrontends = []; store.haproxyBackends = []
         store.alerts = []; store.errors = [:]; store.connectionError = nil; store.lastRefresh = nil
@@ -529,7 +538,7 @@ final class DashboardStore: ObservableObject {
         // The other three are not reachable over XML-RPC without shelling out,
         // which the snippet rules forbid; they stay as cases so the enum is
         // exhaustive and the views referencing them compile with empty data.
-        case .haproxy, .acme, .configHistory, .tables:
+        case .haproxy, .acme, .upnp, .configHistory, .tables:
             break
         }
     }
@@ -660,6 +669,24 @@ final class DashboardStore: ObservableObject {
         }
     }
 
+    func loadUPnP() async {
+        guard isConfigured, !hasLoadedUPnP else { return }
+        hasLoadedUPnP = true
+        do {
+            if let result = try await client.upnp() {
+                upnpInstalled = true
+                upnpStatus = result
+                upnpMappings = result.mappings
+            } else {
+                upnpInstalled = false
+            }
+            errors[.upnp] = nil
+        } catch {
+            hasLoadedUPnP = false
+            errors[.upnp] = error.localizedDescription
+        }
+    }
+
     /// ACME entries that will not renew themselves.
     var stalledACME: [ACMECertificate] { acmeCertificates.filter { !$0.enabled } }
 
@@ -767,6 +794,22 @@ final class DashboardStore: ObservableObject {
         } catch {
             packageCheckResult = nil
             errors[.packages] = error.localizedDescription
+        }
+    }
+
+    // MARK: Temperature threshold
+
+    /// Where the temperature alert fires, in °C, or nil to follow the sensor.
+    ///
+    /// The built-in thresholds are a guess about hardware the app cannot see:
+    /// 95 for a chipset, 80 for a CPU die. Those are reasonable defaults and
+    /// wrong for somebody who knows their board runs at 80 and wants to hear
+    /// about 82. Whoever owns the firewall knows what normal looks like on it,
+    /// so they get to say.
+    @Published var temperatureWarnOverride: Double? {
+        didSet {
+            UserDefaults.standard.set(temperatureWarnOverride ?? 0,
+                                      forKey: "alerts.tempWarn")
         }
     }
 

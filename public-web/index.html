@@ -7,6 +7,8 @@
 <meta name="description" content="Vaktpost is an open-source iOS app for watching the state of a pfSense firewall. Clients, interfaces, gateways, VPN tunnels, certificates, logs and alerts, in all four Catppuccin flavours.">
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" type="image/png" href="icons/coral.png">
+<link rel="apple-touch-icon" href="icons/coral.png">
 <link rel="stylesheet" href="styles.css">
 <meta property="og:title" content="Vaktpost">
 <meta property="og:description" content="An iOS app for watching the state of a pfSense firewall. Open source, Catppuccin-themed.">
@@ -17,7 +19,7 @@
 <header class="bar">
   <div class="wrap bar__inner">
     <a class="mark" href="#top">
-      <span class="stakes" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+      <img class="mark__icon" id="mark-icon" src="icons/coral.png" alt="" width="26" height="26">
       Vaktpost
     </a>
     <div class="picker">
@@ -370,7 +372,7 @@
       </div>
       <div>
         <h3>System</h3>
-        <p>Notices, installed packages and firmware with an update check, dynamic DNS, CARP status.</p>
+        <p>Notices, installed packages and firmware with an update check, dynamic DNS, CARP status, UPnP.</p>
       </div>
     </div>
   </div>

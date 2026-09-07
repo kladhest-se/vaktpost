@@ -27,6 +27,21 @@
   function apply() {
     root.dataset.flavor = flavor;
     root.dataset.accent = accent;
+
+    // The header icon follows the accent, so the page shows the app icon the
+    // reader is closest to picking. Six icons against fourteen accents, so
+    // this maps to the nearest by hue rather than pretending to be exact.
+    const ICON_FOR_ACCENT = {
+      rosewater: 'coral', flamingo: 'coral', pink: 'lavender', mauve: 'lavender',
+      red: 'coral', maroon: 'coral', peach: 'amber', yellow: 'amber',
+      green: 'mint', teal: 'mint', sky: 'ocean', sapphire: 'ocean',
+      blue: 'ocean', lavender: 'lavender',
+    };
+    const icon = document.getElementById('mark-icon');
+    if (icon) {
+      const name = ICON_FOR_ACCENT[accent] || 'coral';
+      icon.src = 'icons/' + name + '.png';
+    }
     for (const b of flavorButtons) b.setAttribute('aria-pressed', String(b.dataset.flavor === flavor));
     for (const b of accentButtons) b.setAttribute('aria-pressed', String(b.dataset.accent === accent));
   }

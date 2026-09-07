@@ -121,13 +121,6 @@ a:hover { text-decoration-thickness: 2px; }
   font-family: var(--mono); font-size: .95rem; font-weight: 600;
   letter-spacing: -.02em; color: var(--text); text-decoration: none;
 }
-.stakes { display: flex; align-items: flex-end; gap: 2px; height: 18px; }
-.stakes i { display: block; width: 3px; border-radius: 2px; background: var(--accent); }
-.stakes i:nth-child(1){height:18px;opacity:1}
-.stakes i:nth-child(2){height:15px;opacity:.84}
-.stakes i:nth-child(3){height:12px;opacity:.68}
-.stakes i:nth-child(4){height:9px;opacity:.52}
-.stakes i:nth-child(5){height:6px;opacity:.36}
 
 .picker { display: flex; align-items: center; gap: 1rem; margin-left: auto; flex-wrap: wrap; }
 .picker__label { font-size: .78rem; color: var(--overlay1); }
@@ -418,3 +411,13 @@ footer p { max-width: 62ch; margin: 0 0 .6rem; }
 .spark--tall { height: 62px; }
 
 .legend--wide { justify-content: space-between; }
+
+
+/* The app icon in the header, in place of the drawn mark it replaces. */
+.mark__icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  vertical-align: -6px;
+  margin-right: 8px;
+}
