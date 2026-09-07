@@ -1,5 +1,38 @@
 import Foundation
 
+/// Central configuration for all health threshold values. Both the alert
+/// builder and the overview meter read from this so the UI and alerts never
+/// disagree about when a condition becomes a warning or a critical alert.
+enum HealthThresholds {
+    // CPU
+    static let cpuWarn: Double = 70
+    static let cpuBad: Double = 90
+
+    // Memory
+    static let memWarn: Double = 80
+    static let memBad: Double = 92
+
+    // Disk
+    static let diskWarn: Double = 80
+    static let diskBad: Double = 92
+
+    // Swap
+    static let swapWarn: Double = 25
+    static let swapBad: Double = 60
+
+    // mbuf
+    static let mbufWarn: Double = 75
+    static let mbufBad: Double = 90
+
+    // Temperature
+    static let tempWarn: Double = 70
+    static let tempBad: Double = 85
+
+    // State table (fraction 0–1)
+    static let stateWarn: Double = 0.75
+    static let stateBad: Double = 0.90
+}
+
 /// A derived condition worth surfacing. Nothing here comes from an alerts
 /// endpoint — pfSense has none. Each item is computed from state the dashboard
 /// already fetched, which means the rules live in one readable place rather
@@ -54,39 +87,39 @@ struct VaktpostAlert: Identifiable {
         }
 
         if let sys = store.system {
-            if let disk = sys.diskUsage, disk >= 85 {
-                out.append(.init(severity: disk >= 92 ? .bad : .warn, category: .capacity,
+            if let disk = sys.diskUsage, disk >= HealthThresholds.diskWarn {
+                out.append(.init(severity: disk >= HealthThresholds.diskBad ? .bad : .warn, category: .capacity,
                                  title: "Disk at \(Fmt.pct(disk))",
                                  detail: "Log rotation or a large package cache is the usual cause."))
             }
-            if let mem = sys.memUsage, mem >= 90 {
+            if let mem = sys.memUsage, mem >= HealthThresholds.memWarn {
                 out.append(.init(severity: .warn, category: .capacity,
                                  title: "Memory at \(Fmt.pct(mem))", detail: "Sustained pressure may push the box into swap."))
             }
-            if let swap = sys.swapUsage, swap >= 25 {
+            if let swap = sys.swapUsage, swap >= HealthThresholds.swapWarn {
                 out.append(.init(severity: .warn, category: .capacity,
                                  title: "Swap in use (\(Fmt.pct(swap)))",
                                  detail: "A firewall that swaps is usually one that will drop packets under load."))
             }
-            if let temp = sys.temperature, temp >= 70 {
+            if let temp = sys.temperature, temp >= HealthThresholds.tempWarn {
                 out.append(.init(
-                    severity: temp >= 85 ? .bad : .warn,
+                    severity: temp >= HealthThresholds.tempBad ? .bad : .warn,
                     category: .system,
                     title: String(format: "CPU at %.0f °C", temp),
-                    detail: temp >= 85
+                    detail: temp >= HealthThresholds.tempBad
                         ? "Thermal throttling territory. Check airflow and fan health."
                         : "Warm. Worth watching if it climbs."
                 ))
             }
-            if let mbuf = sys.mbufUsage, mbuf >= 80 {
-                out.append(.init(severity: mbuf >= 90 ? .bad : .warn, category: .capacity,
+            if let mbuf = sys.mbufUsage, mbuf >= HealthThresholds.mbufWarn {
+                out.append(.init(severity: mbuf >= HealthThresholds.mbufBad ? .bad : .warn, category: .capacity,
                                  title: "mbuf at \(Fmt.pct(mbuf))",
                                  detail: "Raise kern.ipc.nmbclusters if this stays high."))
             }
         }
 
-        if let st = store.states, let frac = st.fraction, frac >= 0.75 {
-            out.append(.init(severity: frac >= 0.9 ? .bad : .warn, category: .capacity,
+        if let st = store.states, let frac = st.fraction, frac >= HealthThresholds.stateWarn {
+            out.append(.init(severity: frac >= HealthThresholds.stateBad ? .bad : .warn, category: .capacity,
                              title: "State table \(Fmt.pct(frac * 100)) full",
                              detail: "\(st.current ?? 0) of \(st.maximum ?? 0) states."))
         }

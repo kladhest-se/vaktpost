@@ -167,10 +167,6 @@ author already believed in, which is precisely what failed here.
   wake_on_lan, and nothing else. Confirmed against the OpenAPI schema on
   26.07, not assumed.
 
-- Swift 5 language mode with `minimal` concurrency checking, against a house
-  default of 6.0 and `complete`. `TrustEvaluator` is `@unchecked Sendable`
-  around a hand-rolled lock and needs rewriting before the setting can be
-  raised. See `Config/Shared.xcconfig`.
 - `services/dhcp_server/static_mappings` is fetched flat. On some REST API
   versions these are per-interface children needing a `parent_id`, in which
   case the Clients list shows no static entries.

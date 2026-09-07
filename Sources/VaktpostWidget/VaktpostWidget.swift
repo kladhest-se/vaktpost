@@ -21,7 +21,10 @@ struct StatusProvider: TimelineProvider {
         let entry = StatusEntry(date: Date(), snapshot: SharedSnapshot.read())
         // The app reloads timelines after every refresh; this interval is only
         // the fallback so a stale card eventually re-renders its age label.
-        let next = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date()
+        // Use the user's refresh interval when available, or 15 minutes as default.
+        let refreshSeconds = entry.snapshot?.refreshSeconds ?? 30
+        let interval = max(refreshSeconds, 60)
+        let next = Calendar.current.date(byAdding: .second, value: interval, to: Date()) ?? Date()
         completion(Timeline(entries: [entry], policy: .after(next)))
     }
 }
@@ -56,10 +59,17 @@ private extension SharedSnapshot.Level {
     }
 }
 
-private func widgetPalette(_ scheme: ColorScheme) -> Palette {
-    // The widget cannot read the app's ObservableObject, so it mirrors what
-    // Auto does: Latte in light, Mocha in dark.
-    (scheme == .light ? Theme.latte : Theme.mocha).palette
+private func widgetPalette(_ scheme: ColorScheme, themeName: String) -> Palette {
+    // When the app provides an explicit theme, honour it; otherwise mirror
+    // Auto by picking Latte in light and Mocha in dark.
+    switch themeName {
+    case "latte": return Theme.latte.palette
+    case "mocha": return Theme.mocha.palette
+    case "frappe": return Theme.frappe.palette
+    case "macchiato": return Theme.macchiato.palette
+    default:
+        return (scheme == .light ? Theme.latte : Theme.mocha).palette
+    }
 }
 
 // MARK: - Views
@@ -69,7 +79,7 @@ struct StatusWidgetView: View {
     @Environment(\.widgetFamily) private var family
     let entry: StatusEntry
 
-    private var palette: Palette { widgetPalette(scheme) }
+    private var palette: Palette { widgetPalette(scheme, themeName: entry.snapshot?.themeName ?? "") }
 
     var body: some View {
         let snap = entry.snapshot

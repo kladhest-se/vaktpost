@@ -1,31 +1,73 @@
 import Foundation
 import CryptoKit
 
+/// Holds mutable state for `TrustEvaluator` under a lock so the outer
+/// class can be provably `Sendable`.
+private final class TrustState: @unchecked Sendable {
+    var profile: ServerProfile
+    private var _fingerprint: String?
+
+    private let lock = NSLock()
+
+    init(profile: ServerProfile) {
+        self.profile = profile
+    }
+
+    /// Reads both values under the lock.
+    func read() -> (ServerProfile, String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (profile, _fingerprint)
+    }
+
+    /// Mutates the profile under the lock.
+    func updateProfile(_ newProfile: ServerProfile) {
+        lock.lock()
+        defer { lock.unlock() }
+        profile = newProfile
+    }
+
+    /// Updates the last-seen fingerprint under the lock.
+    func recordFingerprint(_ fp: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        _fingerprint = fp
+    }
+}
+
+/// Evaluates TLS trust for a single firewall connection.
+///
 /// pfSense ships a self-signed webConfigurator certificate by default, so a
-/// plain URLSession will refuse the connection. Rather than blanket-disabling
+/// plain `URLSession` will refuse the connection. Rather than blanket-disabling
 /// validation, the preferred path is pinning: the user records the leaf
 /// certificate's SHA-256 once and every later connection must present that
 /// exact certificate. `allowUntrustedTLS` without a pin is offered as a
 /// last resort and is surfaced as a warning in Settings.
-final class TrustEvaluator: NSObject, URLSessionDelegate, @unchecked Sendable {
+///
+/// All mutable state is threaded through `TrustState`, a locked box, so this
+/// class is provably `Sendable` — the compiler can verify that every read and
+/// write goes through the lock.
+final class TrustEvaluator: NSObject, URLSessionDelegate, Sendable {
 
-    private let lock = NSLock()
-    private var _profile: ServerProfile
-    private var _lastSeenFingerprint: String?
+    private let state: TrustState
 
     init(profile: ServerProfile) {
-        self._profile = profile
+        self.state = TrustState(profile: profile)
     }
 
+    /// The current server profile.
     var profile: ServerProfile {
-        get { lock.lock(); defer { lock.unlock() }; return _profile }
-        set { lock.lock(); _profile = newValue; lock.unlock() }
+        state.read().0
     }
 
     /// Recorded on each handshake so Settings can offer "pin this certificate".
-    private(set) var lastSeenFingerprint: String? {
-        get { lock.lock(); defer { lock.unlock() }; return _lastSeenFingerprint }
-        set { lock.lock(); _lastSeenFingerprint = newValue; lock.unlock() }
+    var lastSeenFingerprint: String? {
+        state.read().1
+    }
+
+    /// Replaces the current profile with a new one.
+    func configure(with profile: ServerProfile) {
+        state.updateProfile(profile)
     }
 
     func urlSession(
@@ -40,10 +82,10 @@ final class TrustEvaluator: NSObject, URLSessionDelegate, @unchecked Sendable {
             return
         }
 
-        let profile = self.profile
         let leafFingerprint = Self.fingerprint(of: trust)
-        lastSeenFingerprint = leafFingerprint
+        state.recordFingerprint(leafFingerprint)
 
+        let (profile, _) = state.read()
         let pin = profile.pinnedFingerprint
             .lowercased()
             .replacingOccurrences(of: ":", with: "")

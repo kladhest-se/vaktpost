@@ -41,25 +41,11 @@ struct MoreView: View {
                     .foregroundStyle(theme.labelFaint)
                 if registry.servers.count > 1 {
                     Hairline()
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(registry.servers) { server in
-                                Button {
-                                    Task { await store.switchTo(server) }
-                                } label: {
-                                    Text(server.displayName)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(registry.active?.id == server.id
-                                                    ? theme.accentColor : theme.cardRaised)
-                                        .foregroundStyle(registry.active?.id == server.id
-                                                         ? theme.palette.crust : theme.labelMuted)
-                                        .clipShape(Capsule())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
+                    ServerSwitcher(
+                        servers: registry.servers,
+                        activeID: registry.active?.id
+                    ) { server in
+                        Task { await store.switchTo(server) }
                     }
                 }
             }

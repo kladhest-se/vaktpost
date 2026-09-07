@@ -38,7 +38,7 @@ struct OverviewView: View {
                             .foregroundStyle(theme.labelMuted)
                     }
                 } else {
-                    ForEach(store.gateways) { GatewayRow(gateway: $0) }
+                    ForEach(store.gateways) { GatewayRow(gateway: $0, gatewayMetrics: store.gatewayMetrics) }
                 }
 
                 GroupHeading(text: "Services")
@@ -106,24 +106,11 @@ struct OverviewView: View {
     }
 
     private var serverSwitcher: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(registry.servers) { server in
-                    Button {
-                        Task { await store.switchTo(server) }
-                    } label: {
-                        Text(server.displayName)
-                            .font(.system(size: 12, weight: .medium))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(registry.active?.id == server.id ? theme.accentColor : theme.card)
-                            .foregroundStyle(registry.active?.id == server.id
-                                             ? theme.palette.crust : theme.labelMuted)
-                            .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+        ServerSwitcher(
+            servers: registry.servers,
+            activeID: registry.active?.id
+        ) { server in
+            Task { await store.switchTo(server) }
         }
     }
 
@@ -161,28 +148,17 @@ struct OverviewView: View {
     @ViewBuilder
     private var wanSlab: some View {
         if let wan = store.wanInterface {
-            let points = store.throughput.points(for: wan.device)
             Slab(rail: wan.health, title: wan.name, trailing: wan.device) {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(wan.addressLine)
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundStyle(theme.labelMuted)
-
-                    if points.count > 1 {
-                        Sparkline(
-                            inSeries: points.map(\.inBps),
-                            outSeries: points.map(\.outBps),
-                            height: 56
-                        )
-                        RateLegend(inBps: points.last?.inBps, outBps: points.last?.outBps)
-                        Text("Derived from counter deltas over the last \(points.count) samples.")
-                            .font(.system(size: 10))
-                            .foregroundStyle(theme.labelFaint)
-                    } else {
-                        Text("Collecting samples — a rate needs two refreshes.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(theme.labelFaint)
-                    }
+                    ThroughputChart(
+                        store: store,
+                        device: wan.device,
+                        height: 56,
+                        showExplanatoryText: true
+                    )
                 }
             }
         } else {
@@ -202,23 +178,31 @@ struct OverviewView: View {
                 VStack(spacing: 12) {
                     if let cpu = sys.cpuUsage {
                         Meter(label: "CPU", value: cpu / 100, readout: Fmt.pct(cpu),
-                              health: level(cpu, warn: 70, bad: 90))
+                              health: level(cpu, warn: HealthThresholds.cpuWarn, bad: HealthThresholds.cpuBad))
+                        SingleMetricSparkline(values: store.systemMetrics.points(for: "cpu").map(\.value),
+                                              label: "CPU", height: 24)
                     }
                     if let mem = sys.memUsage {
                         Meter(label: "Memory", value: mem / 100, readout: Fmt.pct(mem),
-                              health: level(mem, warn: 80, bad: 92))
+                              health: level(mem, warn: HealthThresholds.memWarn, bad: HealthThresholds.memBad))
+                        SingleMetricSparkline(values: store.systemMetrics.points(for: "mem").map(\.value),
+                                              label: "Memory", height: 24)
                     }
                     if let disk = sys.diskUsage {
                         Meter(label: "Disk", value: disk / 100, readout: Fmt.pct(disk),
-                              health: level(disk, warn: 80, bad: 92))
+                              health: level(disk, warn: HealthThresholds.diskWarn, bad: HealthThresholds.diskBad))
+                        SingleMetricSparkline(values: store.systemMetrics.points(for: "disk").map(\.value),
+                                              label: "Disk", height: 24)
                     }
                     if let swap = sys.swapUsage, swap > 0 {
                         Meter(label: "Swap", value: swap / 100, readout: Fmt.pct(swap),
-                              health: level(swap, warn: 25, bad: 60))
+                              health: level(swap, warn: HealthThresholds.swapWarn, bad: HealthThresholds.swapBad))
+                        SingleMetricSparkline(values: store.systemMetrics.points(for: "swap").map(\.value),
+                                              label: "Swap", height: 24)
                     }
                     if let mbuf = sys.mbufUsage {
                         Meter(label: "mbuf", value: mbuf / 100, readout: Fmt.pct(mbuf),
-                              health: level(mbuf, warn: 75, bad: 90))
+                              health: level(mbuf, warn: HealthThresholds.mbufWarn, bad: HealthThresholds.mbufBad))
                     }
                     Hairline()
                     FieldRow(key: "Load average", value: sys.loadDescription)
@@ -257,8 +241,14 @@ struct OverviewView: View {
                         readout: "\(st.current ?? 0) / \(st.effectiveMaximum ?? 0)",
                         health: level(frac * 100, warn: 70, bad: 88)
                     )
+                    StateTrendLine(values: store.stateHistory.points.map(\.value), max: st.effectiveMaximum ?? 0)
                 } else {
-                    FieldRow(key: "Current states", value: "\(st.current ?? 0)")
+                    VStack(alignment: .leading, spacing: 8) {
+                        FieldRow(key: "Current states", value: "\(st.current ?? 0)")
+                        if !store.stateHistory.points.isEmpty {
+                            StateTrendLine(values: store.stateHistory.points.map(\.value), max: 10000)
+                        }
+                    }
                 }
             } else {
                 placeholder(.states)
@@ -325,8 +315,9 @@ struct OverviewView: View {
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 18) {
-                        counter("Blocked", store.blockedRecently, .bad)
-                        counter("Passed", store.firewallLog.count - store.blockedRecently, .ok)
+                        deltaCounter("Blocked", store.blockedRecently, store.blockedDelta, .bad)
+                        deltaCounter("Rejected", store.rejectedRecently, store.rejectedDelta, .warn)
+                        deltaCounter("Passed", store.passedRecently, store.passedDelta, .ok)
                         Spacer()
                     }
                     Hairline()
@@ -336,11 +327,20 @@ struct OverviewView: View {
         }
     }
 
-    private func counter(_ label: String, _ value: Int, _ health: Health) -> some View {
+    private func deltaCounter(_ label: String, _ value: Int, _ delta: Int?, _ health: Health) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("\(value)")
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundStyle(health.color(theme))
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text("\(value)")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundStyle(health.color(theme))
+                if let delta {
+                    let sign = delta > 0 ? "↑" : delta < 0 ? "↓" : "→"
+                    let pct = Int(abs(Double(delta) / Double(max(store.prevFirewallCounts.blocked, store.prevFirewallCounts.rejected, store.prevFirewallCounts.passed, 1)) * 100))
+                    Text("\(sign) \(pct)%")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(delta > 0 ? theme.bad.opacity(0.8) : delta < 0 ? theme.ok.opacity(0.8) : theme.labelMuted)
+                }
+            }
             Text(label)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(theme.labelFaint)
@@ -372,6 +372,15 @@ struct OverviewView: View {
 struct GatewayRow: View {
     @EnvironmentObject private var theme: ThemeManager
     let gateway: GatewayStatus
+    let gatewayMetrics: GatewayMetricTracker?
+
+    private var delayPoints: [Double] {
+        gatewayMetrics?.readings(for: gateway.name).compactMap { $0.delayMS } ?? []
+    }
+
+    private var lossPoints: [Double] {
+        gatewayMetrics?.readings(for: gateway.name).compactMap { $0.lossPercent } ?? []
+    }
 
     var body: some View {
         Slab(rail: gateway.health) {
@@ -386,6 +395,12 @@ struct GatewayRow: View {
                 Text(gateway.readout)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(theme.labelMuted)
+                GatewayTrend(
+                    delayPoints: delayPoints,
+                    lossPoints: lossPoints,
+                    latestDelay: gateway.delayMS,
+                    latestLoss: gateway.lossPercent
+                )
                 if let ip = gateway.monitorIP, !ip.isEmpty {
                     Text("monitor \(ip)")
                         .font(.system(size: 11, design: .monospaced))

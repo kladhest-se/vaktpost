@@ -76,7 +76,7 @@ struct FirewallView: View {
 
     @ViewBuilder
     private var rulesPane: some View {
-        if let err = store.errors[.rules] {
+        if let err = store.errors[.firewall] {
             Notice(symbol: "exclamationmark.triangle", title: "Rules unavailable", detail: err, health: .warn)
         } else if filteredRules.isEmpty {
             Notice(symbol: "shield.slash", title: query.isEmpty ? "No rules returned" : "No matches")

@@ -182,4 +182,20 @@ final class ErrorClassificationTests: XCTestCase {
         ]))
         XCTAssertTrue(withVIPs.isConfigured)
     }
+
+    func testFilterAddressAnyWithPort() {
+        let d = dict(["source": ["any": true], "source_port": "443"])
+        XCTAssertEqual(FilterAddress(d.value("source"), port: d.value("source_port")).text, "any:443")
+    }
+
+    func testIsRetryableOnlyAppliesToTransportErrors() {
+        XCTAssertTrue(APIError.transport("DNS timeout").isRetryable)
+        XCTAssertFalse(APIError.unauthorized.isRetryable)
+        XCTAssertFalse(APIError.forbidden.isRetryable)
+        XCTAssertFalse(APIError.tls.isRetryable)
+        XCTAssertFalse(APIError.decoding.isRetryable)
+        XCTAssertFalse(APIError.notFound("test").isRetryable)
+        XCTAssertFalse(APIError.server(502, "").isRetryable)
+        XCTAssertFalse(APIError.cancelled.isRetryable)
+    }
 }

@@ -18,6 +18,8 @@ struct LogsView: View {
     @State private var source: Source = .firewall
     @State private var action: ActionFilter = .all
     @State private var query = ""
+    @State private var shareItems: [String] = []
+    @State private var showingShareSheet = false
 
     private var lines: [LogLine] {
         var list: [LogLine]
@@ -97,7 +99,42 @@ struct LogsView: View {
         .background(theme.bg.ignoresSafeArea())
         .searchable(text: $query, prompt: "Search log text")
         .navigationTitle("Logs")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    shareItems = formattedLines
+                    showingShareSheet = true
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .disabled(lines.isEmpty)
+            }
+        }
+        .sheet(isPresented: $showingShareSheet) {
+            ShareSheetAdapter(items: shareItems)
+        }
     }
+
+    private var formattedLines: [String] {
+        lines.map { line in
+            var parts: [String] = []
+            if let ts = line.timestamp { parts.append(ts) }
+            if let a = line.action { parts.append(a) }
+            if let iface = line.interfaceName, !iface.isEmpty { parts.append(iface) }
+            parts.append(line.text)
+            return parts.joined(separator: " · ")
+        }
+    }
+}
+
+struct ShareSheetAdapter: UIViewControllerRepresentable {
+    var items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 struct LogRow: View {

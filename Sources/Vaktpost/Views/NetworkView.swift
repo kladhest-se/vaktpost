@@ -98,9 +98,10 @@ struct NetworkView: View {
                 Slab(rail: .info) {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            Text(entry.hostname?.isEmpty == false ? entry.hostname! : entry.ip)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(theme.label)
+                        let display = entry.hostname.flatMap { $0.isEmpty ? nil : $0 } ?? entry.ip
+                        Text(display)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(theme.label)
                             Spacer()
                             if let iface = entry.interfaceName {
                                 StatusPill(text: iface, health: .info)
@@ -145,16 +146,13 @@ struct InterfaceCard: View {
 
                 Hairline()
 
-                let points = store.throughput.points(for: iface.device)
-                if points.count > 1 {
-                    Sparkline(
-                        inSeries: points.map(\.inBps),
-                        outSeries: points.map(\.outBps),
-                        height: 38
-                    )
-                    RateLegend(inBps: points.last?.inBps, outBps: points.last?.outBps)
-                    Hairline()
-                }
+                ThroughputChart(
+                    store: store,
+                    device: iface.device,
+                    height: 38
+                )
+
+                Hairline()
 
                 HStack(spacing: 0) {
                     traffic("TOTAL IN", iface.inBytes, theme.ok)

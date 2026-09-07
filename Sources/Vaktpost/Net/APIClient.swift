@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let apiLog = OSLog(subsystem: "se.kladhest.vaktpost", category: "API")
 
 // MARK: - Errors
 
@@ -16,6 +19,14 @@ enum APIError: LocalizedError, Equatable {
     /// The request was cancelled — app backgrounded, firewall switched, or a
     /// refresh superseded. Not a failure, and never shown.
     case cancelled
+
+    /// True for transient network problems worth retrying (DNS timeouts,
+    /// Wi-Fi handoffs, ECONNRESET). Authentication and TLS failures are
+    /// never retried.
+    var isRetryable: Bool {
+        if case .transport = self { return true }
+        return false
+    }
 
     var errorDescription: String? {
         switch self {
@@ -67,7 +78,7 @@ actor APIClient {
 
     func update(profile: ServerProfile) {
         self.profile = profile
-        trust.profile = profile
+        trust.configure(with: profile)
     }
 
     var lastSeenFingerprint: String? { trust.lastSeenFingerprint }
@@ -91,58 +102,73 @@ actor APIClient {
         req.httpMethod = "GET"
         req.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: req)
-        } catch let err as URLError {
-            switch err.code {
-            case .serverCertificateUntrusted,
-                 .serverCertificateHasBadDate,
-                 .serverCertificateHasUnknownRoot,
-                 .serverCertificateNotYetValid,
-                 .secureConnectionFailed:
-                throw APIError.tls
+        /// Attempt the request with retries for transient transport errors.
+        ///
+        /// Transport errors like DNS timeouts, ECONNRESET, or Wi-Fi handoffs
+        /// are worth one retry. Authentication and TLS failures are never
+        /// retried — they only get worse.
+        func attempt() async throws -> JSONValue {
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await session.data(for: req)
+            } catch let err as URLError {
+                switch err.code {
+                case .serverCertificateUntrusted,
+                     .serverCertificateHasBadDate,
+                     .serverCertificateHasUnknownRoot,
+                     .serverCertificateNotYetValid,
+                     .secureConnectionFailed:
+                    throw APIError.tls
 
-            // Cancellation is not a TLS failure.
-            //
-            // It was in this list originally, on the reasoning that a rejected
-            // pin surfaces as a cancelled task — which it does. But so does
-            // every ordinary cancellation: backgrounding the app, switching
-            // firewalls, a refresh superseding the one in flight. The result
-            // was "TLS handshake failed" on screen while the dashboard sat
-            // there showing perfectly good data it had just fetched.
-            //
-            // A genuinely rejected pin fails every request, so it still
-            // surfaces — as the connection error that appears when nothing
-            // succeeds, rather than one unlucky request poisoning the banner.
-            case .cancelled:
-                throw APIError.cancelled
+                case .cancelled:
+                    throw APIError.cancelled
 
-            default:
-                throw APIError.transport(err.localizedDescription)
+                default:
+                    throw APIError.transport(err.localizedDescription)
+                }
+            } catch {
+                throw APIError.transport(error.localizedDescription)
             }
-        } catch {
-            throw APIError.transport(error.localizedDescription)
+
+            let http = response as? HTTPURLResponse
+            let code = http?.statusCode ?? 0
+
+            let envelope: Envelope?
+            do {
+                envelope = try JSONDecoder().decode(Envelope.self, from: data)
+            } catch {
+                // Non-200 responses may not be JSON at all (HTML errors, etc.),
+                // so a decode failure on error codes is benign.
+                if code >= 400 {
+                    envelope = nil
+                } else {
+                    os_log(.error, log: apiLog, "Decode failed on %{public}d: %{public}@", code, String(data: data.prefix(512), encoding: .utf8) ?? "<non-utf8>")
+                    throw APIError.decoding
+                }
+            }
+
+            switch code {
+            case 200...299:
+                guard let payload = envelope?.data else { throw APIError.decoding }
+                return payload
+            case 401:
+                throw APIError.unauthorized
+            case 403:
+                throw APIError.forbidden
+            case 404:
+                throw APIError.notFound(path)
+            default:
+                throw APIError.server(code, envelope?.message ?? "")
+            }
         }
 
-        let http = response as? HTTPURLResponse
-        let code = http?.statusCode ?? 0
-
-        let envelope = try? JSONDecoder().decode(Envelope.self, from: data)
-
-        switch code {
-        case 200...299:
-            guard let payload = envelope?.data else { throw APIError.decoding }
-            return payload
-        case 401:
-            throw APIError.unauthorized
-        case 403:
-            throw APIError.forbidden
-        case 404:
-            throw APIError.notFound(path)
-        default:
-            throw APIError.server(code, envelope?.message ?? "")
+        do {
+            return try await attempt()
+        } catch let err as APIError where err.isRetryable {
+            // One retry with a short delay for transient transport errors.
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            return try await attempt()
         }
     }
 

@@ -39,7 +39,7 @@ struct NetworkClient: Identifiable {
         if online == true { return "online" }
         if isStatic && !seenInLease { return "static, not seen" }
         if leaseState?.contains("expired") == true { return "lease expired" }
-        return leaseState?.isEmpty == false ? leaseState! : "not seen"
+        return leaseState ?? "not seen"
     }
 
     var sourceSummary: String {

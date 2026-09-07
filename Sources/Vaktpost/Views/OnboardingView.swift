@@ -123,7 +123,15 @@ struct OnboardingView: View {
 
         var p = profile
         p.normalize()
-        Keychain.setAPIKey(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), for: p.id)
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch Keychain.setAPIKey(trimmedKey, for: p.id) {
+        case .success:
+            break
+        case .failure(let error):
+            message = error.errorDescription ?? "Failed to save API key."
+            messageHealth = .bad
+            return
+        }
         await store.saved(p)
         await store.switchTo(p)
 

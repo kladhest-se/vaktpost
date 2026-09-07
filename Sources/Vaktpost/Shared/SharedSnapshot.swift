@@ -1,4 +1,7 @@
 import Foundation
+import os.log
+
+private let snapshotLog = OSLog(subsystem: "se.kladhest.vaktpost", category: "Snapshot")
 
 /// The payload the app writes to the shared App Group container after each
 /// refresh, and the widget reads on its timeline.
@@ -30,9 +33,35 @@ struct SharedSnapshot: Codable {
     var gateways: [GatewayLine] = []
     var wanInBps: Double?
     var wanOutBps: Double?
+    /// User-configured refresh interval in seconds, used by the widget to
+    /// size its timeline.
+    var refreshSeconds: Int = 30
+
+    /// The name of the theme the user has chosen, used by the widget so it
+    /// can match the app's colours instead of blindly following the system.
+    var themeName: String = ""
 
     static let appGroup = "group.se.kladhest.vaktpost"
     static let filename = "snapshot.json"
+
+    enum ContainerStatus {
+        case available
+        case missingEntitlement
+        case notWritable
+    }
+
+    static var containerStatus: ContainerStatus {
+        guard let url = fileURL else { return .missingEntitlement }
+        do {
+            let testFile = url.appendingPathComponent(".write-test")
+            try "test".write(to: testFile, atomically: true, encoding: .utf8)
+            try FileManager.default.removeItem(at: testFile)
+            return .available
+        } catch {
+            os_log(.error, log: snapshotLog, "App Group container not writable: %{public}@", error.localizedDescription)
+            return .notWritable
+        }
+    }
 
     static var fileURL: URL? {
         FileManager.default
@@ -41,8 +70,19 @@ struct SharedSnapshot: Codable {
     }
 
     static func write(_ snapshot: SharedSnapshot) {
-        guard let url = fileURL, let data = try? JSONEncoder().encode(snapshot) else { return }
-        try? data.write(to: url, options: .atomic)
+        guard let url = fileURL else {
+            os_log(.error, log: snapshotLog, "SharedSnapshot: no App Group container URL")
+            return
+        }
+        guard let data = try? JSONEncoder().encode(snapshot) else {
+            os_log(.error, log: snapshotLog, "SharedSnapshot: failed to encode snapshot")
+            return
+        }
+        do {
+            try data.write(to: url, options: .atomic)
+        } catch {
+            os_log(.error, log: snapshotLog, "SharedSnapshot: failed to write: %{public}@", error.localizedDescription)
+        }
     }
 
     static func read() -> SharedSnapshot? {

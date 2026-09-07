@@ -17,12 +17,16 @@ struct VPNView: View {
 
                 if !store.openvpnServers.isEmpty {
                     GroupHeading(text: "OpenVPN servers")
-                    ForEach(store.openvpnServers) { OpenVPNCard(server: $0) }
+                    ForEach(store.openvpnServers) { srv in
+                        OpenVPNCard(server: srv, vpnThroughput: store.vpnThroughput)
+                    }
                 }
 
                 if !store.openvpnClients.isEmpty {
                     GroupHeading(text: "OpenVPN clients")
-                    ForEach(store.openvpnClients) { OpenVPNCard(server: $0) }
+                    ForEach(store.openvpnClients) { srv in
+                        OpenVPNCard(server: srv, vpnThroughput: store.vpnThroughput)
+                    }
                 }
 
                 if !store.ipsecSAs.isEmpty {
@@ -37,7 +41,8 @@ struct VPNView: View {
                             tunnel: tunnel,
                             peers: store.wireguardPeers.filter {
                                 $0.tunnel == tunnel.name || $0.tunnel.isEmpty
-                            }
+                            },
+                            vpnThroughput: store.vpnThroughput
                         )
                     }
                 }
@@ -71,6 +76,7 @@ struct VPNView: View {
 struct OpenVPNCard: View {
     @EnvironmentObject private var theme: ThemeManager
     let server: OpenVPNServerStatus
+    let vpnThroughput: ThroughputTrackerV2?
 
     var body: some View {
         Slab(rail: server.health, trailing: server.modeLabel) {
@@ -116,6 +122,15 @@ struct OpenVPNCard: View {
                         .padding(.vertical, 2)
                     }
                 }
+                if let vpnThroughput {
+                    VPNSparklineRow(
+                        name: server.name,
+                        inPoints: vpnThroughput.inPoints(for: "ovpn:\(server.name)/\(server.connections.first?.commonName ?? "")"),
+                        outPoints: vpnThroughput.outPoints(for: "ovpn:\(server.name)/\(server.connections.first?.commonName ?? "")"),
+                        latestIn: vpnThroughput.latest(for: "ovpn:\(server.name)/\(server.connections.first?.commonName ?? "")")?.inBps,
+                        latestOut: vpnThroughput.latest(for: "ovpn:\(server.name)/\(server.connections.first?.commonName ?? "")")?.outBps
+                    )
+                }
             }
         }
     }
@@ -151,16 +166,18 @@ struct WireGuardCard: View {
     @EnvironmentObject private var theme: ThemeManager
     let tunnel: WireGuardTunnel
     let peers: [WireGuardPeer]
+    let vpnThroughput: ThroughputTrackerV2?
 
     var body: some View {
         Slab(rail: tunnel.health, trailing: tunnel.listenPort.map { "port \($0)" }) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text(tunnel.descr?.isEmpty == false ? tunnel.descr! : tunnel.name)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(theme.label)
-                    Spacer()
-                    StatusPill(text: (tunnel.enabled ?? true) ? "enabled" : "disabled",
+                let title = tunnel.descr.flatMap { $0.isEmpty ? nil : $0 } ?? tunnel.name
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.label)
+                Spacer()
+                StatusPill(text: (tunnel.enabled ?? true) ? "enabled" : "disabled",
                                health: tunnel.health)
                 }
                 Text(tunnel.name)
@@ -174,7 +191,8 @@ struct WireGuardCard: View {
                     ForEach(peers) { peer in
                         VStack(alignment: .leading, spacing: 3) {
                             HStack {
-                                Text(peer.descr?.isEmpty == false ? peer.descr! : peer.shortKey)
+                                let name = peer.descr.flatMap { $0.isEmpty ? nil : $0 } ?? peer.shortKey
+                                Text(name)
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(theme.label)
                                 Spacer()
@@ -197,6 +215,15 @@ struct WireGuardCard: View {
                                 Text("↓\(Fmt.bytes(rx))  ↑\(Fmt.bytes(tx))")
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(theme.labelFaint)
+                            }
+                            if let vpnThroughput {
+                                VPNSparklineRow(
+                                    name: peer.shortKey,
+                                    inPoints: vpnThroughput.inPoints(for: "wg:\(peer.publicKey)"),
+                                    outPoints: vpnThroughput.outPoints(for: "wg:\(peer.publicKey)"),
+                                    latestIn: vpnThroughput.latest(for: "wg:\(peer.publicKey)")?.inBps,
+                                    latestOut: vpnThroughput.latest(for: "wg:\(peer.publicKey)")?.outBps
+                                )
                             }
                         }
                         .padding(.vertical, 2)

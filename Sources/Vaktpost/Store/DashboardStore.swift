@@ -11,8 +11,8 @@ final class DashboardStore: ObservableObject {
     enum Section: String, CaseIterable {
         case system, version, interfaces, gateways, services, leases, arp, statics
         case firewallLog, systemLog, authLog, dhcpLog, openvpnLog, states
-        case openvpn, ipsec, wireguard
-        case rules, aliases, portForwards
+        case openvpn, openvpnClients, ipsec, wireguard, wireguardPeers
+        case firewall, aliases, portForwards
         case carp, configHistory, certificates, packages, tables
     }
 
@@ -20,6 +20,17 @@ final class DashboardStore: ObservableObject {
 
     let registry: ServerRegistry
     let throughput = ThroughputTracker()
+    let vpnThroughput = ThroughputTrackerV2()
+    let systemMetrics = MetricTracker<String, Double>()
+    let gatewayMetrics = GatewayMetricTracker()
+    let stateHistory = StateHistoryTracker()
+    var prevFirewallCounts = FirewallCounts()
+
+    struct FirewallCounts {
+        var blocked: Int = 0
+        var rejected: Int = 0
+        var passed: Int = 0
+    }
 
     @Published private(set) var client: APIClient
     @Published private(set) var activeProfile: ServerProfile?
@@ -41,6 +52,10 @@ final class DashboardStore: ObservableObject {
     @Published var dhcpLog: [LogLine] = []
     @Published var openvpnLog: [LogLine] = []
 
+    /// Pre-computed index mapping IP prefixes to positions in `firewallLog`.
+    /// Built during refresh so `logLines(matching:)` is O(k) instead of O(n).
+    private var firewallLogIndex: [String: [Int]] = [:]
+
     @Published var openvpnServers: [OpenVPNServerStatus] = []
     @Published var openvpnClients: [OpenVPNServerStatus] = []
     @Published var ipsecSAs: [IPsecSA] = []
@@ -58,7 +73,15 @@ final class DashboardStore: ObservableObject {
 
     /// Loaded on demand rather than on the refresh timer — see `loadTables()`.
     @Published var tables: [FirewallTable] = []
+    @Published var blockedHosts: [FirewallTable] = []
     @Published var isLoadingTables = false
+
+    /// Rules, aliases and port forwards are loaded lazily when the user
+    /// first navigates to the Firewall screen, then refreshed on the timer.
+    /// The payloads are large and most users never look, so pulling them
+    /// every thirty seconds is wasted bandwidth.
+    @Published var isLoadingFirewallObjects = false
+    private var hasLoadedFirewallObjects = false
 
     @Published var alerts: [VaktpostAlert] = []
 
@@ -69,6 +92,9 @@ final class DashboardStore: ObservableObject {
     @Published var lastRefresh: Date?
     /// Fatal connection error — shown full-screen rather than per card.
     @Published var connectionError: String?
+
+    /// Theme selection name written to the widget snapshot.
+    var themeName: String = "auto"
 
     private var timer: Task<Void, Never>?
     /// Endpoints backed by optional packages are retried rarely once they 404,
@@ -109,6 +135,9 @@ final class DashboardStore: ObservableObject {
         stopAutoRefresh()
         clearData()
         throughput.reset()
+        vpnThroughput.reset()
+        systemMetrics.reset()
+        gatewayMetrics.reset()
         missingEndpoints.removeAll()
         activeProfile = registry.active
         await client.update(profile: registry.active ?? ServerProfile())
@@ -120,17 +149,26 @@ final class DashboardStore: ObservableObject {
         startAutoRefresh()
     }
 
+    /// Closure that resets all data properties to their initial (empty) state.
+    /// Automatically stays in sync because new properties are added here.
+    private static let resetData: (DashboardStore) -> Void = { store in
+        store.system = nil; store.version = nil; store.states = nil; store.carp = nil
+        store.interfaces = []; store.gateways = []; store.services = []
+        store.leases = []; store.arp = []; store.staticMappings = []
+        store.firewallLog = []; store.systemLog = []; store.authLog = []; store.dhcpLog = []; store.openvpnLog = []
+        store.openvpnServers = []; store.openvpnClients = []; store.ipsecSAs = []
+        store.wireguardTunnels = []; store.wireguardPeers = []
+        store.rules = []; store.aliases = []; store.portForwards = []
+        store.configHistory = []; store.certificates = []; store.packages = []; store.tables = []
+        store.isLoadingTables = false
+        store.isLoadingFirewallObjects = false
+        store.hasLoadedFirewallObjects = false
+        store.alerts = []; store.errors = [:]; store.connectionError = nil; store.lastRefresh = nil
+    }
+
     private func clearData() {
-        system = nil; version = nil; states = nil; carp = nil
-        interfaces = []; gateways = []; services = []
-        leases = []; arp = []; staticMappings = []
-        firewallLog = []; systemLog = []
-        authLog = []; dhcpLog = []; openvpnLog = []
-        openvpnServers = []; openvpnClients = []; ipsecSAs = []
-        wireguardTunnels = []; wireguardPeers = []
-        rules = []; aliases = []; portForwards = []
-        configHistory = []; certificates = []; packages = []; tables = []
-        alerts = []; errors = [:]; connectionError = nil; lastRefresh = nil
+        Self.resetData(self)
+        firewallLogIndex.removeAll()
     }
 
     // MARK: Refresh
@@ -147,16 +185,12 @@ final class DashboardStore: ObservableObject {
         var succeededSections: Set<Section> = []
 
         /// Runs one section and records whether it worked.
-        ///
-        /// `@discardableResult` because most callers only care that it ran;
-        /// the throughput tracker is the exception and needs to know.
         @discardableResult
-        func run(_ section: Section, optional: Bool = false,
-                 _ work: () async throws -> Void) async -> Bool {
+        func run(_ section: Section, optional: Bool = false) async -> Bool {
             // Retry a known-missing optional endpoint every 20th cycle only.
-            if optional, missingEndpoints.contains(section), refreshCount % 20 != 0 { return false }
+            guard !optional || !missingEndpoints.contains(section) || refreshCount % 20 == 0 else { return false }
             do {
-                try await work()
+                try await fetchOne(section)
                 missingEndpoints.remove(section)
                 succeeded += 1
                 succeededSections.insert(section)
@@ -164,9 +198,8 @@ final class DashboardStore: ObservableObject {
             } catch let err as APIError {
                 switch err {
                 case .cancelled:
-                    // Superseded or backgrounded. Say nothing, change nothing.
                     break
-                case .unauthorized, .noAPIKey, .tls, .notConfigured, .badURL:
+                case .unauthorized, .noAPIKey, .tls, .notConfigured, .badURL, .forbidden:
                     fatal = err.localizedDescription
                 case .notFound:
                     if optional { missingEndpoints.insert(section) }
@@ -181,72 +214,90 @@ final class DashboardStore: ObservableObject {
         }
 
         // Core status
-        await run(.system) { self.system = try await self.client.systemStatus() }
-        await run(.version) { self.version = try await self.client.systemVersion() }
-        await run(.states) { self.states = try await self.client.stateTableSize() }
-        let interfacesLoaded = await run(.interfaces) {
-            self.interfaces = try await self.client.interfaces()
+        await run(.system)
+        await run(.version)
+        await run(.states)
+        if let current = states?.current {
+            stateHistory.ingest(current: current)
         }
-        await run(.gateways) { self.gateways = try await self.client.gateways() }
-        await run(.services) { self.services = try await self.client.services() }
+        let interfacesLoaded = await run(.interfaces)
+        await run(.gateways)
+        for gw in gateways {
+            gatewayMetrics.ingest(
+                key: gw.name,
+                delayMS: gw.delayMS,
+                lossPercent: gw.lossPercent
+            )
+        }
+        await run(.services)
 
         // Only sample when this cycle actually fetched counters.
-        //
-        // On a failed fetch `interfaces` keeps its previous contents, and
-        // ingesting those again produces a delta of zero over the elapsed
-        // interval — a confident "0 bit/s" on a link that was passing traffic
-        // the whole time, plus a notch in the chart that never happened.
         if interfacesLoaded { throughput.ingest(interfaces) }
+        if let sys = system {
+            if let cpu = sys.cpuUsage { systemMetrics.ingest(key: "cpu", value: cpu) }
+            if let mem = sys.memUsage { systemMetrics.ingest(key: "mem", value: mem) }
+            if let disk = sys.diskUsage { systemMetrics.ingest(key: "disk", value: disk) }
+            if let swap = sys.swapUsage { systemMetrics.ingest(key: "swap", value: swap) }
+        }
+        guard !Task.isCancelled else { isRefreshing = false; return }
 
         // Clients
-        await run(.leases) { self.leases = try await self.client.leases() }
-        await run(.arp) { self.arp = try await self.client.arpTable() }
-        await run(.statics, optional: true) { self.staticMappings = try await self.client.staticMappings() }
+        await run(.leases)
+        await run(.arp)
+        await run(.statics, optional: true)
+        guard !Task.isCancelled else { isRefreshing = false; return }
 
-        // Logs
-        await run(.firewallLog) {
-            self.firewallLog = try await self.client.firewallLog(limit: self.profile.logLimit)
-        }
-        await run(.systemLog) {
-            self.systemLog = try await self.client.systemLog(limit: self.profile.logLimit)
-        }
-        await run(.authLog) {
-            self.authLog = try await self.client.authLog(limit: self.profile.logLimit)
-        }
-        await run(.dhcpLog, optional: true) {
-            self.dhcpLog = try await self.client.dhcpLog(limit: self.profile.logLimit)
-        }
-        await run(.openvpnLog, optional: true) {
-            self.openvpnLog = try await self.client.openvpnLog(limit: self.profile.logLimit)
-        }
+        // Logs — save previous counts before refreshing.
+        let savedCounts = FirewallCounts(
+            blocked: self.blockedRecently,
+            rejected: self.rejectedRecently,
+            passed: self.firewallLog.count - self.blockedRecently - self.rejectedRecently
+        )
+        await run(.firewallLog)
+        prevFirewallCounts = savedCounts
+        await run(.systemLog)
+        await run(.authLog)
+        await run(.dhcpLog, optional: true)
+        await run(.openvpnLog, optional: true)
+
+        buildFirewallLogIndex()
 
         // VPN — all optional; a firewall may have none of these configured.
-        await run(.openvpn, optional: true) {
-            self.openvpnServers = try await self.client.openvpnServers()
-            self.openvpnClients = (try? await self.client.openvpnClients()) ?? []
+        await run(.openvpn, optional: true)
+        await run(.openvpnClients, optional: true)
+        await run(.ipsec, optional: true)
+        await run(.wireguard, optional: true)
+        await run(.wireguardPeers, optional: true)
+
+        // Track VPN throughput from cumulative byte counters.
+        for srv in openvpnServers {
+            for conn in srv.connections {
+                if let rx = conn.bytesReceived, let tx = conn.bytesSent {
+                    vpnThroughput.ingest(key: "ovpn:\(srv.name)/\(conn.commonName)", inBytes: rx, outBytes: tx)
+                }
+            }
         }
-        await run(.ipsec, optional: true) { self.ipsecSAs = try await self.client.ipsecSAs() }
-        await run(.wireguard, optional: true) {
-            self.wireguardTunnels = try await self.client.wireguardTunnels()
-            self.wireguardPeers = (try? await self.client.wireguardPeers()) ?? []
+        for cli in openvpnClients {
+            for conn in cli.connections {
+                if let rx = conn.bytesReceived, let tx = conn.bytesSent {
+                    vpnThroughput.ingest(key: "ovpn-cli:\(cli.name)/\(conn.commonName)", inBytes: rx, outBytes: tx)
+                }
+            }
+        }
+        for peer in wireguardPeers {
+            if let rx = peer.bytesReceived, let tx = peer.bytesSent {
+                vpnThroughput.ingest(key: "wg:\(peer.publicKey)", inBytes: rx, outBytes: tx)
+            }
         }
 
-        // Firewall objects
-        await run(.rules) { self.rules = try await self.client.firewallRules() }
-        await run(.aliases) { self.aliases = try await self.client.firewallAliases() }
-        await run(.portForwards) { self.portForwards = try await self.client.portForwards() }
+        guard !Task.isCancelled else { isRefreshing = false; return }
 
         // System detail
-        await run(.carp, optional: true) { self.carp = try await self.client.carp() }
-        await run(.configHistory, optional: true) {
-            self.configHistory = try await self.client.configHistory()
-        }
-        await run(.certificates, optional: true) {
-            self.certificates = try await self.client.certificates()
-        }
-        await run(.packages, optional: true) {
-            self.packages = try await self.client.packages()
-        }
+        await run(.carp, optional: true)
+        await run(.configHistory, optional: true)
+        await run(.certificates, optional: true)
+        await run(.packages, optional: true)
+        guard !Task.isCancelled else { isRefreshing = false; return }
 
         errors = freshErrors
 
@@ -271,14 +322,121 @@ final class DashboardStore: ObservableObject {
         defer { isLoadingTables = false }
         do {
             tables = try await client.tables()
+            blockedHosts = tables.filter { $0.isNotable && $0.entryCount > 0 }
             errors[.tables] = nil
         } catch {
             errors[.tables] = error.localizedDescription
         }
     }
 
-    var blockedHosts: [FirewallTable] {
-        tables.filter { $0.isNotable && $0.entryCount > 0 }
+    /// Retries a single failed section. Used by the per-section retry button.
+    func retrySection(_ section: Section) async {
+        guard isConfigured else { return }
+        await fetch(section)
+        alerts = VaktpostAlert.build(from: self)
+        publishSnapshot()
+    }
+
+    /// Fetches a single section from the API and updates the store.
+    /// Called by `retrySection` and can be called directly for on-demand refresh.
+    func fetch(_ section: Section) async {
+        errors[section] = nil
+        do {
+            try await fetchOne(section)
+        } catch {
+            errors[section] = error.localizedDescription
+        }
+    }
+
+    /// Core fetch logic for one section. Called by both `refresh()` and `fetch(section:)`.
+    /// Throws the underlying API error so refresh() can classify it properly.
+    private func fetchOne(_ section: Section) async throws {
+        switch section {
+        case .system:
+            system = try await client.systemStatus()
+        case .version:
+            version = try await client.systemVersion()
+        case .states:
+            states = try await client.stateTableSize()
+        case .interfaces:
+            interfaces = try await client.interfaces()
+        case .gateways:
+            gateways = try await client.gateways()
+        case .services:
+            services = try await client.services()
+        case .leases:
+            leases = try await client.leases()
+        case .arp:
+            arp = try await client.arpTable()
+        case .statics:
+            staticMappings = try await client.staticMappings()
+        case .firewallLog:
+            firewallLog = try await client.firewallLog(limit: profile.logLimit)
+        case .systemLog:
+            systemLog = try await client.systemLog(limit: profile.logLimit)
+        case .authLog:
+            authLog = try await client.authLog(limit: profile.logLimit)
+        case .dhcpLog:
+            dhcpLog = try await client.dhcpLog(limit: profile.logLimit)
+        case .openvpnLog:
+            openvpnLog = try await client.openvpnLog(limit: profile.logLimit)
+        case .openvpn:
+            openvpnServers = try await client.openvpnServers()
+        case .openvpnClients:
+            openvpnClients = try await client.openvpnClients()
+        case .ipsec:
+            ipsecSAs = try await client.ipsecSAs()
+        case .wireguard:
+            wireguardTunnels = try await client.wireguardTunnels()
+        case .wireguardPeers:
+            wireguardPeers = try await client.wireguardPeers()
+        case .firewall:
+            await loadFirewallObjects()
+        case .aliases:
+            await loadFirewallObjects()
+        case .portForwards:
+            await loadFirewallObjects()
+        case .carp:
+            carp = try await client.carp()
+        case .configHistory:
+            configHistory = try await client.configHistory()
+        case .certificates:
+            certificates = try await client.certificates()
+        case .packages:
+            packages = try await client.packages()
+        case .tables:
+            await loadTables()
+        }
+    }
+
+    /// Fetches firewall rules, NAT port forwards and aliases on first use.
+    ///
+    /// These payloads are large and relatively static. Most users never look
+    /// at them, so pulling them every refresh cycle wastes bandwidth and keeps
+    /// them in memory for the entire session.
+    func loadFirewallObjects() async {
+        guard isConfigured, !isLoadingFirewallObjects, !hasLoadedFirewallObjects else { return }
+        isLoadingFirewallObjects = true
+        hasLoadedFirewallObjects = true
+        defer { isLoadingFirewallObjects = false }
+        do {
+            rules = try await client.firewallRules()
+            errors[.firewall] = nil
+        } catch {
+            errors[.firewall] = error.localizedDescription
+        }
+        do {
+            aliases = try await client.firewallAliases()
+            errors[.aliases] = nil
+        } catch {
+            errors[.aliases] = error.localizedDescription
+        }
+        do {
+            portForwards = try await client.portForwards()
+            errors[.portForwards] = nil
+        } catch {
+            errors[.portForwards] = error.localizedDescription
+        }
     }
 
     var packagesNeedingUpdate: [PackageInfo] { packages.filter(\.updateAvailable) }
@@ -321,6 +479,8 @@ final class DashboardStore: ObservableObject {
             snap.wanInBps = point.inBps
             snap.wanOutBps = point.outBps
         }
+        snap.refreshSeconds = profile.refreshSeconds
+        snap.themeName = themeName
         SharedSnapshot.write(snap)
         WidgetCenter.shared.reloadAllTimelines()
     }
@@ -354,7 +514,30 @@ final class DashboardStore: ObservableObject {
     }
 
     var blockedRecently: Int {
-        firewallLog.filter { $0.action == "block" || $0.action == "reject" }.count
+        firewallLog.filter { $0.action == "block" }.count
+    }
+
+    var rejectedRecently: Int {
+        firewallLog.filter { $0.action == "reject" }.count
+    }
+
+    var passedRecently: Int {
+        firewallLog.count - blockedRecently - rejectedRecently
+    }
+
+    var blockedDelta: Int? {
+        guard prevFirewallCounts.blocked > 0 else { return nil }
+        return blockedRecently - prevFirewallCounts.blocked
+    }
+
+    var rejectedDelta: Int? {
+        guard prevFirewallCounts.rejected > 0 else { return nil }
+        return rejectedRecently - prevFirewallCounts.rejected
+    }
+
+    var passedDelta: Int? {
+        guard prevFirewallCounts.passed > 0 else { return nil }
+        return passedRecently - prevFirewallCounts.passed
     }
 
     var criticalAlertCount: Int {
@@ -385,10 +568,47 @@ final class DashboardStore: ObservableObject {
 
     func logLines(matching ip: String) -> [LogLine] {
         guard !ip.isEmpty else { return [] }
+
+        // Extract a 3-octet prefix from the IP for index lookup.
+        let components = ip.split(separator: ".").prefix(3)
+        let prefix = components.joined(separator: ".")
+
+        // If the IP has at least 3 octets, use the index for fast lookup.
+        if components.count == 3, let indices = firewallLogIndex[prefix] {
+            // Gather unique lines from the index, preserving order.
+            var seen = Set<Int>()
+            var result: [LogLine] = []
+            for idx in indices where seen.insert(idx).inserted {
+                let line = firewallLog[idx]
+                if line.source?.contains(ip) ?? false
+                    || line.destination?.contains(ip) ?? false
+                    || line.text.contains(ip) {
+                    result.append(line)
+                }
+            }
+            return result
+        }
+
+        // Fall back to linear scan for partial matches or incomplete IPs.
         return firewallLog.filter {
             ($0.source?.contains(ip) ?? false)
                 || ($0.destination?.contains(ip) ?? false)
                 || $0.text.contains(ip)
+        }
+    }
+
+    /// Builds `firewallLogIndex` by scanning every log line once.
+    private func buildFirewallLogIndex() {
+        firewallLogIndex.removeAll()
+        for (index, line) in firewallLog.enumerated() {
+            if let src = line.source {
+                let key = src.split(separator: ".").prefix(3).joined(separator: ".")
+                firewallLogIndex[key, default: []].append(index)
+            }
+            if let dst = line.destination {
+                let key = dst.split(separator: ".").prefix(3).joined(separator: ".")
+                firewallLogIndex[key, default: []].append(index)
+            }
         }
     }
 }

@@ -37,7 +37,7 @@ final class ThroughputTracker: ObservableObject {
 
             guard let previous = last[key] else { continue }
             let elapsed = now.timeIntervalSince(previous.at)
-            guard elapsed > 0.5 else { continue }
+            guard elapsed > 0.5, elapsed < 86400 * 7 else { continue }
 
             let deltaIn = inBytes - previous.inBytes
             let deltaOut = outBytes - previous.outBytes

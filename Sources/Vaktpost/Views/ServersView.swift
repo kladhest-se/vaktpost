@@ -213,9 +213,29 @@ struct ServerEditView: View {
                 }
 
                 if let message {
-                    Text(message)
-                        .font(.system(size: 12))
-                        .foregroundStyle(messageHealth.color(theme))
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(message)
+                            .font(.system(size: 12))
+                            .foregroundStyle(messageHealth.color(theme))
+                        if messageHealth == .warn, !isExisting {
+                            Button("Test Connection") {
+                                Task {
+                                    isTesting = true
+                                    defer { isTesting = false }
+                                    do {
+                                        let version = try await store.client.ping()
+                                        self.message = "Connected — pfSense \(version)"
+                                        messageHealth = .ok
+                                    } catch {
+                                        self.message = error.localizedDescription
+                                        messageHealth = .bad
+                                    }
+                                }
+                            }
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(theme.accentColor)
+                        }
+                    }
                 }
 
                 if isExisting {
@@ -271,7 +291,15 @@ struct ServerEditView: View {
         isTesting = true
         defer { isTesting = false }
 
-        Keychain.setAPIKey(apiKey.trimmingCharacters(in: .whitespacesAndNewlines), for: profile.id)
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch Keychain.setAPIKey(trimmedKey, for: profile.id) {
+        case .success:
+            break
+        case .failure(let error):
+            message = error.errorDescription ?? "Failed to save API key."
+            messageHealth = .bad
+            return
+        }
         var p = profile
         p.normalize()
         profile = p
@@ -282,14 +310,15 @@ struct ServerEditView: View {
                 let version = try await store.client.ping()
                 message = "Connected — pfSense \(version)"
                 messageHealth = .ok
-                dismiss()
             } catch {
                 message = error.localizedDescription
                 messageHealth = .bad
             }
         } else {
-            dismiss()
+            message = "Saved (untested — tap to test)"
+            messageHealth = .warn
         }
+        isTesting = false
     }
 }
 

@@ -134,7 +134,7 @@ Each section fails independently: an uninstalled package or a privilege the key 
 
 **Multiple firewalls.** Each has its own keychain item, TLS settings, refresh interval and log limit. Switch from the Overview chip row or More. A single-server config from an earlier build is migrated on first launch.
 
-**Firewall browser.** Read-only rules, NAT port forwards and aliases, filterable by interface and searchable. v2 returns filter addresses as objects rather than strings; `FilterAddress` in `Models/FirewallModels.swift` renders both shapes.
+**Firewall browser.** Read-only rules, NAT port forwards and aliases, filterable by interface and searchable. The firewall objects are loaded lazily on first navigation to save bandwidth — they are large, static, and most users never look. v2 returns filter addresses as objects rather than strings; `FilterAddress` in `Models/FirewallModels.swift` renders both shapes.
 
 **Widget.** Small and medium families showing health, gateway latency, interfaces up and uplink rate.
 
@@ -210,7 +210,7 @@ public-web/                    project website (static, no build step)
   under **System → Advanced → Miscellaneous → Thermal Sensors**. On Intel
   hardware that is the Core (coretemp) option; on AMD, amdtemp. Vaktpost reads
   the field either way and says "no sensor loaded" when it is absent.
-- `NSAllowsArbitraryLoads` is set in Info.plist because firewalls are commonly reached by IP over a self-signed certificate. Remove it if you always connect to a properly-certificated hostname.
+- ATS is enforced by default; TLS trust is delegated to `TrustEvaluator`, which either validates against a pinned SHA-256 leaf fingerprint, accepts an untrusted certificate for the configured host (when `allowUntrustedTLS` is enabled), or performs standard validation. Firewalls fronted by ACME or HAProxy with a proper certificate work without any configuration.
 
 ## Website
 

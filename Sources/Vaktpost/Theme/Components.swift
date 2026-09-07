@@ -225,12 +225,19 @@ enum Fmt {
     }
 
     static func pct(_ v: Double) -> String { String(format: "%.0f%%", v) }
+
+    static func bytesPerSec(_ bps: Double) -> String {
+        let units = ["B/s", "KiB/s", "MiB/s", "GiB/s"]
+        var v = bps
+        var i = 0
+        while v >= 1024, i < units.count - 1 { v /= 1024; i += 1 }
+        return String(format: i == 0 ? "%.0f %@" : "%.1f %@", v, units[i])
+    }
 }
 
 // MARK: - Sparkline
 
-/// A two-series sparkline. Both series share a scale so in and out are directly
-/// comparable, which is the whole point of putting them in one frame.
+/// A two-series sparkline with time axis, gridlines, and tap tooltips.
 struct Sparkline: View {
     @EnvironmentObject private var theme: ThemeManager
 
@@ -242,16 +249,96 @@ struct Sparkline: View {
         max(inSeries.max() ?? 0, outSeries.max() ?? 0, 1)
     }
 
+    @State private var showTooltip = false
+    @State private var tooltipPoint: CGPoint?
+    @State private var tooltipValue: (in: Double?, out: Double?)?
+
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                area(outSeries, in: geo.size, color: theme.info)
-                area(inSeries, in: geo.size, color: theme.ok)
+        VStack(alignment: .leading, spacing: 2) {
+            GeometryReader { geo in
+                ZStack {
+                    gridlines(in: geo.size)
+                    area(outSeries, in: geo.size, color: theme.info)
+                    area(inSeries, in: geo.size, color: theme.ok)
+                     if showTooltip, let pt = tooltipPoint, let vals = tooltipValue {
+                         tooltipLine(at: pt, in: geo.size)
+                         tooltipMarker(at: pt, in: geo.size, color: theme.ok, value: vals.in)
+                         tooltipMarker(at: pt, in: geo.size, color: theme.info, value: vals.out)
+                     }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { location in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        showTooltip.toggle()
+                        if showTooltip {
+                            tooltipPoint = location
+                            tooltipValue = valueAt(x: location.x, in: geo.size)
+                        } else {
+                            tooltipValue = nil
+                        }
+                    }
+                }
+            }
+            .frame(height: height)
+            .background(theme.hairline.opacity(0.22))
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            HStack {
+                Text("last 30 min")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(theme.labelFaint.opacity(0.6))
+                Spacer()
+                if let latestIn = inSeries.last, let latestOut = outSeries.last {
+                    Text(Fmt.bytesPerSec(latestIn))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(theme.ok)
+                    Text(Fmt.bytesPerSec(latestOut))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(theme.info)
+                }
             }
         }
-        .frame(height: height)
-        .background(theme.hairline.opacity(0.22))
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Throughput sparkline showing network traffic rates")
+    }
+
+    private func gridlines(in size: CGSize) -> some View {
+        ZStack {
+            ForEach(0..<4) { i in
+                let y = size.height * CGFloat(i) / 3
+                Rectangle()
+                    .fill(theme.hairline.opacity(0.08))
+                    .frame(height: 1)
+                    .offset(y: y - 0.5)
+            }
+        }
+    }
+
+    private func tooltipLine(at point: CGPoint, in size: CGSize) -> some View {
+        Path { p in
+            p.move(to: CGPoint(x: point.x, y: 0))
+            p.addLine(to: CGPoint(x: point.x, y: size.height))
+        }
+.stroke(theme.label.opacity(0.3), style: StrokeStyle(lineWidth: 1))
+    }
+
+    private func tooltipMarker(at point: CGPoint, in size: CGSize, color: Color, value: Double?) -> some View {
+        Group {
+            if let value {
+                Circle()
+                    .fill(color)
+                    .frame(width: 6, height: 6)
+                    .offset(x: point.x, y: size.height - (CGFloat(value / peak) * size.height * 0.92) - 2 - 3)
+                    .shadow(color: color.opacity(0.4), radius: 2)
+            }
+        }
+    }
+
+    private func valueAt(x: CGFloat, in size: CGSize) -> (in: Double?, out: Double?) {
+        guard inSeries.count > 1, outSeries.count > 1 else { return (nil, nil) }
+        let step = size.width / CGFloat(max(inSeries.count, outSeries.count) - 1)
+        let idx = Int(x / step)
+        let clampedIdx = idx.clamped(to: 0...inSeries.count)
+        return (inSeries[clampedIdx], outSeries[clampedIdx])
     }
 
     private func points(_ values: [Double], in size: CGSize) -> [CGPoint] {
@@ -288,6 +375,13 @@ struct Sparkline: View {
     }
 }
 
+/// Extension to clamp an integer to a range.
+private extension Int {
+    func clamped(to range: ClosedRange<Int>) -> Int {
+        Swift.max(range.lowerBound, Swift.min(range.upperBound, self))
+    }
+}
+
 /// Legend + current values shown under a sparkline.
 struct RateLegend: View {
     @EnvironmentObject private var theme: ThemeManager
@@ -300,6 +394,8 @@ struct RateLegend: View {
             item("OUT", outBps, theme.info)
             Spacer()
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Inbound \(inBps.map(Rate.bits) ?? "no data") per second, outbound \(outBps.map(Rate.bits) ?? "no data") per second")
     }
 
     private func item(_ label: String, _ value: Double?, _ color: Color) -> some View {
@@ -311,6 +407,389 @@ struct RateLegend: View {
             Text(value.map(Rate.bits) ?? "—")
                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .foregroundStyle(theme.label)
+        }
+    }
+}
+
+// MARK: - Throughput chart
+
+/// Renders a throughput sparkline for a single interface device.
+///
+/// Wraps the common pattern of fetching points from `ThroughputTracker`,
+/// building a `Sparkline`, and showing a `RateLegend`. The `showExplanatoryText`
+/// parameter controls the "Derived from counter deltas …" caption shown in
+/// Overview but omitted from NetworkView.
+struct ThroughputChart: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let store: DashboardStore
+    let device: String
+    let height: CGFloat
+    var showExplanatoryText: Bool = false
+
+    private var points: [ThroughputTracker.Point] {
+        store.throughput.points(for: device)
+    }
+
+    var body: some View {
+        if points.count > 1 {
+            VStack(alignment: .leading, spacing: 6) {
+                Sparkline(
+                    inSeries: points.map(\.inBps),
+                    outSeries: points.map(\.outBps),
+                    height: height
+                )
+                RateLegend(inBps: points.last?.inBps, outBps: points.last?.outBps)
+                if showExplanatoryText {
+                    Text("Derived from counter deltas over the last \(points.count) samples.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.labelFaint)
+                }
+            }
+        } else {
+            Text("Collecting samples — a rate needs two refreshes.")
+                .font(.system(size: 12))
+                .foregroundStyle(theme.labelFaint)
+        }
+    }
+}
+
+// MARK: - ServerSwitcher
+
+/// A horizontal scrollable row of pill buttons for switching between firewalls.
+struct ServerSwitcher: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let servers: [ServerProfile]
+    let activeID: UUID?
+    let onSwitch: (ServerProfile) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(servers) { server in
+                    Button {
+                        onSwitch(server)
+                    } label: {
+                        Text(server.displayName)
+                            .font(.system(size: 12, weight: .medium))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(activeID == server.id ? theme.accentColor : theme.card)
+                            .foregroundStyle(activeID == server.id
+                                             ? theme.palette.crust : theme.labelMuted)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - State trend line
+
+struct StateTrendLine: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let values: [Int]
+    let max: Int
+
+    private var peak: Double { Double(values.max() ?? 1) }
+    private var latest: Int { values.last ?? 0 }
+    private var trend: String {
+        guard values.count >= 2 else { return "" }
+        let recent = Array(values.suffix(3))
+        guard recent.count >= 2 else { return "" }
+        let last = Double(recent[recent.count - 1])
+        let prev = Double(recent[recent.count - 2])
+        if last > prev * 1.2 { return " ↑" }
+        if last < prev * 0.8 { return " ↓" }
+        return " →"
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            Path { path in
+                guard values.count > 1 else { return }
+                let step = geo.size.width / CGFloat(values.count - 1)
+                let pts = values.enumerated().map { idx, v in
+                    CGPoint(
+                        x: CGFloat(idx) * step,
+                        y: geo.size.height - (CGFloat(v) / Swift.max(peak, 1.0) * geo.size.height * 0.9) - 1
+                    )
+                }
+                path.move(to: CGPoint(x: pts[0].x, y: geo.size.height))
+                pts.forEach { path.addLine(to: $0) }
+                path.addLine(to: CGPoint(x: pts[pts.count - 1].x, y: geo.size.height))
+                path.closeSubpath()
+            }
+            .fill(theme.warn.opacity(0.15))
+        }
+        .frame(height: 24)
+        .background(theme.hairline.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .overlay(alignment: .trailing) {
+            Text("\(latest)\(trend)")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(theme.labelMuted)
+                .padding(.trailing, 6)
+        }
+    }
+}
+
+// MARK: - Single-metric sparkline
+
+struct SingleMetricSparkline: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let values: [Double]
+    let label: String
+    var height: CGFloat = 32
+
+    private var peak: Double { values.max() ?? 1 }
+    private var latest: Double { values.last ?? 0 }
+
+    @State private var showTooltip = false
+    @State private var tooltipValue: Double?
+    @State private var tooltipX: CGFloat?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            GeometryReader { geo in
+                ZStack {
+                    gridlines(in: geo.size)
+                    Path { path in
+                        guard values.count > 1 else { return }
+                        let step = geo.size.width / CGFloat(values.count - 1)
+                        let points = values.enumerated().map { idx, v in
+                            CGPoint(
+                                x: CGFloat(idx) * step,
+                                y: geo.size.height - (CGFloat(v / Swift.max(peak, 1)) * geo.size.height * 0.9) - 1
+                            )
+                        }
+                        path.move(to: CGPoint(x: points[0].x, y: geo.size.height))
+                        points.forEach { path.addLine(to: $0) }
+                        path.addLine(to: CGPoint(x: points[points.count - 1].x, y: geo.size.height))
+                        path.closeSubpath()
+                    }
+                    .fill(theme.accentColor.opacity(0.2))
+
+                    if showTooltip, let x = tooltipX, let val = tooltipValue {
+                        Path { p in
+                            p.move(to: CGPoint(x: x, y: 0))
+                            p.addLine(to: CGPoint(x: x, y: geo.size.height))
+                        }
+.stroke(theme.label.opacity(0.3), style: StrokeStyle(lineWidth: 1))
+                        let y = geo.size.height - (CGFloat(val / Swift.max(peak, 1)) * geo.size.height * 0.9) - 1
+                        Circle()
+                            .fill(theme.accentColor)
+                            .frame(width: 5, height: 5)
+                            .offset(x: x, y: y)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { location in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        showTooltip.toggle()
+                        if showTooltip {
+                            tooltipX = location.x
+                            tooltipValue = valueAt(x: location.x, in: geo.size)
+                        } else {
+                            tooltipValue = nil
+                        }
+                    }
+                }
+            }
+            .frame(height: height)
+            .background(theme.hairline.opacity(0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            HStack {
+                Text("\(label)")
+                    .font(.system(size: 10))
+                    .foregroundStyle(theme.labelMuted)
+                Spacer()
+                Text(Fmt.pct(latest))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(theme.labelMuted)
+            }
+        }
+    }
+
+    private func gridlines(in size: CGSize) -> some View {
+        ZStack {
+            ForEach(0..<3) { i in
+                let y = size.height * CGFloat(i) / 2
+                Rectangle()
+                    .fill(theme.hairline.opacity(0.06))
+                    .frame(height: 1)
+                    .offset(y: y - 0.5)
+            }
+        }
+    }
+
+    private func valueAt(x: CGFloat, in size: CGSize) -> Double? {
+        guard values.count > 1 else { return nil }
+        let step = size.width / CGFloat(values.count - 1)
+        let idx = Int(x / step).clamped(to: 0...values.count)
+        return values[idx]
+    }
+}
+
+// MARK: - Gateway trend
+
+struct GatewayTrend: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let delayPoints: [Double]
+    let lossPoints: [Double]
+    let latestDelay: Double?
+    let latestLoss: Double?
+
+    private var trend: String {
+        guard delayPoints.count >= 2 else { return "" }
+        let recent = Array(delayPoints.suffix(3))
+        guard recent.count >= 2 else { return "" }
+        let last = recent[recent.count - 1]
+        let prev = recent[recent.count - 2]
+        if last > prev * 1.3 { return "↑" }
+        if last < prev * 0.7 { return "↓" }
+        return "→"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                if let delay = latestDelay {
+                    Text("\(Int(delay))ms")
+                        .font(.system(size: 10, design: .monospaced))
+                }
+                Text(trend)
+                    .font(.system(size: 9))
+                    .foregroundStyle(trend == "↑" ? theme.bad : trend == "↓" ? theme.ok : theme.labelMuted)
+                if let loss = latestLoss, loss > 0 {
+                    Text("\(Int(loss))%")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(loss > 5 ? theme.bad : theme.warn)
+                }
+            }
+            if !delayPoints.isEmpty {
+                miniSparkline(points: delayPoints, color: theme.warn, label: "ms")
+                    .frame(height: 18)
+            }
+        }
+    }
+
+    private func miniSparkline(points: [Double], color: Color, label: String) -> some View {
+        GeometryReader { geo in
+            ZStack {
+                ForEach(0..<3) { i in
+                    let y = geo.size.height * CGFloat(i) / 2
+                    Rectangle()
+                        .fill(theme.hairline.opacity(0.06))
+                        .frame(height: 1)
+                        .offset(y: y - 0.5)
+                }
+                Path { path in
+                    guard points.count > 1 else { return }
+                    let step = geo.size.width / CGFloat(points.count - 1)
+                    let peak = points.max() ?? 1
+                    let pts = points.enumerated().map { idx, v in
+                        CGPoint(
+                            x: CGFloat(idx) * step,
+                            y: geo.size.height - (CGFloat(v) / Swift.max(peak, 1) * geo.size.height * 0.85) - 1
+                        )
+                    }
+                    path.move(to: CGPoint(x: pts[0].x, y: geo.size.height))
+                    pts.forEach { path.addLine(to: $0) }
+                    path.addLine(to: CGPoint(x: pts[pts.count - 1].x, y: geo.size.height))
+                    path.closeSubpath()
+                }
+                .fill(color.opacity(0.15))
+            }
+        }
+    }
+}
+
+// MARK: - VPN sparkline row
+
+struct VPNSparklineRow: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let name: String
+    let inPoints: [ThroughputTrackerV2.Point]
+    let outPoints: [ThroughputTrackerV2.Point]
+    let latestIn: Double?
+    let latestOut: Double?
+
+    private var inPeak: Double { inPoints.map(\.inBps).max() ?? 1 }
+    private var outPeak: Double { outPoints.map(\.outBps).max() ?? 1 }
+    private var peak: Double { max(inPeak, outPeak) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            GeometryReader { geo in
+                ZStack(alignment: .bottom) {
+                    Path { path in
+                        guard outPoints.count > 1 else { return }
+                        let step = geo.size.width / CGFloat(outPoints.count - 1)
+                        let pts = outPoints.enumerated().map { idx, v in
+                            CGPoint(x: CGFloat(idx) * step,
+                                    y: geo.size.height - (CGFloat(v.outBps / max(outPeak, 1)) * geo.size.height * 0.85) - 1)
+                        }
+                        path.move(to: CGPoint(x: pts[0].x, y: geo.size.height))
+                        pts.forEach { path.addLine(to: $0) }
+                        path.addLine(to: CGPoint(x: pts[pts.count - 1].x, y: geo.size.height))
+                        path.closeSubpath()
+                    }
+                    .fill(theme.info.opacity(0.15))
+
+                    Path { path in
+                        guard inPoints.count > 1 else { return }
+                        let step = geo.size.width / CGFloat(inPoints.count - 1)
+                        let pts = inPoints.enumerated().map { idx, v in
+                            CGPoint(x: CGFloat(idx) * step,
+                                    y: geo.size.height - (CGFloat(v.inBps / max(inPeak, 1)) * geo.size.height * 0.85) - 1)
+                        }
+                        path.move(to: CGPoint(x: pts[0].x, y: geo.size.height))
+                        pts.forEach { path.addLine(to: $0) }
+                        path.addLine(to: CGPoint(x: pts[pts.count - 1].x, y: geo.size.height))
+                        path.closeSubpath()
+                    }
+                    .fill(theme.ok.opacity(0.15))
+
+                    Path { path in
+                        guard inPoints.count > 1 else { return }
+                        let step = geo.size.width / CGFloat(inPoints.count - 1)
+                        let pts = inPoints.enumerated().map { idx, v in
+                            CGPoint(x: CGFloat(idx) * step,
+                                    y: geo.size.height - (CGFloat(v.inBps / max(inPeak, 1)) * geo.size.height * 0.85) - 1)
+                        }
+                        path.move(to: pts[0])
+                        pts.dropFirst().forEach { path.addLine(to: $0) }
+                    }
+                    .stroke(theme.ok, style: StrokeStyle(lineWidth: 1.2))
+
+                    Path { path in
+                        guard outPoints.count > 1 else { return }
+                        let step = geo.size.width / CGFloat(outPoints.count - 1)
+                        let pts = outPoints.enumerated().map { idx, v in
+                            CGPoint(x: CGFloat(idx) * step,
+                                    y: geo.size.height - (CGFloat(v.outBps / max(outPeak, 1)) * geo.size.height * 0.85) - 1)
+                        }
+                        path.move(to: pts[0])
+                        pts.dropFirst().forEach { path.addLine(to: $0) }
+                    }
+                    .stroke(theme.info, style: StrokeStyle(lineWidth: 1.2))
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .frame(height: 28)
+            .background(theme.hairline.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+
+            HStack(spacing: 8) {
+                Text("↓ \(latestIn.map(Fmt.bytesPerSec) ?? "-"))/s")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(theme.ok)
+                Text("↑ \(latestOut.map(Fmt.bytesPerSec) ?? "-"))/s")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(theme.info)
+            }
         }
     }
 }

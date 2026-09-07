@@ -1,5 +1,8 @@
 import Foundation
 import Security
+import os.log
+
+private let keychainLog = OSLog(subsystem: "se.kladhest.vaktpost", category: "Keychain")
 
 // MARK: - Profile
 
@@ -64,7 +67,7 @@ final class ServerRegistry: ObservableObject {
             legacy.id = UUID()
             servers = [legacy]
             if let key = Keychain.legacyAPIKey() {
-                Keychain.setAPIKey(key, for: legacy.id)
+                _ = Keychain.setAPIKey(key, for: legacy.id)
                 Keychain.deleteLegacy()
             }
             d.removeObject(forKey: "server.profile")
@@ -117,15 +120,40 @@ final class ServerRegistry: ObservableObject {
 
 // MARK: - Keychain
 
+enum KeychainError: LocalizedError {
+    case emptyKey
+    case keychainError(OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyKey:
+            return "API key cannot be empty."
+        case .keychainError(let status):
+            switch status {
+            case -25293: // errSecUnlockedDeviceRequired
+                return "Save failed: device is locked. Unlock and try again."
+            case -25308: // errSecWriteProhibited
+                return "Save failed: storage is not available."
+            case -25299: // errSecUserCanceled
+                return "Save cancelled."
+            default:
+                return "Save failed (keychain error \(status))."
+            }
+        }
+    }
+}
+
 /// One keychain item per firewall, keyed by profile UUID. Accessible after
 /// first unlock so a background refresh on a locked device still works.
 enum Keychain {
     private static let service = "se.kladhest.vaktpost.apikey"
     private static let legacyAccount = "default"
 
-    static func setAPIKey(_ key: String, for id: UUID) {
+    static func setAPIKey(_ key: String, for id: UUID) -> Result<Void, KeychainError> {
         delete(for: id)
-        guard !key.isEmpty, let data = key.data(using: .utf8) else { return }
+        guard !key.isEmpty, let data = key.data(using: .utf8) else {
+            return .failure(.emptyKey)
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -133,7 +161,12 @@ enum Keychain {
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
         ]
-        SecItemAdd(query as CFDictionary, nil)
+        let status = SecItemAdd(query as CFDictionary, nil)
+        if status == errSecSuccess || status == errSecDuplicateItem {
+            return .success(())
+        }
+        os_log(.error, log: keychainLog, "SecItemAdd failed: %{public}d", status)
+        return .failure(.keychainError(status))
     }
 
     static func apiKey(for id: UUID) -> String? { read(account: id.uuidString) }
@@ -166,6 +199,9 @@ enum Keychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            os_log(.error, log: keychainLog, "SecItemDelete failed: %{public}d", status)
+        }
     }
 }

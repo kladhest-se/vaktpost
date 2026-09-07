@@ -31,22 +31,38 @@ struct RootView: View {
     var body: some View {
         Group {
             if store.isConfigured {
-                TabView {
-                    NavigationStack { OverviewView() }
-                        .tabItem { Label("Overview", systemImage: "square.grid.2x2") }
+                ZStack(alignment: .top) {
+                    TabView {
+                        NavigationStack { OverviewView() }
+                            .tabItem { Label("Overview", systemImage: "square.grid.2x2") }
 
-                    NavigationStack { ClientsView() }
-                        .tabItem { Label("Clients", systemImage: "person.2") }
+                        NavigationStack { ClientsView() }
+                            .tabItem { Label("Clients", systemImage: "person.2") }
 
-                    NavigationStack { NetworkView() }
-                        .tabItem { Label("Network", systemImage: "network") }
+                        NavigationStack { NetworkView() }
+                            .tabItem { Label("Network", systemImage: "network") }
 
-                    NavigationStack { LogsView() }
-                        .tabItem { Label("Logs", systemImage: "text.alignleft") }
+                        NavigationStack { LogsView() }
+                            .tabItem { Label("Logs", systemImage: "text.alignleft") }
 
-                    NavigationStack { MoreView() }
-                        .tabItem { Label("More", systemImage: "ellipsis.circle") }
-                        .badge(store.criticalAlertCount)
+                        NavigationStack { MoreView() }
+                            .tabItem { Label("More", systemImage: "ellipsis.circle") }
+                            .badge(store.criticalAlertCount)
+                    }
+
+                    if store.isRefreshing {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                            Text("Refreshing…")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(theme.hairline.opacity(0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .shadow(color: theme.label.opacity(0.1), radius: 4, y: 2)
+                    }
                 }
             } else {
                 OnboardingView()
@@ -56,6 +72,7 @@ struct RootView: View {
         .preferredColorScheme(theme.preferredColorScheme)
         .onAppear {
             theme.systemScheme = systemScheme
+            store.themeName = theme.selection.storageValue
             guard store.isConfigured else { return }
             Task {
                 await store.refresh()
@@ -65,10 +82,16 @@ struct RootView: View {
         .onChange(of: systemScheme) { _, newValue in
             theme.systemScheme = newValue
         }
+        .onChange(of: theme.selection) { _, _ in
+            store.themeName = theme.selection.storageValue
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
                 guard store.isConfigured else { return }
+                guard let last = store.lastRefresh,
+                      Date().timeIntervalSince(last) > Double(store.profile.refreshSeconds) / 2
+                else { store.startAutoRefresh(); return }
                 Task {
                     await store.refresh()
                     store.startAutoRefresh()
