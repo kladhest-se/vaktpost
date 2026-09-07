@@ -71,6 +71,7 @@ struct DyndnsView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
+            .readableWidth()
             }
             .refreshable { await store.refreshManually() }
         }
@@ -89,12 +90,12 @@ struct DyndnsView: View {
                 Text(stale > 0
                      ? "\(stale) of \(enabled) may be stale"
                      : "\(enabled) entries, all matching their interface")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(theme.label)
                 Text(stale > 0
                      ? "The cached address no longer matches the interface being watched."
                      : "pfSense records no update history, so this compares each cached address against its interface.")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
             }
         }
@@ -113,7 +114,7 @@ struct DyndnsRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(entry.host)
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(theme.label)
                         .textSelection(.enabled)
                     Spacer(minLength: 8)
@@ -126,7 +127,7 @@ struct DyndnsRow: View {
 
                 if let descr = entry.descr, !descr.isEmpty {
                     Text(descr)
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
                 }
 

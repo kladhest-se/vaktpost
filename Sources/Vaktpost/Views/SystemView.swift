@@ -32,6 +32,7 @@ struct SystemView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 28)
+            .readableWidth()
         }
         .background(theme.bg.ignoresSafeArea())
         .refreshable {
@@ -49,7 +50,7 @@ struct SystemView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text(carp.summary)
-                            .font(.system(size: 14, weight: .medium))
+                            .scaledFont(14, weight: .medium)
                             .foregroundStyle(theme.label)
                         Spacer()
                         if carp.maintenanceMode == true {
@@ -61,7 +62,7 @@ struct SystemView: View {
                         ForEach(carp.interfaces) { vip in
                             HStack {
                                 Text("\(vip.interfaceName) · vhid \(vip.vhid)")
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .scaledFont(12, design: .monospaced)
                                     .foregroundStyle(theme.labelMuted)
                                 Spacer()
                                 StatusPill(text: vip.status, health: vip.health)
@@ -73,7 +74,7 @@ struct SystemView: View {
         } else {
             Slab(rail: .idle) {
                 Text(store.errors[.carp] ?? "CARP is not configured on this firewall.")
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(theme.labelMuted)
             }
         }
@@ -91,20 +92,20 @@ struct SystemView: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Reading pf tables…")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(theme.labelMuted)
                 }
             }
         } else if let err = store.errors[.tables] {
             Slab(rail: .warn) {
                 Text(err)
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(theme.labelMuted)
             }
         } else if store.blockedHosts.isEmpty {
             Slab(rail: .ok) {
                 Text("Nothing is currently blocked.")
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .foregroundStyle(theme.labelMuted)
             }
         } else {
@@ -113,13 +114,13 @@ struct SystemView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(table.entries.prefix(25), id: \.self) { entry in
                             Text(entry)
-                                .font(.system(size: 12, design: .monospaced))
+                                .scaledFont(12, design: .monospaced)
                                 .foregroundStyle(theme.label)
                                 .textSelection(.enabled)
                         }
                         if table.entryCount > 25 {
                             Text("+\(table.entryCount - 25) more")
-                                .font(.system(size: 11))
+                                .scaledFont(11)
                                 .foregroundStyle(theme.labelFaint)
                         }
                     }
@@ -143,7 +144,7 @@ struct SystemView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(store.version?.current ?? "unknown version")
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(theme.label)
                     Spacer()
                     if store.isCheckingFirmware {
@@ -152,17 +153,17 @@ struct SystemView: View {
                         Button("Check") {
                             Task { await store.checkFirmware() }
                         }
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(13, weight: .semibold)
                         .foregroundStyle(theme.accentColor)
                     }
                 }
                 if store.version?.updateAvailable == true, let latest = store.version?.latest {
                     Text("\(latest) is available.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(theme.warn)
                 } else {
                     Text(store.firmwareCheckResult ?? "Up to date as of the last refresh.")
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
                 }
             }
@@ -175,7 +176,7 @@ struct SystemView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Check against the repository")
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(theme.label)
                     Spacer()
                     if store.isCheckingPackages {
@@ -184,7 +185,7 @@ struct SystemView: View {
                         Button("Check") {
                             Task { await store.checkPackageUpdates() }
                         }
-                        .font(.system(size: 13, weight: .semibold))
+                        .scaledFont(13, weight: .semibold)
                         .foregroundStyle(theme.accentColor)
                     }
                 }
@@ -194,7 +195,7 @@ struct SystemView: View {
                 Text(store.packageCheckResult
                      ?? store.packageCheckAge.map { "Last checked \($0)." }
                      ?? "Not checked yet. Versions here come from the configuration; checking asks the repository and takes a few seconds.")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
             }
         }
@@ -205,7 +206,7 @@ struct SystemView: View {
         if store.packages.isEmpty {
             Slab(rail: .idle) {
                 Text(store.errors[.packages] ?? "No packages installed.")
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(theme.labelMuted)
             }
         } else {
@@ -218,16 +219,16 @@ struct SystemView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(pkg.shortName)
-                                .font(.system(size: 14, weight: .semibold))
+                                .scaledFont(14, weight: .semibold)
                                 .foregroundStyle(theme.label)
                             Spacer()
                             Text(pkg.versionLine)
-                                .font(.system(size: 12, design: .monospaced))
+                                .scaledFont(12, design: .monospaced)
                                 .foregroundStyle(pkg.updateAvailable ? theme.warn : theme.labelMuted)
                         }
                         if let d = pkg.descr, !d.isEmpty {
                             Text(d)
-                                .font(.system(size: 11))
+                                .scaledFont(11)
                                 .foregroundStyle(theme.labelFaint)
                                 .lineLimit(2)
                         }
@@ -243,7 +244,7 @@ struct SystemView: View {
         if store.notices.isEmpty {
             Slab(rail: .ok) {
                 Text("No pending notices.")
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .foregroundStyle(theme.labelMuted)
             }
         } else {
@@ -253,7 +254,7 @@ struct SystemView: View {
                         NoticeText(notice: notice)
                         if let category = notice.category, !category.isEmpty {
                             Text(category)
-                                .font(.system(size: 11, design: .monospaced))
+                                .scaledFont(11, design: .monospaced)
                                 .foregroundStyle(theme.labelFaint)
                         }
                     }
@@ -269,7 +270,7 @@ struct SystemView: View {
         if store.filesystems.isEmpty {
             Slab(rail: .idle) {
                 Text(store.errors[.filesystems] ?? "No filesystem data.")
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(theme.labelMuted)
             }
         } else {
@@ -293,7 +294,7 @@ struct SystemView: View {
         if store.configHistory.isEmpty {
             Slab(rail: .idle) {
                 Text(store.errors[.configHistory] ?? "No configuration revisions returned.")
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(theme.labelMuted)
             }
         } else {
@@ -302,18 +303,18 @@ struct SystemView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(rev.displayTime)
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .scaledFont(12, weight: .semibold, design: .monospaced)
                                 .foregroundStyle(theme.label)
                             Spacer()
                             if let u = rev.username, !u.isEmpty {
                                 Text(u)
-                                    .font(.system(size: 11, design: .monospaced))
+                                    .scaledFont(11, design: .monospaced)
                                     .foregroundStyle(theme.labelFaint)
-                                    .lineLimit(1)
+                                    .lineLimit(2)
                             }
                         }
                         Text(rev.descr.isEmpty ? "(no description)" : rev.descr)
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(rev.descr.isEmpty ? theme.labelFaint : theme.labelMuted)
                     }
                 }

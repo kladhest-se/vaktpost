@@ -37,6 +37,10 @@ struct AppIconPicker: View {
     @State private var failure: String?
     @State private var isChanging = false
 
+    /// An icon iOS refused, kept until it will accept it.
+    @State private var pending: AppIcon?
+    @Environment(\.scenePhase) private var scenePhase
+
     private let columns = [GridItem(.adaptive(minimum: 62), spacing: 12)]
 
     var body: some View {
@@ -58,7 +62,7 @@ struct AppIconPicker: View {
                                                     lineWidth: 2)
                                     )
                                 Text(icon.displayName)
-                                    .font(.system(size: 10))
+                                    .scaledFont(10)
                                     .foregroundStyle(selected == icon
                                                      ? theme.label : theme.labelFaint)
                             }
@@ -67,29 +71,70 @@ struct AppIconPicker: View {
                     }
                 }
 
-                if isChanging {
+                if isSimulator {
+                    Text("The simulator cannot change app icons — the choice will apply on a device.")
+                        .scaledFont(11)
+                        .foregroundStyle(theme.labelFaint)
+                } else if let pending {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .scaledFont(11)
+                        Text("\(pending.displayName) will be applied when the app next becomes active.")
+                            .scaledFont(11)
+                    }
+                    .foregroundStyle(theme.labelMuted)
+                } else if isChanging {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
                         Text("Changing…")
-                            .font(.system(size: 11))
+                            .scaledFont(11)
                             .foregroundStyle(theme.labelFaint)
                     }
                 } else if let failure {
                     Text(failure)
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(theme.warn)
                 }
 
-                // What iOS registered, when nothing is wrong but it is worth
-                // being able to see. Only shown if the build is missing icons,
-                // which is the case a person cannot otherwise diagnose.
-                if registeredNames.count < AppIcon.allCases.count - 1 {
-                    Text("This build registered \(registeredNames.count) of \(AppIcon.allCases.count - 1) alternate icons.")
-                        .font(.system(size: 10))
+                // Shown whenever something failed, not only when icons are
+                // missing: knowing what iOS has registered is the first thing
+                // anybody debugging this needs, and hiding it in the healthy
+                // case meant its absence was itself a clue nobody could read.
+                if failure != nil {
+                    Text(registeredNames.isEmpty
+                         ? "No alternate icons are registered in this build."
+                         : "Registered: \(registeredNames.joined(separator: ", "))")
+                        .scaledFont(10, design: .monospaced)
                         .foregroundStyle(theme.labelFaint)
+                        .textSelection(.enabled)
                 }
             }
         }
+        // The moment iOS said it was not ready for. Coming back to the app is
+        // reliably `.foregroundActive`, which a tap inside a pushed screen
+        // apparently is not always.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active, let icon = pending else { return }
+            pending = nil
+            apply(icon)
+        }
+    }
+
+    /// Whether this is the simulator.
+    ///
+    /// It matters because alternate icons do not reliably work there: the
+    /// simulator has no Home Screen icon database to update, and
+    /// `setAlternateIconName` fails with `EIO` — an I/O error, which is an
+    /// honest description of writing to something that is not there.
+    ///
+    /// On a device the same call fails differently, with `EAGAIN`, and that
+    /// one is worth retrying. Two failures that look alike and are not.
+    private var isSimulator: Bool {
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        return false
+        #endif
     }
 
     /// Alternate icon names this build actually registered.
@@ -126,7 +171,7 @@ struct AppIconPicker: View {
 
         isChanging = true
         failure = nil
-        apply(icon, retryOnBusy: true)
+        apply(icon)
     }
 
     /// Sets the icon, retrying once if iOS says it is busy.
@@ -138,28 +183,80 @@ struct AppIconPicker: View {
     /// usually clears it. Deferring to the next runloop turn matters too: the
     /// call is made from inside a SwiftUI update otherwise, which is one of
     /// the states it declines from.
-    private func apply(_ icon: AppIcon, retryOnBusy: Bool) {
+    /// Sets the icon once the app is genuinely able to accept it.
+    ///
+    /// `EAGAIN` from `setAlternateIconName` means iOS declined at that moment,
+    /// and the moment that matters is the scene's state. The call is refused
+    /// unless the app is `.foregroundActive` — which it is not during a
+    /// navigation push, a sheet presentation, or while Settings is still
+    /// animating in. A tap that lands in one of those windows fails, and
+    /// retrying 0.6s later fails again if the animation is still running.
+    ///
+    /// So this waits for the app to actually be active rather than guessing at
+    /// a delay, and only then calls. If it is already active the wait is a
+    /// single runloop turn.
+    /// Sets the icon, and remembers the request if iOS refuses.
+    ///
+    /// `setAlternateIconName` returns `EAGAIN` when it will not act now. The
+    /// documented reason is that the app is not `.foregroundActive`, but that
+    /// has not been the whole story here: it kept refusing on a device where
+    /// the app was plainly in front, with all five alternates registered.
+    ///
+    /// Rather than keep guessing at delays, an unhappy attempt is *stored* and
+    /// retried when the app next becomes active. Leaving Settings and coming
+    /// back applies it. That turns a failure the person cannot do anything
+    /// about into one they can, and it costs nothing when the call works
+    /// first time.
+    private func apply(_ icon: AppIcon, attempt: Int = 0) {
         DispatchQueue.main.async {
+            guard UIApplication.shared.applicationState == .active else {
+                guard attempt < 6 else {
+                    pending = icon
+                    failure = "Waiting until the app is active — leave Settings and come back."
+                    isChanging = false
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    apply(icon, attempt: attempt + 1)
+                }
+                return
+            }
+
             UIApplication.shared.setAlternateIconName(icon.alternateName) { error in
                 Task { @MainActor in
                     guard let error else {
+                        pending = nil
                         failure = nil
                         selected = icon
                         isChanging = false
                         return
                     }
 
-                    let code = (error as NSError).code
-                    if retryOnBusy, code == Int(EAGAIN) {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                            apply(icon, retryOnBusy: false)
+                    let ns = error as NSError
+                    if ns.code == Int(EAGAIN), attempt < 6 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            apply(icon, attempt: attempt + 1)
                         }
                         return
                     }
 
-                    failure = code == Int(EAGAIN)
-                        ? "iOS was busy and would not change the icon. Try again in a moment, or from the Home Screen rather than while the app is opening."
-                        : error.localizedDescription
+                    if isSimulator {
+                        // Not worth retrying and not the person's problem.
+                        // Saying "try again in a moment" here would be a
+                        // suggestion that can never work.
+                        pending = nil
+                        failure = "The simulator cannot change app icons. This works on a device."
+                    } else if ns.code == Int(EAGAIN) {
+                        pending = icon
+                        failure = "iOS would not change it just now. Leave Settings and come back and it will be applied."
+                    } else {
+                        // Domain and code as well as the message: "the
+                        // operation couldn't be completed" is the same
+                        // sentence for a dozen different problems, and
+                        // knowing which one is the whole difficulty here.
+                        failure = "\(ns.localizedDescription) (\(ns.domain) \(ns.code))"
+                        pending = nil
+                    }
                     selected = .current
                     isChanging = false
                 }

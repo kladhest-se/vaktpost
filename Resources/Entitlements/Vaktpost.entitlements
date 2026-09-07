@@ -2,9 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>com.apple.security.application-groups</key>
-    <array>
-        <string>group.se.kladhest.vaktpost</string>
-    </array>
+    <!--
+      Empty on purpose.
+
+      The App Group here existed only so the widget could read a snapshot the
+      app wrote. With the widget gone it grants nothing, and removing it
+      removes the one thing that made a first install fail: an App Group has to
+      be registered on the developer account before Xcode will sign against it.
+    -->
 </dict>
 </plist>

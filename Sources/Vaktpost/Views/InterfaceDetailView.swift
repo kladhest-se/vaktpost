@@ -31,6 +31,7 @@ struct InterfaceDetailView: View {
                 header
                 chart
                 rates
+                history
                 counters
                 note
             }
@@ -39,6 +40,7 @@ struct InterfaceDetailView: View {
         }
         .background(theme.bg.ignoresSafeArea())
         .task { await store.monitorInterface(iface.seriesKey) }
+        .task { await store.loadRRD() }
         .navigationTitle(iface.name)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -50,18 +52,18 @@ struct InterfaceDetailView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(iface.name)
-                        .font(.system(size: 16, weight: .bold))
+                        .scaledFont(16, weight: .bold)
                         .foregroundStyle(theme.label)
                     Spacer()
                     StatusPill(text: iface.status, health: iface.health)
                 }
                 Text(iface.addressLine)
-                    .font(.system(size: 12, design: .monospaced))
+                    .scaledFont(12, design: .monospaced)
                     .foregroundStyle(theme.labelMuted)
                     .textSelection(.enabled)
                 if let media = iface.media, !media.isEmpty {
                     Text(media)
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
                 }
             }
@@ -74,7 +76,7 @@ struct InterfaceDetailView: View {
             VStack(alignment: .leading, spacing: 8) {
                 if let err = store.liveError {
                     Text(err)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(theme.warn)
                 }
 
@@ -89,7 +91,7 @@ struct InterfaceDetailView: View {
                         Text(points.isEmpty
                              ? "Waiting for the first sample…"
                              : "One sample so far — a rate needs two.")
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(theme.labelFaint)
                     }
                     .frame(height: 180)
@@ -128,14 +130,14 @@ struct InterfaceDetailView: View {
                             peak: String?, colour: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
-                .font(.system(size: 10, weight: .semibold))
+                .scaledFont(10, weight: .semibold)
                 .foregroundStyle(theme.labelFaint)
             Text(value)
-                .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                .scaledFont(20, weight: .semibold, design: .monospaced)
                 .foregroundStyle(colour)
             if let peak {
                 Text("peak \(peak)")
-                    .font(.system(size: 10, design: .monospaced))
+                    .scaledFont(10, design: .monospaced)
                     .foregroundStyle(theme.labelFaint)
             }
         }
@@ -161,9 +163,66 @@ struct InterfaceDetailView: View {
         }
     }
 
+    /// A day of history, from the firewall's own records.
+    ///
+    /// Separate from the live chart above it rather than merged: one is a day
+    /// at five-minute resolution and the other is two seconds, and drawing
+    /// them on the same axis would make the live one a vertical line.
+    @ViewBuilder
+    private var history: some View {
+        Slab(rail: .idle, title: "Last 24 hours") {
+            VStack(alignment: .leading, spacing: 8) {
+                if store.isLoadingRRD {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Reading the firewall's records…")
+                            .scaledFont(12)
+                            .foregroundStyle(theme.labelFaint)
+                    }
+                } else if let err = store.errors[.rrd] {
+                    Text(err)
+                        .scaledFont(12)
+                        .foregroundStyle(theme.warn)
+                } else if let history = store.rrdHistory, !history.available {
+                    // Said once, plainly. pfSense keeps months of this and
+                    // reading it needs a shell, which this app will not use.
+                    Text("This pfSense cannot read its own RRD files from PHP — that needs rrdtool, a shell binary. The chart above covers what the app has sampled since it opened.")
+                        .scaledFont(11)
+                        .foregroundStyle(theme.labelFaint)
+                } else if !historySeries.isEmpty {
+                    RRDChart(series: historySeries)
+                        .frame(height: 120)
+                    Text("From pfSense's own records, five-minute averages.")
+                        .scaledFont(10)
+                        .foregroundStyle(theme.labelFaint)
+                } else {
+                    Text("No recorded history for this interface.")
+                        .scaledFont(11)
+                        .foregroundStyle(theme.labelFaint)
+                }
+            }
+        }
+    }
+
+    /// The series for this interface.
+    ///
+    /// RRD files are named for pfSense's internal handle — `wan`, `opt3` — not
+    /// the label on screen, so the match goes through the same lookup
+    /// everything else uses.
+    private var historySeries: [RRDSeries] {
+        guard let history = store.rrdHistory else { return [] }
+        let candidates = [iface.internalName, iface.name.lowercased(), iface.device]
+            .compactMap { $0 }
+        for candidate in candidates {
+            let found = history.series(forFile: candidate)
+            if !found.isEmpty { return found }
+        }
+        return []
+    }
+
     private var note: some View {
         Text("Polling every 2 seconds while this screen is open. Each sample is a call the firewall answers one at a time, so this stops as soon as you go back.")
-            .font(.system(size: 11))
+            .scaledFont(11)
             .foregroundStyle(theme.labelFaint)
             .padding(.horizontal, 4)
     }
@@ -225,5 +284,44 @@ struct LiveThroughputChart: View {
             }
             .stroke(colour, style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
         }
+    }
+}
+
+/// A day of recorded traffic.
+///
+/// Two lines on a shared scale, like the live chart, so in and out stay
+/// comparable. Drawn from pfSense's own five-minute averages rather than the
+/// app's samples, which is the only way to see beyond the current session.
+struct RRDChart: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let series: [RRDSeries]
+
+    private var peak: Double {
+        max(series.flatMap(\.bitsPerSecond).max() ?? 1, 1)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                ForEach(Array(series.enumerated()), id: \.element.id) { index, one in
+                    line(one.bitsPerSecond, in: geo.size,
+                         colour: index == 0 ? theme.ok : theme.info)
+                }
+            }
+        }
+    }
+
+    private func line(_ values: [Double], in size: CGSize, colour: Color) -> some View {
+        let step = values.count > 1 ? size.width / CGFloat(values.count - 1) : size.width
+        let points = values.enumerated().map { index, value in
+            CGPoint(x: CGFloat(index) * step,
+                    y: size.height - (CGFloat(value / peak) * size.height * 0.92) - 2)
+        }
+        return Path { path in
+            guard let first = points.first else { return }
+            path.move(to: first)
+            for point in points.dropFirst() { path.addLine(to: point) }
+        }
+        .stroke(colour, style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
     }
 }

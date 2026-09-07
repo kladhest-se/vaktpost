@@ -140,8 +140,15 @@ actor XMLRPCClient {
     /// row — named "data" — and a gateway list showing a single entry with no
     /// status. It read as a firewall with one broken gateway rather than as a
     /// parsing bug, which is the worst way for this to fail.
-    func runList(_ snippet: PHPSnippet) async throws -> [JSONDict] {
-        let value = try await run(snippet)
+    /// The same unwrapping `runList` does, for a value that arrived inside a
+    /// batch rather than as its own response.
+    ///
+    /// Factored out rather than duplicated: the `data` envelope, the bare
+    /// list, and the keyed-object-folded-to-rows cases all have to behave
+    /// identically whether a section came alone or grouped, or the batch would
+    /// silently change what several screens show.
+    static func rows(from value: JSONValue?) -> [JSONDict] {
+        guard let value else { return [] }
         if let array = value.arrayValue { return array.compactMap { JSONDict($0) } }
         guard let dict = JSONDict(value) else { return [] }
 
@@ -151,6 +158,11 @@ actor XMLRPCClient {
             return []
         }
         return Self.fold(dict.raw)
+    }
+
+    func runList(_ snippet: PHPSnippet) async throws -> [JSONDict] {
+        let value = try await run(snippet)
+        return Self.rows(from: value)
     }
 
     /// Turns a keyed object into rows, keeping the key.

@@ -13,7 +13,30 @@ struct FirewallView: View {
     @State private var query = ""
     @State private var interfaceFilter: String?
 
+    @State private var selection: String?
+
     var body: some View {
+        MasterDetail(
+            selection: $selection,
+            emptyMessage: "Choose a rule or a port forward to see what it matches.",
+            list: { listColumn },
+            detail: { id in
+                // Looked up by id in both collections. Rules and forwards
+                // share one selection because only one can be showing, and
+                // the ids cannot collide: a rule's is its tracker.
+                if let rule = store.rules.first(where: { $0.id == id }) {
+                    RuleDetailView(rule: rule)
+                } else if let pf = store.portForwards.first(where: { $0.id == id }) {
+                    PortForwardDetailView(forward: pf)
+                } else {
+                    Notice(symbol: "questionmark.circle",
+                           title: "That rule is no longer in the list")
+                }
+            }
+        )
+    }
+
+    private var listColumn: some View {
         VStack(spacing: 0) {
             Picker("", selection: $pane) {
                 ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
@@ -64,15 +87,35 @@ struct FirewallView: View {
     /// The interfaces that have rules, labelled the way the firewall labels
     /// them. Rules reference pfSense's internal handle — "lan", "opt7" — which
     /// is not what anybody calls the VLAN.
+    /// One chip per interface, not one per combination.
+    ///
+    /// A floating rule names every interface it applies to, so the raw values
+    /// produced chips like "OPENVPN1, OPENVPN2 +11" — a filter for a set
+    /// nobody thinks in. Splitting them means OPENVPN1 is a chip, and choosing
+    /// it shows every rule that applies to OPENVPN1 including the floating
+    /// ones.
     private var interfaceOptions: [String] {
-        Array(Set(store.rules.map(\.interfaceName))).sorted {
+        var seen = Set<String>()
+        for rule in store.rules {
+            for part in rule.interfaceName.split(separator: ",") {
+                seen.insert(part.trimmingCharacters(in: .whitespaces))
+            }
+        }
+        return seen.sorted {
             (store.interfaceLabel(for: $0) ?? $0) < (store.interfaceLabel(for: $1) ?? $1)
         }
     }
 
     private var filteredRules: [FirewallRule] {
         var list = store.rules
-        if let iface = interfaceFilter { list = list.filter { $0.interfaceName == iface } }
+        if let iface = interfaceFilter {
+            // Contains, not equals: a floating rule applying to thirteen
+            // interfaces belongs under each of them.
+            list = list.filter { rule in
+                rule.interfaceName.split(separator: ",")
+                    .contains { $0.trimmingCharacters(in: .whitespaces) == iface }
+            }
+        }
         guard !query.isEmpty else { return list }
         let q = query.lowercased()
         return list.filter {
@@ -91,7 +134,10 @@ struct FirewallView: View {
             Notice(symbol: "shield.slash", title: query.isEmpty ? "No rules returned" : "No matches")
         } else {
             countLine("\(filteredRules.count) of \(store.rules.count) rules")
-            ForEach(filteredRules) { RuleRow(rule: $0) }
+            ForEach(filteredRules) { rule in
+                Button { selection = rule.id } label: { RuleRow(rule: rule) }
+                    .buttonStyle(.plain)
+            }
         }
     }
 
@@ -116,32 +162,67 @@ struct FirewallView: View {
         } else {
             countLine("\(filteredForwards.count) port forwards")
             ForEach(filteredForwards) { pf in
-                NavigationLink {
-                    PortForwardDetailView(forward: pf)
-                } label: {
+                Button { selection = pf.id } label: {
                     Slab(rail: pf.health, trailing: store.interfaceLabel(for: pf.interfaceName)) {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 8) {
                                 Text((pf.proto ?? "any").uppercased())
-                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .scaledFont(10, weight: .semibold, design: .monospaced)
                                     .foregroundStyle(theme.labelFaint)
                                 if pf.disabled { StatusPill(text: "disabled", health: .idle) }
                                 Spacer(minLength: 0)
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .scaledFont(10, weight: .semibold)
                                     .foregroundStyle(theme.labelFaint)
                             }
-                            Text(pf.descr.isEmpty
-                                 ? "\(pf.destinationSide.address) → \(pf.target)"
-                                 : pf.descr)
-                                .font(.system(size: 13))
-                                .foregroundStyle(pf.descr.isEmpty ? theme.labelMuted : theme.label)
-                                .lineLimit(1)
+                            // Same shape as a rule, because they are read the
+                            // same way — the only difference is that a forward
+                            // has somewhere it sends the traffic on to.
+                            natField("TO", store.resolvedValue(pf.destinationSide.address))
+                            natField("SENDS", store.resolvedValue(pf.target))
+                            if let port = natPorts(pf) { natField("PORT", port) }
+                            if !pf.descr.isEmpty {
+                                natField("DESC", pf.descr, mono: false)
+                            }
                         }
                     }
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
+
+    /// The port it arrives on, and the port it is sent to when they differ.
+    private func natPorts(_ pf: PortForward) -> String? {
+        let arriving = pf.destinationSide.port.map { store.resolvedValue($0) }
+        let local = pf.localPort.map { store.resolvedValue($0) }
+        switch (arriving, local) {
+        case let (a?, l?) where a != l: return "\(a) → \(l)"
+        case let (a?, _): return a
+        case let (nil, l?): return l
+        default: return nil
+        }
+    }
+
+    private func natField(_ label: String, _ value: String, mono: Bool = true) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .scaledFont(9, weight: .semibold)
+                .foregroundStyle(theme.labelFaint)
+                .frame(width: 44, alignment: .leading)
+            // One line, truncated.
+            //
+            // A rule whose source expands to twenty networks was four lines
+            // tall in a list of ninety-eight, and the list exists to be
+            // scanned. The full value is on the detail screen, which has room
+            // for it.
+            Text(value)
+                .scaledFont(12, weight: mono ? .medium : .regular,
+                            design: mono ? .monospaced : .default)
+                .foregroundStyle(mono ? theme.label : theme.labelMuted)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
         }
     }
 
@@ -152,7 +233,7 @@ struct FirewallView: View {
     private func countLine(_ text: String) -> some View {
         HStack {
             Text(text)
-                .font(.system(size: 12, design: .monospaced))
+                .scaledFont(12, design: .monospaced)
                 .foregroundStyle(theme.labelFaint)
             Spacer()
         }
@@ -161,7 +242,7 @@ struct FirewallView: View {
     private func chip(_ text: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(text)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .scaledFont(12, weight: .medium, design: .monospaced)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(selected ? theme.accentColor : theme.card)
@@ -178,57 +259,93 @@ struct FirewallView: View {
 /// tracker, the IP protocol, whether it logs, the full alias contents — is on
 /// the detail screen. Ninety-eight rules at five lines each is a list nobody
 /// scrolls; at two lines it is a list you can scan.
+/// One rule, as a row.
+///
+/// Enough to judge a rule without opening it: what it does, on what interface,
+/// over what protocol, from where to where and on which port. The kinds are
+/// marked — host, network, alias, interface — because four rules that look
+/// alike in a list can be doing very different things, and pfSense does not
+/// say which is which anywhere you can see it.
+///
+/// The tracker, IP version and logging flag stay on the detail screen. They
+/// matter when you are working on a rule, not when you are looking for one.
+/// One rule, as a row.
+///
+/// Four labelled lines in a fixed order — FROM, TO, PORT, WHY — so a column of
+/// rules can be read down rather than across. The port is its own row because
+/// it belongs to neither side visually and squeezing it onto the right of one
+/// of them made both wrap.
+///
+/// Addresses, never alias names: what a rule permits is the addresses. The
+/// kind marker went too — with the names gone it was labelling an address as
+/// "alias", which describes where the value came from rather than what it is.
 struct RuleRow: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var store: DashboardStore
     let rule: FirewallRule
 
     var body: some View {
-        NavigationLink {
-            RuleDetailView(rule: rule)
-        } label: {
-            Slab(rail: rule.health, trailing: store.interfaceLabel(for: rule.interfaceName)) {
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 8) {
-                        StatusPill(text: rule.type.uppercased(), health: rule.health)
-                        Text(rule.protoLabel)
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(theme.labelFaint)
-                        if rule.disabled {
-                            StatusPill(text: "disabled", health: .idle)
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(theme.labelFaint)
-                    }
+        Slab(rail: rule.health, trailing: store.interfaceLabel(for: rule.interfaceName)) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    StatusPill(text: rule.type.uppercased(), health: rule.health)
+                    Text(rule.protoLabel)
+                        .scaledFont(10, weight: .semibold, design: .monospaced)
+                        .foregroundStyle(theme.labelFaint)
+                    if rule.disabled { StatusPill(text: "disabled", health: .idle) }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .scaledFont(10, weight: .semibold)
+                        .foregroundStyle(theme.labelFaint)
+                }
 
-                    // The description if there is one, because that is what
-                    // the person who wrote the rule meant it to say. Only when
-                    // there is not does the row fall back to addresses.
-                    if !rule.descr.isEmpty {
-                        Text(rule.descr)
-                            .font(.system(size: 13))
-                            .foregroundStyle(theme.label)
-                            .lineLimit(1)
-                    } else {
-                        Text(summary)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(theme.label)
-                            .lineLimit(1)
-                    }
+                field("FROM", store.resolvedValue(rule.sourceSide.address))
+                field("TO", store.resolvedValue(rule.destinationSide.address))
+
+                if let port = ports {
+                    field("PORT", port)
+                }
+                if !rule.descr.isEmpty {
+                    field("DESC", rule.descr, mono: false)
                 }
             }
         }
-        .buttonStyle(.plain)
     }
 
-    /// A one-line form for rules with no description. Alias names rather than
-    /// their contents: a resolved list wraps, and this line must not.
-    private var summary: String {
-        let to = rule.destinationSide.port.map { "\(rule.destinationSide.address):\($0)" }
-            ?? rule.destinationSide.address
-        return "\(rule.sourceSide.address) → \(to)"
+    /// Both ports, if either is set. A source port is rare enough that
+    /// labelling it separately in a list would waste a row on every rule that
+    /// does not have one.
+    private var ports: String? {
+        let source = rule.sourceSide.port.map { store.resolvedValue($0) }
+        let destination = rule.destinationSide.port.map { store.resolvedValue($0) }
+        switch (source, destination) {
+        case let (s?, d?): return "\(s) → \(d)"
+        case let (nil, d?): return d
+        case let (s?, nil): return "from \(s)"
+        default: return nil
+        }
+    }
+
+    private func field(_ label: String, _ value: String, mono: Bool = true) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .scaledFont(9, weight: .semibold)
+                .foregroundStyle(theme.labelFaint)
+                .frame(width: 38, alignment: .leading)
+            // One line, truncated.
+            //
+            // A rule whose source expands to twenty networks was four lines
+            // tall in a list of ninety-eight, and the list exists to be
+            // scanned. The full value is on the detail screen, which has room
+            // for it.
+            Text(value)
+                .scaledFont(12, weight: mono ? .medium : .regular,
+                            design: mono ? .monospaced : .default)
+                .foregroundStyle(mono ? theme.label : theme.labelMuted)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
     }
 }
 
@@ -238,6 +355,14 @@ struct RuleDetailView: View {
     @EnvironmentObject private var store: DashboardStore
     let rule: FirewallRule
 
+    /// Every address or port behind a value, one per line.
+    ///
+    /// Uncapped, unlike the list: this is the screen you open precisely to see
+    /// all twenty-two of them.
+    private func expandedValues(_ value: String) -> [String] {
+        store.resolveAlias(value) ?? [value]
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -246,14 +371,14 @@ struct RuleDetailView: View {
                         HStack(spacing: 8) {
                             StatusPill(text: rule.type.uppercased(), health: rule.health)
                             Text(rule.protoLabel)
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .scaledFont(11, weight: .semibold, design: .monospaced)
                                 .foregroundStyle(theme.labelMuted)
                             Spacer()
                             if rule.disabled { StatusPill(text: "disabled", health: .idle) }
                         }
                         if !rule.descr.isEmpty {
                             Text(rule.descr)
-                                .font(.system(size: 14))
+                                .scaledFont(14)
                                 .foregroundStyle(theme.label)
                         }
                     }
@@ -309,16 +434,17 @@ struct RuleDetailView: View {
     private func detailField(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label.uppercased())
-                .font(.system(size: 9, weight: .semibold))
+                .scaledFont(9, weight: .semibold)
                 .foregroundStyle(theme.labelFaint)
-            Text(value)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .foregroundStyle(theme.label)
-                .textSelection(.enabled)
-            if let members = store.resolveAlias(value), !members.isEmpty {
-                Text(members.joined(separator: ", "))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(theme.labelMuted)
+            // One address per line.
+            //
+            // A wrapped run of comma-separated networks breaks mid-address, so
+            // `198.51.100.0/22` can end one line and start the next. A list
+            // reads as a list, and each entry stays whole and selectable.
+            ForEach(expandedValues(value), id: \.self) { entry in
+                Text(entry)
+                    .scaledFont(13, weight: .medium, design: .monospaced)
+                    .foregroundStyle(theme.label)
                     .textSelection(.enabled)
             }
         }
@@ -339,14 +465,14 @@ struct PortForwardDetailView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text((forward.proto ?? "any").uppercased())
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .scaledFont(11, weight: .semibold, design: .monospaced)
                                 .foregroundStyle(theme.labelMuted)
                             Spacer()
                             if forward.disabled { StatusPill(text: "disabled", health: .idle) }
                         }
                         if !forward.descr.isEmpty {
                             Text(forward.descr)
-                                .font(.system(size: 14))
+                                .scaledFont(14)
                                 .foregroundStyle(theme.label)
                         }
                     }
@@ -385,20 +511,28 @@ struct PortForwardDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    /// Every address or port behind a value, one per line. Same as the rule
+    /// screen's; both types need it and neither owns the other.
+    private func expandedValues(_ value: String) -> [String] {
+        store.resolveAlias(value) ?? [value]
+    }
+
     @ViewBuilder
     private func aliasField(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label.uppercased())
-                .font(.system(size: 9, weight: .semibold))
+                .scaledFont(9, weight: .semibold)
                 .foregroundStyle(theme.labelFaint)
-            Text(value)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
-                .foregroundStyle(theme.label)
-                .textSelection(.enabled)
-            if let members = store.resolveAlias(value), !members.isEmpty {
-                Text(members.joined(separator: ", "))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(theme.labelMuted)
+            // One address per line.
+            //
+            // A wrapped run of comma-separated networks breaks mid-address, so
+            // `198.51.100.0/22` can end one line and start the next. A list
+            // reads as a list, and each entry stays whole and selectable.
+            ForEach(expandedValues(value), id: \.self) { entry in
+                Text(entry)
+                    .scaledFont(13, weight: .medium, design: .monospaced)
+                    .foregroundStyle(theme.label)
+                    .textSelection(.enabled)
             }
         }
     }

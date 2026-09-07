@@ -63,6 +63,7 @@ struct VPNView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, available.count > 1 ? 0 : 12)
                 .padding(.bottom, 28)
+            .readableWidth()
             }
             .refreshable { await store.refreshManually() }
         }
@@ -109,7 +110,7 @@ struct VPNView: View {
 struct OpenVPNCard: View {
     @EnvironmentObject private var theme: ThemeManager
     let server: OpenVPNServerStatus
-    let vpnThroughput: ThroughputTrackerV2?
+    @ObservedObject var vpnThroughput: ThroughputTrackerV2
 
     var body: some View {
         NavigationLink {
@@ -119,7 +120,7 @@ struct OpenVPNCard: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(server.name)
-                            .font(.system(size: 15, weight: .semibold))
+                            .scaledFont(15, weight: .semibold)
                             .foregroundStyle(theme.label)
                         Spacer(minLength: 8)
                         StatusPill(text: server.statusLabel, health: server.health)
@@ -129,11 +130,11 @@ struct OpenVPNCard: View {
                             Text(server.connections.count == 1
                                  ? "1 client connected"
                                  : "\(server.connections.count) clients connected")
-                                .font(.system(size: 12))
+                                .scaledFont(12)
                                 .foregroundStyle(theme.labelMuted)
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .semibold))
+                                .scaledFont(11, weight: .semibold)
                                 .foregroundStyle(theme.labelFaint)
                         }
                     }
@@ -148,7 +149,7 @@ struct OpenVPNCard: View {
 struct OpenVPNDetailView: View {
     @EnvironmentObject private var theme: ThemeManager
     let server: OpenVPNServerStatus
-    let vpnThroughput: ThroughputTrackerV2?
+    @ObservedObject var vpnThroughput: ThroughputTrackerV2
 
     var body: some View {
         ScrollView {
@@ -157,7 +158,7 @@ struct OpenVPNDetailView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text(server.name)
-                                .font(.system(size: 15, weight: .semibold))
+                                .scaledFont(15, weight: .semibold)
                                 .foregroundStyle(theme.label)
                             Spacer()
                             StatusPill(text: server.statusLabel, health: server.health)
@@ -177,25 +178,25 @@ struct OpenVPNDetailView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
                                     Text(conn.commonName)
-                                        .font(.system(size: 14, weight: .semibold))
+                                        .scaledFont(14, weight: .semibold)
                                         .foregroundStyle(theme.label)
                                     Spacer()
                                     Text(conn.virtualAddress ?? "")
-                                        .font(.system(size: 12, design: .monospaced))
+                                        .scaledFont(12, design: .monospaced)
                                         .foregroundStyle(theme.labelMuted)
                                 }
                                 Text(conn.remoteHost)
-                                    .font(.system(size: 11, design: .monospaced))
+                                    .scaledFont(11, design: .monospaced)
                                     .foregroundStyle(theme.labelFaint)
                                     .textSelection(.enabled)
                                 if let rx = conn.bytesReceived, let tx = conn.bytesSent {
                                     Text("↓\(Fmt.bytes(rx))  ↑\(Fmt.bytes(tx))")
-                                        .font(.system(size: 11, design: .monospaced))
+                                        .scaledFont(11, design: .monospaced)
                                         .foregroundStyle(theme.labelFaint)
                                 }
                                 if let seen = server.lastSeen(for: conn.commonName), !seen.isEmpty {
                                     Text("route since \(seen)")
-                                        .font(.system(size: 10, design: .monospaced))
+                                        .scaledFont(10, design: .monospaced)
                                         .foregroundStyle(theme.labelFaint)
                                 }
                             }
@@ -222,7 +223,7 @@ struct IPsecCard: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(sa.connectionName)
-                        .font(.system(size: 15, weight: .semibold))
+                        .scaledFont(15, weight: .semibold)
                         .foregroundStyle(theme.label)
                     Spacer()
                     StatusPill(text: sa.state, health: sa.health)
@@ -244,7 +245,7 @@ struct WireGuardCard: View {
     @EnvironmentObject private var theme: ThemeManager
     let tunnel: WireGuardTunnel
     let peers: [WireGuardPeer]
-    let vpnThroughput: ThroughputTrackerV2?
+    @ObservedObject var vpnThroughput: ThroughputTrackerV2
 
     private var connected: Int {
         peers.filter { $0.health == .ok }.count
@@ -258,13 +259,13 @@ struct WireGuardCard: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text(tunnel.descr.flatMap { $0.isEmpty ? nil : $0 } ?? tunnel.name)
-                            .font(.system(size: 15, weight: .semibold))
+                            .scaledFont(15, weight: .semibold)
                             .foregroundStyle(theme.label)
                         Spacer()
                         StatusPill(text: tunnel.statusLabel, health: tunnel.health)
                     }
                     Text(tunnel.name)
-                        .font(.system(size: 11, design: .monospaced))
+                        .scaledFont(11, design: .monospaced)
                         .foregroundStyle(theme.labelFaint)
 
                     HStack {
@@ -273,12 +274,12 @@ struct WireGuardCard: View {
                         // from one with three peers all up, and a bare count
                         // cannot tell them apart.
                         Text(peerSummary)
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(theme.labelMuted)
                         Spacer()
                         if !peers.isEmpty {
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 11, weight: .semibold))
+                                .scaledFont(11, weight: .semibold)
                                 .foregroundStyle(theme.labelFaint)
                         }
                     }
@@ -309,7 +310,7 @@ struct WireGuardDetailView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(tunnel.name)
-                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                                .scaledFont(14, weight: .semibold, design: .monospaced)
                                 .foregroundStyle(theme.label)
                             Spacer()
                             StatusPill(text: tunnel.statusLabel, health: tunnel.health)
@@ -329,31 +330,31 @@ struct WireGuardDetailView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
                                     Text(peer.descr?.isEmpty == false ? peer.descr! : peer.shortKey)
-                                        .font(.system(size: 14, weight: .semibold))
+                                        .scaledFont(14, weight: .semibold)
                                         .foregroundStyle(theme.label)
                                     Spacer()
                                     StatusPill(text: peer.statusLabel, health: peer.health)
                                 }
                                 if let endpoint = peer.endpoint, !endpoint.isEmpty {
                                     Text(endpoint)
-                                        .font(.system(size: 11, design: .monospaced))
+                                        .scaledFont(11, design: .monospaced)
                                         .foregroundStyle(theme.labelFaint)
                                         .textSelection(.enabled)
                                 }
                                 ForEach(peer.allowedIPs, id: \.self) { allowed in
                                     Text(allowed)
-                                        .font(.system(size: 11, design: .monospaced))
+                                        .scaledFont(11, design: .monospaced)
                                         .foregroundStyle(theme.labelFaint)
                                 }
                                 HStack {
                                     if let rx = peer.bytesReceived, let tx = peer.bytesSent {
                                         Text("↓\(Fmt.bytes(rx))  ↑\(Fmt.bytes(tx))")
-                                            .font(.system(size: 11, design: .monospaced))
+                                            .scaledFont(11, design: .monospaced)
                                             .foregroundStyle(theme.labelFaint)
                                     }
                                     Spacer()
                                     Text(peer.handshakeDescription)
-                                        .font(.system(size: 11, design: .monospaced))
+                                        .scaledFont(11, design: .monospaced)
                                         .foregroundStyle(theme.labelFaint)
                                 }
                             }

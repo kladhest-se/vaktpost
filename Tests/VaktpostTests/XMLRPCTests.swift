@@ -233,3 +233,143 @@ final class FaultBackoffTests: XCTestCase {
         XCTAssertFalse(backoff.isAbandoned("hostOverrides"))
     }
 }
+
+/// The grouped calls, which replaced twenty-two round trips with five.
+final class BatchTests: XCTestCase {
+
+    private let groups: [(PHPSnippet, [String])] = [
+        (.batchCore, ["telemetry", "firmware", "interfaces", "gateways", "services"]),
+        (.batchClients, ["arp_table", "dhcp_leases", "static_mappings",
+                         "host_overrides", "firewall_aliases"]),
+        (.batchVpn, ["openvpn_servers", "openvpn_clients", "ipsec_sas", "wireguard"]),
+        (.batchSystem, ["notices", "certificates", "dyndns", "packages", "carp"]),
+    ]
+
+    func testEveryGroupCapturesEachSection() {
+        // A body that runs but whose result is never captured would leave a
+        // silently empty screen, which is the failure mode this change could
+        // most easily introduce.
+        for (snippet, sections) in groups {
+            for section in sections {
+                XCTAssertTrue(snippet.body.contains("$vaktpost_batch[\"\(section)\"] = $toreturn;"),
+                              "\(snippet.name) does not capture \(section)")
+            }
+        }
+    }
+
+    func testNoBodyTouchesTheAccumulator() {
+        // The bug this exists for: the accumulator was called `$sections`,
+        // which `host_overrides` uses for a local and resets halfway through.
+        // Three sections were discarded, the call returned success, and
+        // Clients and the ARP table were empty with nothing reported anywhere
+        // — an empty network and a broken fetch look identical.
+        //
+        // Any body assigning the accumulator name would do it again, so no
+        // snippet may mention it except the batches themselves.
+        for snippet in PHPSnippet.all where !snippet.name.hasPrefix("batch_") {
+            XCTAssertFalse(snippet.body.contains("$vaktpost_batch"),
+                           "\(snippet.name) uses the batch accumulator's name")
+        }
+    }
+
+    func testEachSectionIsCapturedBeforeTheNextBodyRuns() {
+        // Capture lines must come after their own body and before the next.
+        // A capture in the wrong place stores the previous section's result
+        // under this section's name, which decodes cleanly and is wrong.
+        for (snippet, sections) in groups {
+            var searchedTo = snippet.body.startIndex
+            for section in sections {
+                guard let range = snippet.body.range(
+                    of: "$vaktpost_batch[\"\(section)\"] = $toreturn;",
+                    range: searchedTo..<snippet.body.endIndex
+                ) else {
+                    XCTFail("\(snippet.name) never captures \(section)")
+                    break
+                }
+                searchedTo = range.upperBound
+            }
+        }
+    }
+
+    func testGroupsReturnThroughTheSameWrapper() {
+        for (snippet, _) in groups {
+            XCTAssertTrue(snippet.body.contains("$toreturn = [\"sections\" => $vaktpost_batch];"))
+        }
+    }
+
+    func testNoSectionIsInTwoGroups() {
+        // Two groups fetching the same thing would put the round trips back.
+        var seen = Set<String>()
+        for (_, sections) in groups {
+            for section in sections {
+                XCTAssertTrue(seen.insert(section).inserted, "\(section) is in two groups")
+            }
+        }
+    }
+
+    func testBatchesUnwrapExactlyLikeASoloResponse() throws {
+        // The three shapes the snippets return: a `data` envelope, a bare
+        // list, and a keyed object folded into rows. All three have to behave
+        // identically whether a section arrived alone or in a group, or the
+        // batching silently changes what screens show.
+        func value(_ json: String) throws -> JSONValue {
+            try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
+        }
+
+        let enveloped = try value(#"{"data": [{"name": "a"}, {"name": "b"}]}"#)
+        XCTAssertEqual(XMLRPCClient.rows(from: enveloped).count, 2)
+
+        let bare = try value(#"[{"name": "a"}]"#)
+        XCTAssertEqual(XMLRPCClient.rows(from: bare).count, 1)
+
+        let keyed = try value(#"{"WAN_DHCP": {"status": "online"}}"#)
+        let folded = XMLRPCClient.rows(from: keyed)
+        XCTAssertEqual(folded.count, 1)
+        XCTAssertEqual(folded.first?.string("name"), "WAN_DHCP")
+    }
+
+    func testAGroupIsStillReadOnly() {
+        // The bodies were copied from snippets that pass the read-only rules,
+        // but a copy is a new opportunity to get it wrong.
+        for (snippet, _) in groups {
+            for forbidden in ["exec(", "mwexec", "shell_exec", "file_put_contents",
+                              "unlink(", "write_config"] {
+                XCTAssertFalse(snippet.script.contains(forbidden),
+                               "\(snippet.name) contains \(forbidden)")
+            }
+        }
+    }
+}
+
+extension BatchTests {
+
+    func testEachGroupContainsItsSnippetsVerbatim() {
+        // The batches were generated from the individual snippets, which means
+        // there are now two copies of every body. This is the invariant that
+        // stops them drifting: fixing a field name in one and not the other
+        // would leave a screen quietly reading the wrong key, and the
+        // individual snippets are still what check-snippets.sh exercises when
+        // debugging a section against a live firewall.
+        let members: [(PHPSnippet, [PHPSnippet])] = [
+            (.batchCore, [.telemetry, .firmware, .interfaces, .gateways, .services]),
+            (.batchClients, [.arpTable, .dhcpLeases, .staticMappings,
+                             .hostOverrides, .firewallAliases]),
+            (.batchVpn, [.openvpnServers, .openvpnClients, .ipsecSAs, .wireguard]),
+            (.batchSystem, [.notices, .certificates, .dyndns, .packages, .carp]),
+        ]
+
+        for (batch, parts) in members {
+            for part in parts {
+                // Bodies, not scripts. Every snippet is wrapped in `ini_set`,
+                // the lock release and a `json_encode` tail; a batch has one
+                // wrapper rather than five, so comparing scripts compares the
+                // wrapper too and can never match.
+                let body = part.body.trimmingCharacters(in: .whitespacesAndNewlines)
+                XCTAssertTrue(
+                    batch.body.contains(body),
+                    "\(batch.name) has drifted from \(part.name)"
+                )
+            }
+        }
+    }
+}

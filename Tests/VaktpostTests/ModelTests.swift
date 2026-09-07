@@ -272,3 +272,107 @@ extension AlertSignatureTests {
         XCTAssertEqual(backup.signature, same.signature)
     }
 }
+
+/// Dynamic Type, checked at the source rather than by rendering.
+///
+/// A snapshot test would be better and needs a rendering harness this project
+/// does not have. This at least catches the reintroduction of a fixed font,
+/// which is how all 246 of them got there: one at a time, each looking
+/// reasonable on its own.
+final class DynamicTypeTests: XCTestCase {
+
+    private var sourceFiles: [URL] {
+        // #filePath is inside Tests/VaktpostTests, so Sources is two up.
+        let here = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sources = here.appendingPathComponent("Sources")
+        let all = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)
+        return (all?.allObjects as? [URL] ?? []).filter { $0.pathExtension == "swift" }
+    }
+
+    func testNoViewUsesAFixedFontSize() throws {
+        var offenders: [String] = []
+        for url in sourceFiles {
+            // The modifier itself is the one place allowed to call it.
+            if url.lastPathComponent == "ScaledFont.swift" { continue }
+            let text = try String(contentsOf: url, encoding: .utf8)
+            for (n, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()
+            where line.contains(".font(.system(size:") {
+                offenders.append("\(url.lastPathComponent):\(n + 1)")
+            }
+        }
+        XCTAssertTrue(offenders.isEmpty,
+                      "fixed font sizes: \(offenders.joined(separator: ", "))")
+    }
+
+    func testTheSourceFilesWereActuallyFound() {
+        // Without this the test above passes when the path is wrong, which is
+        // the failure mode of every test that scans a directory.
+        XCTAssertGreaterThan(sourceFiles.count, 20)
+    }
+}
+
+/// Filter log parsing, checked against lines from a live firewall.
+final class FilterLogFieldTests: XCTestCase {
+
+    private func line(_ text: String) -> LogLine {
+        LogLine(text: text, kind: .firewall)
+    }
+
+    func testATCPPassParsesEveryField() throws {
+        let f = try XCTUnwrap(line(
+            "Sep  7 13:28:22 fw filterlog[48170]: 0,321,,1788391996,tun_wg0,match,pass,in,4,0x0,,64,0,0,DF,6,tcp,64,10.253.21.10,192.168.200.1,50181,443,0,SEC,2244295301,,65535,,mss;nop"
+        ).filterFields)
+        XCTAssertEqual(f.action, "pass")
+        XCTAssertEqual(f.direction, "in")
+        XCTAssertEqual(f.interfaceName, "tun_wg0")
+        // The name, not the number: index 15 is "6" and index 16 is "tcp".
+        // Taking the number gave a protocol column reading "6", which is
+        // correct and useless.
+        XCTAssertEqual(f.proto, "tcp")
+        XCTAssertEqual(f.source, "10.253.21.10")
+        XCTAssertEqual(f.destination, "192.168.200.1")
+        XCTAssertEqual(f.sourcePort, "50181")
+        XCTAssertEqual(f.destinationPort, "443")
+        XCTAssertEqual(f.tracker, "1788391996")
+    }
+
+    func testAUDPBlockParses() throws {
+        let f = try XCTUnwrap(line(
+            "Sep  7 13:41:16 fw filterlog[48170]: 4294967295,,,0,tun_wg0,match,block,in,4,0x0,,64,42252,1400,none,17,udp,80,10.253.21.10,203.0.113.9,51820,51820"
+        ).filterFields)
+        XCTAssertEqual(f.action, "block")
+        XCTAssertEqual(f.proto, "udp")
+        XCTAssertEqual(f.destination, "203.0.113.9")
+        // UDP carries no TCP flags, and inventing one would be worse than
+        // leaving the row out.
+        XCTAssertNil(f.tcpFlags)
+    }
+
+    func testIPv6UsesItsOwnOffsets() throws {
+        // v4 carries tos, ecn, ttl, id, offset and flags before the protocol;
+        // v6 carries class, flow label and hop limit. Reading v6 at the v4
+        // offsets produced a protocol of "64", which is the hop limit.
+        let f = try XCTUnwrap(line(
+            "Sep  7 10:00:00 fw filterlog[100]: 0,,,1000,lan,match,block,in,6,0x00,0x00000,64,58,ipv6-icmp,72,fe80::1,ff02::1,,"
+        ).filterFields)
+        XCTAssertEqual(f.ipVersion, "6")
+        XCTAssertEqual(f.proto, "ipv6-icmp")
+        XCTAssertEqual(f.source, "fe80::1")
+        XCTAssertEqual(f.destination, "ff02::1")
+    }
+
+    func testATruncatedLineReturnsNilRatherThanNonsense() {
+        XCTAssertNil(line("Sep  7 10:00:00 fw filterlog[100]: 0,,,1,lan").filterFields)
+    }
+
+    func testANonFilterLineIsNotParsed() {
+        // A DHCP or system line has no CSV, and pretending otherwise would
+        // fill a detail screen with fields taken from a sentence.
+        let dhcp = LogLine(text: "Sep  7 17:13:12 fw kea-dhcp4[77435]: INFO lease allocated",
+                           kind: .dhcp)
+        XCTAssertNil(dhcp.filterFields)
+    }
+}

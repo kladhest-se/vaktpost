@@ -4,30 +4,14 @@ struct NetworkView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var store: DashboardStore
 
-    enum Pane: String, CaseIterable, Identifiable {
-        case interfaces = "Interfaces"
-        case arp = "ARP"
-        var id: String { rawValue }
-    }
-
-    @State private var pane: Pane = .interfaces
     @State private var query = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $pane) {
-                ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    switch pane {
-                    case .interfaces: interfacesPane
-                    case .arp: arpPane
-                    }
+                    interfacesPane
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
@@ -35,7 +19,7 @@ struct NetworkView: View {
             .refreshable { await store.refreshManually() }
         }
         .background(theme.bg.ignoresSafeArea())
-        .searchable(text: $query, prompt: pane == .interfaces ? "Filter interfaces" : "Filter by IP, MAC or host")
+        .searchable(text: $query, prompt: "Filter interfaces")
         .navigationTitle("Network")
     }
 
@@ -62,7 +46,7 @@ struct NetworkView: View {
         } else {
             HStack {
                 Text("\(store.interfacesUp) of \(store.interfaces.count) up")
-                    .font(.system(size: 12, design: .monospaced))
+                    .scaledFont(12, design: .monospaced)
                     .foregroundStyle(theme.labelFaint)
                 Spacer()
             }
@@ -91,76 +75,21 @@ struct NetworkView: View {
         }
     }
 
-    // MARK: ARP
 
-    private var filteredARP: [ARPEntry] {
-        guard !query.isEmpty else { return store.arp }
-        let q = query.lowercased()
-        return store.arp.filter {
-            $0.ip.contains(q) || $0.mac.contains(q) || ($0.hostname ?? "").lowercased().contains(q)
-        }
-    }
-
-    @ViewBuilder
-    private var arpPane: some View {
-        if let err = store.errors[.arp] {
-            Notice(symbol: "exclamationmark.triangle", title: "ARP table unavailable",
-                   detail: err, health: .warn)
-        } else if filteredARP.isEmpty {
-            Notice(symbol: "tablecells", title: query.isEmpty ? "ARP table empty" : "No matches")
-        } else {
-            HStack {
-                Text("\(filteredARP.count) entries")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(theme.labelFaint)
-                Spacer()
-            }
-            ForEach(filteredARP) { entry in
-                Slab(rail: .info) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            // Named the same way the Clients tab does: the ARP
-                            // table writes a literal "?" when reverse DNS
-                            // fails, and a firewall alias or host override is
-                            // a better label than either.
-                            Text(store.nameForAddress(entry.ip) ?? entry.ip)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(theme.label)
-                            Spacer()
-                            if let iface = entry.interfaceName, !iface.isEmpty {
-                                // An interface name is an identifier, not a
-                                // label — uppercasing turns "ix0" into "IX0",
-                                // which reads as the letter O.
-                                Text(store.interfaceLabel(for: iface) ?? iface)
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(theme.info)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(theme.info.opacity(0.16))
-                                    .clipShape(Capsule())
-                            }
-                        }
-                        FieldRow(key: "IP", value: entry.ip)
-                        FieldRow(key: "MAC", value: entry.mac)
-                        if let expiry = entry.expiryDescription {
-                            FieldRow(key: "Expires", value: expiry)
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
-// MARK: - Interface card
-
+/// One interface, as a card.
+///
+/// Rebuilt after a regex meant to remove the ARP pane matched to the wrong
+/// closing brace and took this and `ARPRow` with it. The ARP row is gone on
+/// purpose — Clients covers that table — but this was collateral.
 struct InterfaceCard: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var store: DashboardStore
     let iface: InterfaceStat
 
     var body: some View {
-        Slab(rail: iface.health) {
+        Slab(rail: iface.health, trailing: iface.device) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .firstTextBaseline) {
                     // Filled when pinned to the Overview. Tapping the star
@@ -170,51 +99,47 @@ struct InterfaceCard: View {
                         store.toggleFavourite(iface)
                     } label: {
                         Image(systemName: store.isFavourite(iface) ? "star.fill" : "star")
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(store.isFavourite(iface)
                                              ? theme.accentColor : theme.labelFaint)
                     }
                     .buttonStyle(.plain)
 
                     Text(iface.name)
-                        .font(.system(size: 16, weight: .semibold))
+                        .scaledFont(16, weight: .semibold)
                         .foregroundStyle(theme.label)
-                    Text(iface.device)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(theme.labelFaint)
-                    Spacer()
+
+                    Spacer(minLength: 8)
                     StatusPill(text: iface.status, health: iface.health)
                 }
 
                 Text(iface.addressLine)
-                    .font(.system(size: 12, design: .monospaced))
+                    .scaledFont(12, design: .monospaced)
                     .foregroundStyle(theme.labelMuted)
+                    .textSelection(.enabled)
 
-                Hairline()
-
-                ThroughputChart(
-                    store: store,
-                    device: iface.seriesKey,
-                    height: 38
-                )
-
-                Hairline()
+                if let media = iface.media, !media.isEmpty {
+                    Text(media)
+                        .scaledFont(11)
+                        .foregroundStyle(theme.labelFaint)
+                        .lineLimit(2)
+                }
 
                 HStack(spacing: 0) {
-                    traffic("TOTAL IN", iface.inBytes, theme.ok)
-                    Divider().frame(height: 26).overlay(theme.hairline)
-                    traffic("TOTAL OUT", iface.outBytes, theme.info)
+                    traffic("IN", iface.inBytes, theme.ok)
+                    traffic("OUT", iface.outBytes, theme.info)
                 }
 
-                if let mac = iface.mac, !mac.isEmpty {
-                    FieldRow(key: "MAC", value: mac)
-                }
-                if let media = iface.media, !media.isEmpty {
-                    FieldRow(key: "Media", value: media, mono: false)
-                }
-                if let e = iface.inErrors, let o = iface.outErrors, e + o > 0 {
-                    FieldRow(key: "Errors", value: "in \(Int(e)) · out \(Int(o))")
-                }
+                // The same chart the Overview draws. Lifetime counters say how
+                // much has gone through an interface since boot; they say
+                // nothing about whether anything is going through it now,
+                // which is what somebody scanning this list wants.
+                ThroughputChart(
+                    tracker: store.throughput,
+                    store: store,
+                    device: iface.seriesKey,
+                    height: 44
+                )
             }
         }
     }
@@ -222,11 +147,11 @@ struct InterfaceCard: View {
     private func traffic(_ label: String, _ bytes: Double?, _ color: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .scaledFont(10, weight: .bold, design: .rounded)
                 .tracking(0.8)
                 .foregroundStyle(theme.labelFaint)
             Text(bytes.map(Fmt.bytes) ?? "—")
-                .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                .scaledFont(15, weight: .semibold, design: .monospaced)
                 .foregroundStyle(color)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

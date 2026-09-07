@@ -73,6 +73,7 @@ struct HAProxyView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
+            .readableWidth()
             }
             .refreshable { await store.refreshManually() }
         }
@@ -102,12 +103,12 @@ struct HAProxyView: View {
                 Text(unmonitored.isEmpty
                      ? "All \(store.haproxyBackends.count) backends have health checks"
                      : "\(unmonitored.count) of \(store.haproxyBackends.count) have no health check")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(theme.label)
                 Text(unmonitored.isEmpty
                      ? "HAProxy will stop sending traffic to a server that fails its check."
                      : "HAProxy keeps sending traffic to servers in these backends whether they answer or not.")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
             }
         }
@@ -118,12 +119,12 @@ struct HAProxyView: View {
         Slab(rail: .idle) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Configuration, not live status")
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
                     .foregroundStyle(theme.labelMuted)
                 Text(store.haproxyStatsAccessors.isEmpty
                      ? "Whether each server is up right now lives in HAProxy's admin socket, which this app will not open — the same socket accepts commands that disable servers."
                      : "This pfSense exposes \(store.haproxyStatsAccessors.joined(separator: ", ")), so live status could be added.")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
             }
         }
@@ -139,14 +140,14 @@ struct HAProxyView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text(frontend.name)
-                                .font(.system(size: 14, weight: .semibold))
+                                .scaledFont(14, weight: .semibold)
                                 .foregroundStyle(theme.label)
                             Spacer()
                             if !frontend.enabled { StatusPill(text: "disabled", health: .idle) }
                         }
                         if let descr = frontend.descr, !descr.isEmpty {
                             Text(descr)
-                                .font(.system(size: 11))
+                                .scaledFont(11)
                                 .foregroundStyle(theme.labelFaint)
                         }
                         FieldRow(key: "Binds", value: frontend.bindDescription)
@@ -170,7 +171,7 @@ struct BackendCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(backend.name)
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(theme.label)
                     Spacer(minLength: 8)
                     StatusPill(
@@ -181,12 +182,12 @@ struct BackendCard: View {
 
                 if let descr = backend.descr, !descr.isEmpty {
                     Text(descr)
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
                 }
 
                 Text(backend.checkDescription)
-                    .font(.system(size: 11, design: .monospaced))
+                    .scaledFont(11, design: .monospaced)
                     .foregroundStyle(backend.isMonitored ? theme.labelMuted : theme.warn)
 
                 if !backend.servers.isEmpty {
@@ -194,20 +195,20 @@ struct BackendCard: View {
                     ForEach(backend.servers) { server in
                         HStack {
                             Text(server.name)
-                                .font(.system(size: 12))
+                                .scaledFont(12)
                                 .foregroundStyle(server.enabled ? theme.label : theme.labelFaint)
                             if server.ssl {
                                 Image(systemName: "lock.fill")
-                                    .font(.system(size: 9))
+                                    .scaledFont(9)
                                     .foregroundStyle(theme.labelFaint)
                             }
                             Spacer()
                             Text(server.endpoint)
-                                .font(.system(size: 11, design: .monospaced))
+                                .scaledFont(11, design: .monospaced)
                                 .foregroundStyle(theme.labelFaint)
                             if !server.enabled {
                                 Text("off")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .scaledFont(10, weight: .semibold)
                                     .foregroundStyle(theme.idle)
                             }
                         }

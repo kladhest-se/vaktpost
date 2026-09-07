@@ -25,6 +25,7 @@ struct MoreView: View {
 
                 GroupHeading(text: "Setup")
                 link("Firewalls", "externaldrive.connected.to.line.below", badge: 0) { ServersView() }
+                link("Diagnostics", "stethoscope", badge: store.errors.count) { DiagnosticsView() }
                 link("Settings", "slider.horizontal.3", badge: 0) { SettingsView() }
             }
             .padding(.horizontal, 16)
@@ -39,10 +40,10 @@ struct MoreView: View {
         Slab(rail: store.overallHealth, title: "Active firewall") {
             VStack(alignment: .leading, spacing: 6) {
                 Text(store.profile.displayName)
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(16, weight: .semibold)
                     .foregroundStyle(theme.label)
                 Text(store.profile.baseURL)
-                    .font(.system(size: 11, design: .monospaced))
+                    .scaledFont(11, design: .monospaced)
                     .foregroundStyle(theme.labelFaint)
                 if registry.servers.count > 1 {
                     Hairline()
@@ -68,16 +69,16 @@ struct MoreView: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: symbol)
-                    .font(.system(size: 15))
+                    .scaledFont(15)
                     .foregroundStyle(theme.accentColor)
-                    .frame(width: 24)
+                    .scaledFrame(width: 24)
                 Text(title)
-                    .font(.system(size: 15, weight: .medium))
+                    .scaledFont(15, weight: .medium)
                     .foregroundStyle(theme.label)
                 Spacer()
                 if badge > 0 {
                     Text("\(badge)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .scaledFont(11, weight: .bold, design: .rounded)
                         .foregroundStyle(theme.palette.crust)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
@@ -85,7 +86,7 @@ struct MoreView: View {
                         .clipShape(Capsule())
                 }
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .scaledFont(12, weight: .semibold)
                     .foregroundStyle(theme.labelFaint)
             }
             .padding(14)

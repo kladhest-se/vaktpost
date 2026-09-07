@@ -12,11 +12,11 @@ struct AlertsView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("\(store.acknowledgedButPresent.count) acknowledged")
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .scaledFont(13, weight: .semibold)
                                     .foregroundStyle(theme.labelMuted)
                                 Spacer()
                                 Button("Show again") { store.unacknowledgeAll() }
-                                    .font(.system(size: 13, weight: .medium))
+                                    .scaledFont(13, weight: .medium)
                                     .foregroundStyle(theme.accentColor)
                             }
                             // Named rather than counted: "3 acknowledged" tells
@@ -24,7 +24,7 @@ struct AlertsView: View {
                             // by having acknowledged them.
                             ForEach(store.acknowledgedButPresent) { alert in
                                 Text(alert.title)
-                                    .font(.system(size: 11))
+                                    .scaledFont(11)
                                     .foregroundStyle(theme.labelFaint)
                             }
                         }
@@ -37,7 +37,7 @@ struct AlertsView: View {
                     Text(store.alertsSilenced
                          ? "All alerts are silenced in Settings."
                          : "\(store.silencedAlertCount) hidden by silenced categories.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(theme.labelFaint)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -49,7 +49,7 @@ struct AlertsView: View {
                 } else {
                     HStack {
                         Text("\(store.visibleAlerts.count) condition\(store.visibleAlerts.count == 1 ? "" : "s")")
-                            .font(.system(size: 12, design: .monospaced))
+                            .scaledFont(12, design: .monospaced)
                             .foregroundStyle(theme.labelFaint)
                         Spacer()
                     }
@@ -64,7 +64,7 @@ struct AlertsView: View {
 
                 Slab(rail: .idle, title: "How these are produced") {
                     Text("pfSense has no alerts endpoint. Every item here is derived on-device from status the app already fetched, so the thresholds live in one file and change without touching the firewall.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(theme.labelFaint)
                 }
             }
@@ -88,15 +88,15 @@ struct AlertsView: View {
         Slab(rail: alert.severity) {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: alert.category.symbol)
-                    .font(.system(size: 15))
+                    .scaledFont(15)
                     .foregroundStyle(alert.severity.color(theme))
-                    .frame(width: 22)
+                    .scaledFrame(width: 22)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(alert.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(theme.label)
                     Text(alert.detail)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(theme.labelMuted)
                 }
                 Spacer(minLength: 0)

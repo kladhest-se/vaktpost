@@ -161,6 +161,51 @@ actor FirewallClient {
         )
     }
 
+    /// A day of recorded traffic, if this pfSense can read its own RRD files.
+    func rrdTraffic() async throws -> RRDHistory {
+        RRDHistory(try await rpc.runObject(.rrdTraffic, timeout: 60))
+    }
+
+    // MARK: Batches
+
+    /// One call's worth of sections, keyed by the name the individual snippet
+    /// used. Sections decode from these exactly as they did from their own
+    /// responses, so nothing downstream had to change shape.
+    struct Batch {
+        private let sections: JSONDict?
+
+        init(_ payload: JSONDict) {
+            sections = JSONDict(payload.value("sections"))
+        }
+
+        /// A section that returns an object rather than rows.
+        func object(_ name: String) -> JSONDict {
+            JSONDict(sections?.value(name)) ?? JSONDict(.object([:]))!
+        }
+
+        /// A section's rows, unwrapped exactly as `runList` unwraps a response
+        /// of its own — same envelope handling, same keyed-object folding.
+        func rows(_ name: String) -> [JSONDict] {
+            XMLRPCClient.rows(from: sections?.value(name))
+        }
+    }
+
+    func batchCore() async throws -> Batch {
+        Batch(try await rpc.runObject(.batchCore))
+    }
+
+    func batchClients() async throws -> Batch {
+        Batch(try await rpc.runObject(.batchClients))
+    }
+
+    func batchVPN() async throws -> Batch {
+        Batch(try await rpc.runObject(.batchVpn))
+    }
+
+    func batchSystem() async throws -> Batch {
+        Batch(try await rpc.runObject(.batchSystem))
+    }
+
     // MARK: Firewall objects
 
     func firewallRules() async throws -> [FirewallRule] {

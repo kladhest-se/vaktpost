@@ -224,6 +224,12 @@ struct InterfaceStat: Identifiable {
     var mtu: String?
     var gateway: String?
     var internalName: String?
+    /// Whether the firewall reported byte counters at all.
+    ///
+    /// Distinct from "no samples yet": a chart waiting for a second reading
+    /// and a chart that will never get one look identical, and the app spent a
+    /// long session showing the first message for the second condition.
+    var countersPresent: Bool?
     var inBytes: Double?
     var outBytes: Double?
     var inPackets: Double?
@@ -250,6 +256,7 @@ struct InterfaceStat: Identifiable {
         media = d.string("media", "mediaopt")?.trimmingCharacters(in: .whitespaces)
         mtu = d.string("mtu")
         gateway = d.string("gateway")
+        countersPresent = d.bool("counters_present")
         inBytes = d.double("inbytes", "in_bytes", "bytes_in")
         outBytes = d.double("outbytes", "out_bytes", "bytes_out")
         inPackets = d.double("inpkts", "in_packets", "packets_in")
@@ -519,5 +526,172 @@ struct LogLine: Identifiable {
     var portsAndPeers: String? {
         guard source != nil || destination != nil else { return nil }
         return "\(source ?? "?") → \(destination ?? "?")"
+    }
+}
+
+extension LogLine {
+
+    /// A filter log line's fields, named.
+    ///
+    /// `filterlog` writes comma-separated fields in a documented order, and the
+    /// app has been showing the whole line raw — a wall of commas where the
+    /// interesting parts (which rule, which direction, which ports) are
+    /// countable but not readable.
+    ///
+    /// Parsed leniently: the tail differs by protocol and by IP version, and a
+    /// line that does not fit the shape returns what it could identify rather
+    /// than nothing. Anything unrecognised is still available as the raw text.
+    struct FilterFields {
+        var tracker: String?
+        var interfaceName: String?
+        var reason: String?
+        var action: String?
+        var direction: String?
+        var ipVersion: String?
+        var proto: String?
+        var length: String?
+        var source: String?
+        var destination: String?
+        var sourcePort: String?
+        var destinationPort: String?
+        var tcpFlags: String?
+    }
+
+    /// The fields, if this is a filter log line that parses.
+    var filterFields: FilterFields? {
+        guard kind == .firewall else { return nil }
+
+        // Everything after `filterlog[pid]: ` is the CSV.
+        guard let marker = text.range(of: "filterlog[")?.upperBound,
+              let colon = text.range(of: ": ", range: marker..<text.endIndex)?.upperBound
+        else { return nil }
+
+        let parts = text[colon...].split(separator: ",", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count >= 9 else { return nil }
+
+        func at(_ i: Int) -> String? {
+            guard i < parts.count, !parts[i].isEmpty else { return nil }
+            return parts[i]
+        }
+
+        var f = FilterFields()
+        // 0 rule, 1 subrule, 2 anchor, 3 tracker, 4 interface, 5 reason,
+        // 6 action, 7 direction, 8 ip version.
+        f.tracker = at(3)
+        f.interfaceName = at(4)
+        f.reason = at(5)
+        f.action = at(6)
+        f.direction = at(7)
+        f.ipVersion = at(8)
+
+        // The tail's offsets differ between IPv4 and IPv6: v4 carries tos,
+        // ecn, ttl, id, offset and flags before the protocol; v6 carries a
+        // class and flow label. Reading the protocol from the wrong index is
+        // how a v6 line would come out claiming to be protocol 64.
+        // Offsets differ between IPv4 and IPv6: v4 carries tos, ecn, ttl, id,
+        // offset and flags before the protocol; v6 carries class, flow label
+        // and hop limit. Reading from the wrong index is how a v6 line comes
+        // out claiming to be protocol 64.
+        //
+        // The protocol appears twice — a number then a name — and the name is
+        // the one worth showing. Taking the number gave "17" where "udp"
+        // belonged, which is correct and useless.
+        let isV6 = at(8) == "6"
+        let protoIndex = isV6 ? 13 : 16
+        let lengthIndex = isV6 ? 14 : 17
+        let sourceIndex = isV6 ? 15 : 18
+
+        f.proto = at(protoIndex)
+        f.length = at(lengthIndex)
+        f.source = at(sourceIndex)
+        f.destination = at(sourceIndex + 1)
+        f.sourcePort = at(sourceIndex + 2)
+        f.destinationPort = at(sourceIndex + 3)
+        // TCP carries flags after the data length; UDP does not.
+        if (f.proto ?? "").lowercased() == "tcp" { f.tcpFlags = at(sourceIndex + 5) }
+        return f
+    }
+}
+
+extension LogLine {
+
+    /// A syslog line's parts.
+    ///
+    /// Everything that is not the filter log arrives as a sentence with a
+    /// syslog prefix: a timestamp, the host, the process and its pid, then the
+    /// message. Splitting them is not analysis, it is just undoing the
+    /// formatting — but it is the difference between a wall of grey monospace
+    /// and something with a shape.
+    struct SyslogFields {
+        var timestamp: String?
+        var host: String?
+        var process: String?
+        var pid: String?
+        var message: String
+    }
+
+    /// The parts, for any line that carries a syslog prefix.
+    var syslogFields: SyslogFields? {
+        // `Sep  7 17:13:12 host process[pid]: message`
+        let parts = text.split(separator: " ", omittingEmptySubsequences: true)
+        guard parts.count >= 5 else { return nil }
+
+        // The timestamp is three fields: month, day, time. A line that does
+        // not start with one is not syslog and is left alone.
+        let month = String(parts[0])
+        guard month.count == 3, month.first?.isLetter == true,
+              parts[2].contains(":") else { return nil }
+
+        var fields = SyslogFields(message: "")
+        fields.timestamp = "\(parts[0]) \(parts[1]) \(parts[2])"
+        fields.host = String(parts[3])
+
+        var rest = parts.dropFirst(4)
+        if let tag = rest.first, tag.hasSuffix(":") {
+            let name = tag.dropLast()
+            if let open = name.firstIndex(of: "["), name.hasSuffix("]") {
+                fields.process = String(name[name.startIndex..<open])
+                fields.pid = String(name[name.index(after: open)..<name.index(before: name.endIndex)])
+            } else {
+                fields.process = String(name)
+            }
+            rest = rest.dropFirst()
+        }
+
+        fields.message = rest.joined(separator: " ")
+        return fields.message.isEmpty ? nil : fields
+    }
+}
+
+extension LogLine {
+
+    /// IPv4 addresses appearing in the line.
+    ///
+    /// A DHCP line saying a lease went to 172.16.1.161 is more use when the
+    /// screen can also say which device that is, and the same holds for an
+    /// OpenVPN connection or an auth failure. Found by shape rather than by
+    /// knowing each log's format, because there are five of them and they
+    /// share nothing.
+    ///
+    /// IPv4 only: an IPv6 address cannot be told from a MAC or a timestamp
+    /// fragment without more care than a convenience like this deserves, and a
+    /// wrong guess would put a name against the wrong thing.
+    var addressesMentioned: [String] {
+        let pattern = #"\b(?:\d{1,3}\.){3}\d{1,3}\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+
+        let range = NSRange(text.startIndex..., in: text)
+        var seen: [String] = []
+        for match in regex.matches(in: text, range: range) {
+            guard let found = Range(match.range, in: text) else { continue }
+            let address = String(text[found])
+            // Each octet must actually be an octet, or a version string like
+            // a version number in a message would be offered as a device.
+            let octets = address.split(separator: ".").compactMap { Int($0) }
+            guard octets.count == 4, octets.allSatisfy({ $0 <= 255 }) else { continue }
+            if !seen.contains(address) { seen.append(address) }
+        }
+        return seen
     }
 }

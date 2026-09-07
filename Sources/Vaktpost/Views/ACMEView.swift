@@ -53,7 +53,7 @@ struct ACMEView: View {
                                     HStack {
                                         Text(account.descr?.isEmpty == false
                                              ? account.descr! : account.name)
-                                            .font(.system(size: 14, weight: .semibold))
+                                            .scaledFont(14, weight: .semibold)
                                             .foregroundStyle(theme.label)
                                         Spacer()
                                         if account.isStaging {
@@ -67,7 +67,7 @@ struct ACMEView: View {
                                         // a certificate error rather than a
                                         // configuration one.
                                         Text("Certificates from this account are not trusted by browsers.")
-                                            .font(.system(size: 11))
+                                            .scaledFont(11)
                                             .foregroundStyle(theme.labelFaint)
                                     }
                                 }
@@ -78,6 +78,7 @@ struct ACMEView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 28)
+            .readableWidth()
         }
         .refreshable { await store.refreshManually() }
         .background(theme.bg.ignoresSafeArea())
@@ -93,12 +94,12 @@ struct ACMEView: View {
                 Text(stalled.isEmpty
                      ? "All \(store.acmeCertificates.count) set to renew"
                      : "\(stalled.count) of \(store.acmeCertificates.count) will not renew")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(theme.label)
                 Text(stalled.isEmpty
                      ? "Expiry dates come from the certificate store, renewal from the package."
                      : "These will expire and nothing on the firewall will act on it.")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
             }
         }
@@ -116,7 +117,7 @@ struct ACMERow: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(cert.descr?.isEmpty == false ? cert.descr! : cert.name)
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(theme.label)
                     Spacer(minLength: 8)
                     if let issued {
@@ -127,14 +128,14 @@ struct ACMERow: View {
                 }
 
                 Text(cert.renewalDescription)
-                    .font(.system(size: 11, design: .monospaced))
+                    .scaledFont(11, design: .monospaced)
                     .foregroundStyle(cert.enabled ? theme.labelMuted : theme.warn)
 
                 if !cert.domains.isEmpty {
                     Hairline()
                     ForEach(cert.domains, id: \.self) { domain in
                         Text(domain)
-                            .font(.system(size: 12, design: .monospaced))
+                            .scaledFont(12, design: .monospaced)
                             .foregroundStyle(theme.labelFaint)
                             .textSelection(.enabled)
                     }

@@ -63,14 +63,14 @@ struct Slab<Content: View>: View {
                     HStack(alignment: .firstTextBaseline) {
                         if let title {
                             Text(title.uppercased())
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .scaledFont(11, weight: .semibold, design: .rounded)
                                 .tracking(1.1)
                                 .foregroundStyle(theme.labelFaint)
                         }
                         Spacer(minLength: 8)
                         if let trailing {
                             Text(trailing)
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .scaledFont(11, weight: .medium, design: .monospaced)
                                 .foregroundStyle(theme.labelFaint)
                         }
                     }
@@ -95,7 +95,7 @@ struct StatusPill: View {
 
     var body: some View {
         Text(text.uppercased())
-            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .scaledFont(10, weight: .bold, design: .rounded)
             .tracking(0.6)
             .foregroundStyle(health.color(theme))
             .padding(.horizontal, 7)
@@ -119,11 +119,11 @@ struct Meter: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(label)
-                    .font(.system(size: 13, weight: .medium))
+                    .scaledFont(13, weight: .medium)
                     .foregroundStyle(theme.labelMuted)
                 Spacer()
                 Text(readout)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .scaledFont(13, weight: .semibold, design: .monospaced)
                     .foregroundStyle(theme.label)
             }
             GeometryReader { geo in
@@ -150,11 +150,11 @@ struct FieldRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text(key)
-                .font(.system(size: 13))
+                .scaledFont(13)
                 .foregroundStyle(theme.labelMuted)
             Spacer(minLength: 8)
             Text(value)
-                .font(.system(size: 13, weight: .medium, design: mono ? .monospaced : .default))
+                .scaledFont(13, weight: .medium, design: mono ? .monospaced : .default)
                 .foregroundStyle(theme.label)
                 .multilineTextAlignment(.trailing)
         }
@@ -176,7 +176,7 @@ struct GroupHeading: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(text.uppercased())
-                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .scaledFont(12, weight: .heavy, design: .rounded)
                 .tracking(1.4)
                 .foregroundStyle(theme.labelMuted)
             Rectangle()
@@ -199,14 +199,14 @@ struct Notice: View {
     var body: some View {
         VStack(spacing: 10) {
             Image(systemName: symbol)
-                .font(.system(size: 30, weight: .light))
+                .scaledFont(30, weight: .light)
                 .foregroundStyle(health.color(theme))
             Text(title)
-                .font(.system(size: 15, weight: .semibold))
+                .scaledFont(15, weight: .semibold)
                 .foregroundStyle(theme.label)
             if let detail {
                 Text(detail)
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .foregroundStyle(theme.labelMuted)
                     .multilineTextAlignment(.center)
             }
@@ -304,15 +304,15 @@ struct Sparkline: View {
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             HStack {
                 Text("last 30 min")
-                    .font(.system(size: 9, design: .monospaced))
+                    .scaledFont(9, design: .monospaced)
                     .foregroundStyle(theme.labelFaint.opacity(0.6))
                 Spacer()
                 if let latestIn = inSeries.last, let latestOut = outSeries.last {
                     Text(Fmt.bytesPerSec(latestIn))
-                        .font(.system(size: 9, design: .monospaced))
+                        .scaledFont(9, design: .monospaced)
                         .foregroundStyle(theme.ok)
                     Text(Fmt.bytesPerSec(latestOut))
-                        .font(.system(size: 9, design: .monospaced))
+                        .scaledFont(9, design: .monospaced)
                         .foregroundStyle(theme.info)
                 }
             }
@@ -422,10 +422,10 @@ struct RateLegend: View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 6, height: 6)
             Text(label)
-                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .scaledFont(10, weight: .bold, design: .rounded)
                 .foregroundStyle(theme.labelFaint)
             Text(value.map(Rate.bits) ?? "—")
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .scaledFont(12, weight: .semibold, design: .monospaced)
                 .foregroundStyle(theme.label)
         }
     }
@@ -441,13 +441,45 @@ struct RateLegend: View {
 /// Overview but omitted from NetworkView.
 struct ThroughputChart: View {
     @EnvironmentObject private var theme: ThemeManager
-    let store: DashboardStore
+
+    /// Observed, not held.
+    ///
+    /// This was `let store: DashboardStore`, and a plain `let` on a reference
+    /// type is why the chart never drew: SwiftUI compares a view's stored
+    /// properties to decide whether to re-render, the reference never changes,
+    /// so the body ran once and kept whatever it saw. A card created before
+    /// the first sample said "none yet" for the rest of the session while the
+    /// tracker filled up behind it — which is exactly what the diagnostics
+    /// screen showed, three points recorded against a card reporting none.
+    ///
+    /// Observing the tracker rather than the store also narrows the
+    /// invalidation to the thing being drawn.
+    @ObservedObject var tracker: ThroughputTracker
+    /// Observed for the same reason: the caption reads whether the firewall
+    /// reports counters at all, and a stale answer there is the difference
+    /// between "waiting" and "will never arrive".
+    @ObservedObject var store: DashboardStore
     let device: String
     let height: CGFloat
     var showExplanatoryText: Bool = false
 
     private var points: [ThroughputTracker.Point] {
-        store.throughput.points(for: device)
+        tracker.points(for: device)
+    }
+
+    /// Says which of the two situations this is.
+    ///
+    /// "Collecting samples" for an interface the firewall reports no counters
+    /// for is a promise the app cannot keep, and it kept it on screen for a
+    /// whole session while the real problem went unnoticed.
+    private var caption: String {
+        let iface = store.interfaces.first { $0.seriesKey == device }
+        if iface?.countersPresent == false {
+            return "\(shortDevice) reports no byte counters, so there is nothing to chart."
+        }
+        return points.isEmpty
+            ? "Collecting samples for \(shortDevice) — none yet."
+            : "Collecting samples for \(shortDevice) — 1 so far."
     }
 
     /// The series key carries the interface and its device; only the first is
@@ -467,7 +499,7 @@ struct ThroughputChart: View {
                 RateLegend(inBps: points.last?.inBps, outBps: points.last?.outBps)
                 if showExplanatoryText {
                     Text("Derived from counter deltas over the last \(points.count) samples.")
-                        .font(.system(size: 10))
+                        .scaledFont(10)
                         .foregroundStyle(theme.labelFaint)
                 }
             }
@@ -480,10 +512,8 @@ struct ThroughputChart: View {
             // on its own cannot distinguish "this started a moment ago" from
             // "no sample will ever arrive", which is exactly the ambiguity
             // that made the throughput bug hard to see.
-            Text(points.isEmpty
-                 ? "Collecting samples for \(shortDevice) — none yet."
-                 : "Collecting samples for \(shortDevice) — 1 so far.")
-                .font(.system(size: 12))
+            Text(caption)
+                .scaledFont(12)
                 .foregroundStyle(theme.labelFaint)
         }
     }
@@ -506,7 +536,7 @@ struct ServerSwitcher: View {
                         onSwitch(server)
                     } label: {
                         Text(server.displayName)
-                            .font(.system(size: 12, weight: .medium))
+                            .scaledFont(12, weight: .medium)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(activeID == server.id ? theme.accentColor : theme.card)
@@ -584,7 +614,7 @@ struct StateTrendLine: View {
         .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
         .overlay(alignment: .trailing) {
             Text("\(latest)\(trend)")
-                .font(.system(size: 10, design: .monospaced))
+                .scaledFont(10, design: .monospaced)
                 .foregroundStyle(theme.labelMuted)
                 .padding(.trailing, 6)
         }
@@ -709,11 +739,11 @@ struct SingleMetricSparkline: View {
             // adds is where the value has been.
             HStack {
                 Text(range)
-                    .font(.system(size: 10, design: .monospaced))
+                    .scaledFont(10, design: .monospaced)
                     .foregroundStyle(theme.labelFaint)
                 Spacer()
                 Text("\(values.count) samples")
-                    .font(.system(size: 10))
+                    .scaledFont(10)
                     .foregroundStyle(theme.labelFaint)
             }
         }
@@ -771,14 +801,14 @@ struct GatewayTrend: View {
             HStack(spacing: 6) {
                 if let delay = latestDelay {
                     Text("\(Int(delay))ms")
-                        .font(.system(size: 10, design: .monospaced))
+                        .scaledFont(10, design: .monospaced)
                 }
                 Text(trend)
-                    .font(.system(size: 9))
+                    .scaledFont(9)
                     .foregroundStyle(trend == "↑" ? theme.bad : trend == "↓" ? theme.ok : theme.labelMuted)
                 if let loss = latestLoss, loss > 0 {
                     Text("\(Int(loss))%")
-                        .font(.system(size: 10, design: .monospaced))
+                        .scaledFont(10, design: .monospaced)
                         .foregroundStyle(loss > 5 ? theme.bad : theme.warn)
                 }
             }
@@ -910,10 +940,10 @@ struct VPNSparklineRow: View {
                 // — written the other way it printed "↓ -)/s", and appended a
                 // second unit onto a value that already carries one.
                 Text("↓ \(latestIn.map(Fmt.bytesPerSec) ?? "—")")
-                    .font(.system(size: 10, design: .monospaced))
+                    .scaledFont(10, design: .monospaced)
                     .foregroundStyle(theme.ok)
                 Text("↑ \(latestOut.map(Fmt.bytesPerSec) ?? "—")")
-                    .font(.system(size: 10, design: .monospaced))
+                    .scaledFont(10, design: .monospaced)
                     .foregroundStyle(theme.info)
             }
         }
@@ -939,7 +969,7 @@ struct NoticeText: View {
             }
 
             Text(expanded ? notice.notice : notice.summary)
-                .font(.system(size: 13, design: notice.isMultiline ? .monospaced : .default))
+                .scaledFont(13, design: notice.isMultiline ? .monospaced : .default)
                 .foregroundStyle(theme.label)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
@@ -949,7 +979,7 @@ struct NoticeText: View {
                     withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
                 } label: {
                     Text(expanded ? "Show less" : "Show full notice")
-                        .font(.system(size: 12, weight: .medium))
+                        .scaledFont(12, weight: .medium)
                         .foregroundStyle(theme.accentColor)
                 }
                 .buttonStyle(.plain)

@@ -36,6 +36,10 @@ struct RootView: View {
                         NavigationStack { OverviewView() }
                             .tabItem { Label("Overview", systemImage: "square.grid.2x2") }
 
+                        // Wrapped like every other tab. MasterDetail no
+                        // longer creates a stack of its own — it cannot, since
+                        // the same container is used by Firewall, which is
+                        // pushed from More and must not nest one.
                         NavigationStack { ClientsView() }
                             .tabItem { Label("Clients", systemImage: "person.2") }
 

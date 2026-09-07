@@ -93,7 +93,7 @@ REQUIRE_DEVICE = \
 
 # ── Compiling ────────────────────────────────────────────────────────────────
 
-# Compiles the app and the widget extension, and boots nothing.
+# Compiles the app, and boots nothing.
 #
 # `generic/platform=iOS Simulator` needs no installed simulator and starts no
 # device, so this catches every compile error without a simulator appearing on

@@ -15,7 +15,7 @@ struct OverviewView: View {
                 if let msg = store.connectionError {
                     Slab(rail: .bad, title: "Connection") {
                         Text(msg)
-                            .font(.system(size: 13))
+                            .scaledFont(13)
                             .foregroundStyle(theme.label)
                     }
                 }
@@ -34,7 +34,7 @@ struct OverviewView: View {
                 if store.gateways.isEmpty {
                     Slab(rail: .idle) {
                         Text(store.errors[.gateways] ?? "No gateway status returned.")
-                            .font(.system(size: 13))
+                            .scaledFont(13)
                             .foregroundStyle(theme.labelMuted)
                     }
                 } else {
@@ -49,6 +49,7 @@ struct OverviewView: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 28)
+            .readableWidth()
         }
         .background(theme.bg.ignoresSafeArea())
         .refreshable { await store.refreshManually() }
@@ -72,24 +73,24 @@ struct OverviewView: View {
                     .fill(store.overallHealth.color(theme))
                     .frame(width: 10, height: 10)
                 Text(store.headline)
-                    .font(.system(size: 16, weight: .semibold))
+                    .scaledFont(16, weight: .semibold)
                     .foregroundStyle(theme.label)
                 Spacer()
             }
             HStack(spacing: 6) {
                 Text(store.profile.displayName)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .scaledFont(12, weight: .medium, design: .monospaced)
                     .foregroundStyle(theme.labelMuted)
                 if let v = store.version?.current {
                     Text("·").foregroundStyle(theme.labelFaint)
                     Text(v)
-                        .font(.system(size: 12, design: .monospaced))
+                        .scaledFont(12, design: .monospaced)
                         .foregroundStyle(theme.labelMuted)
                 }
                 Spacer()
                 if let last = store.lastRefresh {
                     Text(last, style: .time)
-                        .font(.system(size: 11, design: .monospaced))
+                        .scaledFont(11, design: .monospaced)
                         .foregroundStyle(theme.labelFaint)
                 }
             }
@@ -122,19 +123,19 @@ struct OverviewView: View {
                     ForEach(store.visibleAlerts.prefix(3)) { alert in
                         HStack(spacing: 8) {
                             Image(systemName: alert.category.symbol)
-                                .font(.system(size: 12))
+                                .scaledFont(12)
                                 .foregroundStyle(alert.severity.color(theme))
-                                .frame(width: 16)
+                                .scaledFrame(width: 16)
                             Text(alert.title)
-                                .font(.system(size: 13))
+                                .scaledFont(13)
                                 .foregroundStyle(theme.label)
-                                .lineLimit(1)
+                                .lineLimit(2)
                             Spacer()
                         }
                     }
                     if store.visibleAlerts.count > 3 {
                         Text("+\(store.visibleAlerts.count - 3) more")
-                            .font(.system(size: 11))
+                            .scaledFont(11)
                             .foregroundStyle(theme.labelFaint)
                     }
                 }
@@ -153,7 +154,7 @@ struct OverviewView: View {
         if shown.isEmpty {
             Slab(rail: .idle) {
                 Text("No interface identified as the uplink yet.")
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .foregroundStyle(theme.labelMuted)
             }
         } else {
@@ -166,12 +167,18 @@ struct OverviewView: View {
                     Slab(rail: iface.health, title: iface.name, trailing: iface.device) {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(iface.addressLine)
-                                .font(.system(size: 12, design: .monospaced))
+                                .scaledFont(12, design: .monospaced)
                                 .foregroundStyle(theme.labelMuted)
+                            // Taller than a sparkline, because these are the
+                            // interfaces somebody chose to watch. 56 points is
+                            // enough to say "there is traffic" and not enough
+                            // to see its shape, which is the question a pinned
+                            // interface is pinned for.
                             ThroughputChart(
+                                tracker: store.throughput,
                                 store: store,
                                 device: iface.seriesKey,
-                                height: 56,
+                                height: 110,
                                 showExplanatoryText: true
                             )
                         }
@@ -273,11 +280,11 @@ struct OverviewView: View {
             Slab(rail: carp.health, title: "CARP") {
                 HStack {
                     Text(carp.summary)
-                        .font(.system(size: 13, weight: .medium))
+                        .scaledFont(13, weight: .medium)
                         .foregroundStyle(theme.label)
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .scaledFont(11, weight: .semibold)
                         .foregroundStyle(theme.labelFaint)
                 }
             }
@@ -306,7 +313,7 @@ struct OverviewView: View {
                     ForEach(down) { svc in
                         HStack {
                             Text(svc.descr ?? svc.name)
-                                .font(.system(size: 13, weight: .medium))
+                                .scaledFont(13, weight: .medium)
                                 .foregroundStyle(theme.label)
                             Spacer()
                             StatusPill(text: svc.status.isEmpty ? "stopped" : svc.status, health: .bad)
@@ -343,18 +350,18 @@ struct OverviewView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text("\(value)")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .scaledFont(22, weight: .bold, design: .rounded)
                     .foregroundStyle(health.color(theme))
                 if let delta {
                     let sign = delta > 0 ? "↑" : delta < 0 ? "↓" : "→"
                     let pct = Int(abs(Double(delta) / Double(max(store.prevFirewallCounts.blocked, store.prevFirewallCounts.rejected, store.prevFirewallCounts.passed, 1)) * 100))
                     Text("\(sign) \(pct)%")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .scaledFont(11, weight: .medium, design: .monospaced)
                         .foregroundStyle(delta > 0 ? theme.bad.opacity(0.8) : delta < 0 ? theme.ok.opacity(0.8) : theme.labelMuted)
                 }
             }
             Text(label)
-                .font(.system(size: 11, weight: .medium))
+                .scaledFont(11, weight: .medium)
                 .foregroundStyle(theme.labelFaint)
         }
     }
@@ -371,11 +378,11 @@ struct OverviewView: View {
     private func placeholder(_ section: DashboardStore.Section) -> some View {
         if let err = store.errors[section] {
             Text(err)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(theme.warn)
         } else {
             Text("No data yet")
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(theme.labelFaint)
         }
     }
@@ -384,14 +391,17 @@ struct OverviewView: View {
 struct GatewayRow: View {
     @EnvironmentObject private var theme: ThemeManager
     let gateway: GatewayStatus
-    let gatewayMetrics: GatewayMetricTracker?
+    /// Not optional. The store's tracker is a `let` that is never nil, so the
+    /// optional only ever held a value — and an optional cannot be observed,
+    /// which is what kept this row from redrawing as latency changed.
+    @ObservedObject var gatewayMetrics: GatewayMetricTracker
 
     private var delayPoints: [Double] {
-        gatewayMetrics?.readings(for: gateway.name).compactMap { $0.delayMS } ?? []
+        gatewayMetrics.readings(for: gateway.name).compactMap { $0.delayMS }
     }
 
     private var lossPoints: [Double] {
-        gatewayMetrics?.readings(for: gateway.name).compactMap { $0.lossPercent } ?? []
+        gatewayMetrics.readings(for: gateway.name).compactMap { $0.lossPercent }
     }
 
     var body: some View {
@@ -399,13 +409,13 @@ struct GatewayRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(gateway.name)
-                        .font(.system(size: 15, weight: .semibold))
+                        .scaledFont(15, weight: .semibold)
                         .foregroundStyle(theme.label)
                     Spacer()
                     StatusPill(text: gateway.status, health: gateway.health)
                 }
                 Text(gateway.readout)
-                    .font(.system(size: 12, design: .monospaced))
+                    .scaledFont(12, design: .monospaced)
                     .foregroundStyle(theme.labelMuted)
                 GatewayTrend(
                     delayPoints: delayPoints,
@@ -415,7 +425,7 @@ struct GatewayRow: View {
                 )
                 if let ip = gateway.monitorIP, !ip.isEmpty {
                     Text("monitor \(ip)")
-                        .font(.system(size: 11, design: .monospaced))
+                        .scaledFont(11, design: .monospaced)
                         .foregroundStyle(theme.labelFaint)
                 }
             }

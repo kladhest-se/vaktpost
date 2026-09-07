@@ -25,13 +25,13 @@ struct OnboardingView: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text("PASSWORD")
-                                .font(.system(size: 11, weight: .semibold))
+                                .scaledFont(11, weight: .semibold)
                                 .tracking(0.8)
                                 .foregroundStyle(theme.labelFaint)
                             SecureField("password", text: $password)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
-                                .font(.system(size: 14, design: .monospaced))
+                                .scaledFont(14, design: .monospaced)
                                 .padding(10)
                                 .background(theme.cardRaised)
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -39,7 +39,7 @@ struct OnboardingView: View {
 
                         Toggle(isOn: $profile.allowUntrustedTLS) {
                             Text("Allow self-signed certificate")
-                                .font(.system(size: 13))
+                                .scaledFont(13)
                                 .foregroundStyle(theme.label)
                         }
                         .tint(theme.accentColor)
@@ -50,7 +50,7 @@ struct OnboardingView: View {
                             HStack(spacing: 6) {
                                 if isTesting { ProgressView().controlSize(.small) }
                                 Text(isTesting ? "Connecting…" : "Connect")
-                                    .font(.system(size: 15, weight: .semibold))
+                                    .scaledFont(15, weight: .semibold)
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
@@ -62,7 +62,7 @@ struct OnboardingView: View {
 
                         if let message {
                             Text(message)
-                                .font(.system(size: 12))
+                                .scaledFont(12)
                                 .foregroundStyle(messageHealth.color(theme))
                         }
                     }
@@ -94,10 +94,10 @@ struct OnboardingView: View {
                 }
             }
             Text("Vaktpost")
-                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .scaledFont(30, weight: .bold, design: .rounded)
                 .foregroundStyle(theme.label)
             Text("Read-only pfSense dashboard")
-                .font(.system(size: 14))
+                .scaledFont(14)
                 .foregroundStyle(theme.labelMuted)
         }
         .padding(.top, 40)
@@ -106,13 +106,13 @@ struct OnboardingView: View {
     private func step(_ n: String, _ text: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Text(n)
-                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .scaledFont(11, weight: .bold, design: .rounded)
                 .foregroundStyle(theme.palette.crust)
                 .frame(width: 18, height: 18)
                 .background(theme.accentColor)
                 .clipShape(Circle())
             Text(text)
-                .font(.system(size: 12))
+                .scaledFont(12)
                 .foregroundStyle(theme.labelMuted)
         }
     }

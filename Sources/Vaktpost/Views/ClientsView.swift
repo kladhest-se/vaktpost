@@ -28,7 +28,36 @@ struct ClientsView: View {
         }
     }
 
+    @State private var selection: String?
+
     var body: some View {
+        MasterDetail(
+            selection: $selection,
+            emptyMessage: "Choose a device to see its leases, names and filter log.",
+            list: { listColumn },
+            detail: { id in
+                // Looked up again rather than captured: a stored copy would
+                // show the device as it was at the moment it was tapped, and
+                // the list behind it refreshes every thirty seconds.
+                if let client = store.clients.first(where: { $0.id == id }) {
+                    ClientDetailView(client: client)
+                } else {
+                    Notice(symbol: "questionmark.circle",
+                           title: "That device is no longer in the list")
+                }
+            }
+        )
+    }
+
+    /// Whichever of the client sections failed, if any.
+    private var clientFetchFailure: String? {
+        for section: DashboardStore.Section in [.leases, .arp, .statics, .hostOverrides] {
+            if let message = store.errors[section] { return message }
+        }
+        return nil
+    }
+
+    private var listColumn: some View {
         VStack(spacing: 0) {
             Picker("", selection: $filter) {
                 ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
@@ -39,24 +68,36 @@ struct ClientsView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    if rows.isEmpty {
+                    // A failed fetch first, because it looks identical to an
+                    // empty network otherwise. "No clients seen" is a
+                    // reassuring sentence to show somebody whose firewall is
+                    // not answering, and it sent this app's own batching bug
+                    // unnoticed for a build.
+                    if let failure = clientFetchFailure {
+                        Notice(
+                            symbol: "exclamationmark.triangle",
+                            title: "Could not read the client tables",
+                            detail: failure,
+                            health: .warn
+                        )
+                    } else if rows.isEmpty {
                         Notice(
                             symbol: "person.2.slash",
                             title: query.isEmpty ? "No clients seen" : "No matches",
                             detail: query.isEmpty
-                                ? "Clients are assembled from DHCP leases, the ARP table and static mappings. If all three are empty, check the key's privileges."
+                                ? "Clients are assembled from DHCP leases, the ARP table and static mappings. All three came back empty."
                                 : nil
                         )
                     } else {
                         HStack {
                             Text("\(rows.count) shown · \(store.clients.count) known")
-                                .font(.system(size: 12, design: .monospaced))
+                                .scaledFont(12, design: .monospaced)
                                 .foregroundStyle(theme.labelFaint)
                             Spacer()
                         }
                         ForEach(rows) { client in
-                            NavigationLink {
-                                ClientDetailView(client: client)
+                            Button {
+                                selection = client.id
                             } label: {
                                 ClientRow(client: client)
                             }
@@ -80,28 +121,57 @@ struct ClientRow: View {
     @EnvironmentObject private var store: DashboardStore
     let client: NetworkClient
 
+    @State private var selection: String?
+
     var body: some View {
+        MasterDetail(
+            selection: $selection,
+            emptyMessage: "Choose a device to see its leases, names and filter log.",
+            list: { listColumn },
+            detail: { id in
+                // Looked up again rather than captured: a stored copy would
+                // show the device as it was at the moment it was tapped, and
+                // the list behind it refreshes every thirty seconds.
+                if let client = store.clients.first(where: { $0.id == id }) {
+                    ClientDetailView(client: client)
+                } else {
+                    Notice(symbol: "questionmark.circle",
+                           title: "That device is no longer in the list")
+                }
+            }
+        )
+    }
+
+    /// Whichever of the client sections failed, if any.
+    private var clientFetchFailure: String? {
+        for section: DashboardStore.Section in [.leases, .arp, .statics, .hostOverrides] {
+            if let message = store.errors[section] { return message }
+        }
+        return nil
+    }
+
+    private var listColumn: some View {
         Slab(rail: client.health) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(client.name)
-                        .font(.system(size: 15, weight: .semibold))
+                        .scaledFont(15, weight: .semibold)
                         .foregroundStyle(theme.label)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     Spacer()
                     StatusPill(text: client.presence, health: client.health)
                 }
                 HStack(spacing: 10) {
                     Text(client.ip)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .scaledFont(12, weight: .medium, design: .monospaced)
                         .foregroundStyle(theme.labelMuted)
                     Text(client.mac)
-                        .font(.system(size: 11, design: .monospaced))
+                        .scaledFont(11, design: .monospaced)
                         .foregroundStyle(theme.labelFaint)
                     Spacer()
                     if let iface = client.interfaceName, !iface.isEmpty {
                         Text(store.interfaceLabel(for: iface) ?? iface)
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .scaledFont(10, weight: .semibold, design: .monospaced)
                             .foregroundStyle(theme.labelFaint)
                     }
                 }
@@ -117,20 +187,49 @@ struct ClientDetailView: View {
 
     private var relatedLog: [LogLine] { store.logLines(matching: client.ip) }
 
+    @State private var selection: String?
+
     var body: some View {
+        MasterDetail(
+            selection: $selection,
+            emptyMessage: "Choose a device to see its leases, names and filter log.",
+            list: { listColumn },
+            detail: { id in
+                // Looked up again rather than captured: a stored copy would
+                // show the device as it was at the moment it was tapped, and
+                // the list behind it refreshes every thirty seconds.
+                if let client = store.clients.first(where: { $0.id == id }) {
+                    ClientDetailView(client: client)
+                } else {
+                    Notice(symbol: "questionmark.circle",
+                           title: "That device is no longer in the list")
+                }
+            }
+        )
+    }
+
+    /// Whichever of the client sections failed, if any.
+    private var clientFetchFailure: String? {
+        for section: DashboardStore.Section in [.leases, .arp, .statics, .hostOverrides] {
+            if let message = store.errors[section] { return message }
+        }
+        return nil
+    }
+
+    private var listColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Slab(rail: client.health, title: "Identity") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             Text(client.name)
-                                .font(.system(size: 18, weight: .bold))
+                                .scaledFont(18, weight: .bold)
                                 .foregroundStyle(theme.label)
                             Spacer()
                             StatusPill(text: client.presence, health: client.health)
                         }
                         Text("from \(client.nameSource)")
-                            .font(.system(size: 11))
+                            .scaledFont(11)
                             .foregroundStyle(theme.labelFaint)
                         Hairline()
                         FieldRow(key: "IP", value: client.ip)
@@ -169,7 +268,7 @@ struct ClientDetailView: View {
                 if relatedLog.isEmpty {
                     Slab(rail: .idle) {
                         Text("No lines mentioning \(client.ip) in the last \(store.firewallLog.count) fetched. Widen the log limit in Settings to look further back.")
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(theme.labelMuted)
                     }
                 } else {

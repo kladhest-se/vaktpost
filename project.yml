@@ -23,9 +23,6 @@ targets:
     sources:
       - path: Sources/Vaktpost
       - path: Resources/Assets.xcassets
-    dependencies:
-      - target: VaktpostWidget
-        embed: true
     configFiles:
       Debug: Config/iOS.xcconfig
       Release: Config/iOS.xcconfig
@@ -71,32 +68,6 @@ targets:
     # The cost is that `make test` installs and launches the app on a
     # simulator even though every test here is a pure function. That is why
     # the publish check runs `make build` instead.
-
-  VaktpostWidget:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: Sources/VaktpostWidget
-      # Shared with the app rather than duplicated: the widget needs the
-      # snapshot type and the palettes, nothing else.
-      - path: Sources/Vaktpost/Shared/SharedSnapshot.swift
-      - path: Sources/Vaktpost/Theme/Catppuccin.swift
-    configFiles:
-      Debug: Config/iOS.xcconfig
-      Release: Config/iOS.xcconfig
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: se.kladhest.vaktpost.widget
-        PRODUCT_NAME: VaktpostWidget
-        TARGETED_DEVICE_FAMILY: "1,2"
-        CODE_SIGN_STYLE: Automatic
-        # Written by hand, not generated — see the note on the app target. The
-        # NSExtension dictionary in this plist is what makes the bundle a
-        # widget; without it the install fails with "extensionDictionary must
-        # be set in placeholder attributes".
-        GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: Resources/WidgetInfo.plist
-        CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/VaktpostWidget.entitlements
 
 # Declared rather than left to Xcode.
 #

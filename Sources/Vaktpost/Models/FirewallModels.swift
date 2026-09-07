@@ -37,6 +37,33 @@ struct FilterAddress {
         port = found
     }
 
+    /// What sort of thing this side is.
+    ///
+    /// pfSense distinguishes these in its own editor and the distinction
+    /// matters when reading a rule: `any` is a wildcard, a network covers a
+    /// range, an interface name resolves to whatever that interface currently
+    /// holds, and an alias is a list you have to look up. Four rules that look
+    /// alike in a list are doing very different things.
+    enum Kind: String {
+        case any = "any"
+        case network = "network"
+        case host = "host"
+        case interface = "interface"
+        case alias = "alias"
+    }
+
+    /// Worked out from the address, since pfSense does not label it.
+    func kind(knownAliases: Set<String>) -> Kind {
+        if address == "any" { return .any }
+        if knownAliases.contains(address) { return .alias }
+        if address.contains("/") { return .network }
+        // `wanip`, `lan`, `opt3` — an interface, or its address.
+        if address.hasSuffix("ip") || !address.contains(".") && !address.contains(":") {
+            return .interface
+        }
+        return .host
+    }
+
     /// The joined form, for anywhere a single string is wanted.
     var text: String {
         guard let port, !port.isEmpty else { return address }

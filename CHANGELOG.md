@@ -242,6 +242,498 @@ on is how a list stops being read.
 - Acknowledged and silenced alerts are counted separately, so the same alert is
   not reported as hidden twice for two different reasons.
 
+### Every log line opens, not just filter lines
+
+A DHCP or OpenVPN line is a sentence with a syslog prefix, and the list shows
+two lines of one that may run to twenty. Tapping any line now splits off the
+timestamp, host and process, gives the message room to wrap, and names any IPv4
+address in it — a lease going to 172.16.1.161 is more use when the screen also
+says which device that is.
+
+IPv4 only. An IPv6 address cannot be told from a MAC or a fragment of a
+timestamp without more care than a convenience like this deserves, and a wrong
+guess would put a name against the wrong thing.
+
+### "What this app cannot read" is gone
+
+It listed RRD history as unreachable on the same build that now attempts to
+read it, which is the kind of stale certainty that makes a whole screen less
+trustworthy. Each gap is now said where it comes up, by the screen that has it.
+
+### Smaller things from a pass on the device
+
+- The Network tab's interface cards carry the same chart the Overview does.
+  Lifetime counters say how much has gone through an interface since boot and
+  nothing about whether anything is going through it now.
+- Rule and NAT rows keep FROM, TO and PORT to one line each. A rule whose
+  source expands to twenty networks was four lines tall in a list of
+  ninety-eight, and the list exists to be scanned.
+- Their detail screens put one address per line instead of a wrapped run. A
+  wrapped run breaks mid-address, so `198.51.100.0/22` can end one line and
+  start the next.
+- `WHY` is `DESC`.
+
+### Observing an optional does not compile
+
+Two of the six views held their tracker as an optional, and `@ObservedObject`
+cannot wrap one. Both were defensive wrappers around store properties that are
+never nil, so the optional bought nothing and cost the redraw — which is how
+the staleness got in.
+
+I made the same conversion by hand twice and got the same compile error twice,
+so rule 10 now checks both directions: an observable held as a plain `let`, and
+something observed that is optional or not observable at all. The fix for one
+is the failure mode of the other.
+
+### The chart never redrew, and five others had the same fault
+
+The diagnostics screen settled it in one look: three points recorded for WAN_1,
+a card saying "none yet", and VLAN_100 saying "1 so far" — three different
+numbers for one tracker. The chart was not stale in the data; it was not
+re-rendering at all.
+
+`ThroughputChart` held `let store: DashboardStore`. SwiftUI decides whether to
+re-render by comparing a view's stored properties, and a reference never
+changes — so the body ran once, when the card was created, and kept whatever it
+saw. A card created before the first sample said "none yet" for the rest of the
+session. VLAN_100 was created a refresh later and froze at one.
+
+Nothing about that is a compile error. It produces a screen that is quietly,
+permanently wrong, which is the worst kind of bug this app has produced, and I
+spent four rounds reasoning about PHP field names and tracker arithmetic that
+were correct the whole time.
+
+A tenth rule now flags a View holding an ObservableObject as a plain `let`. It
+found five more on its first run: gateway latency and three VPN throughput
+cards had the same fault and would have been just as wrong. The VPN one held
+the tracker as an optional, which cannot be observed at all — the store's
+tracker is never nil, so the optional bought nothing and cost the redraw.
+
+The rule also needed tightening: matching `ThemeManager` inside
+`ThemeManager.Selection` reported a nested enum as an observable, and a rule
+that has to be argued with is a rule that gets ignored.
+
+### Historical traffic, where the firewall will give it up
+
+pfSense records months of per-interface traffic in `/var/db/rrd`, and this app
+has only ever shown what it watched since launch. The interface screen now
+reads a day of it and draws it under the live chart — separate rather than
+merged, because one is five-minute averages over a day and the other is two
+seconds, and on a shared axis the live one would be a vertical line.
+
+The read is guarded. RRD is a binary format normally read by `rrdtool`, a shell
+binary, and shelling out is what the snippet rules forbid; PHP can read it only
+with the `rrd` extension loaded, which is not standard on pfSense. Where
+`rrd_fetch` exists it is used, and where it does not the screen says exactly
+that instead of showing an empty chart that looks like an interface with no
+traffic.
+
+Every interface at once, with no parameter, because a snippet is a constant —
+interpolating an interface name would mean assembling PHP at runtime, which is
+the one thing that would make the allowlist unreviewable. Downsampled to 120
+points a series: a day at RRD's finest resolution is 1440 buckets per direction
+per interface, which is a megabyte of JSON to draw a line 200 points wide.
+
+### Rules and NAT read as four labelled lines
+
+FROM, TO, PORT, WHY — in that order, so a column of rules can be read down
+rather than across. The port has its own row because it belongs to neither side
+and squeezing it beside one made both wrap. NAT cards took the same shape, with
+SENDS for the target.
+
+The kind marker went with the alias names: with the names resolved it was
+labelling an address as "alias", which describes where the value came from
+rather than what it is. The detail screens resolve too — the name above its
+members was the same duplication the list had already dropped.
+
+### One chip per interface, not one per combination
+
+A floating rule names every interface it applies to, so the raw values produced
+a chip reading "OPENVPN1, OPENVPN2 +11" — a filter for a set nobody thinks in.
+The chips are now individual interfaces, and choosing one shows every rule that
+applies to it, floating rules included.
+
+### Sharing a log showed a blank page
+
+The button handed `UIActivityViewController` an array of a hundred-odd separate
+strings, so it tried to preview a hundred documents at once and rendered an
+empty sheet with a placeholder icon. A log excerpt is one thing you are
+sharing; it travels as one document now, through `ShareLink`.
+
+### Back from a rule went to More, not the rule list
+
+`MasterDetail` created a `NavigationStack` of its own, and Firewall is pushed
+from More — so a stack nested inside a stack, and going back popped the outer
+one. A screen that may be pushed cannot own the stack it is pushed into.
+
+It drives the ambient stack now, which works whether the screen is a tab root
+or pushed. Clients is wrapped by the shell again, as it was before.
+
+### Rules and NAT show addresses again, not alias names
+
+Adding the kind markers reintroduced the alias names in the rows — the thing
+that had already been removed once. Both sides and both ports resolve, with the
+kind still marked so an entry expanding to several addresses is not mistaken
+for one.
+
+### The dashboard chart reports its own state
+
+The two-second detail chart draws and the thirty-second dashboard chart does
+not, and reading the code has not explained why: the keys match, the counters
+arrive — the Network tab renders them — and the arithmetic is covered by
+passing tests.
+
+So rather than reason about it further, Diagnostics now lists every series the
+tracker holds, how many points each has, and which interfaces have a baseline
+but no rate. One look at that screen says whether ingest is running at all,
+which is the fact I have been guessing at.
+
+### A ninth rule: views used but not defined
+
+Removing the ARP pane with a non-greedy regex matched to the wrong closing
+brace and took `InterfaceCard` and `ARPRow` with it. `ARPRow` was meant to go;
+`InterfaceCard` was not, and the Network tab stopped compiling.
+
+That is the third edit today to delete more than intended. The members suite
+now flags a `*View`, `*Card` or `*Row` that is used but defined nowhere, which
+is what all three looked like from the outside.
+
+### Tapping a client went black and bounced back
+
+`MasterDetail`'s compact path was a computed binding whose getter built a fresh
+array on every evaluation, so SwiftUI saw the path change identity
+mid-transition and unwound it. The path is held now and mirrored to the
+selection in both directions.
+
+Tidier code that does not work is worse than plainer code that does, and the
+derived binding was chosen for tidiness.
+
+### Filter log lines open
+
+`filterlog` writes a documented CSV and the app was showing it raw — a wall of
+commas where the rule, the direction and the ports are countable but not
+readable. Tapping one now names them, resolves the addresses to the devices the
+firewall knows, and finds the rule the tracker refers to. The raw line stays at
+the bottom, because parsing is lenient and the tail varies.
+
+Two offsets were wrong before the real lines were tried: the protocol appears
+twice, a number then a name, and taking the number gave a column reading "6"
+where "tcp" belonged. IPv6 carries class, flow label and hop limit where IPv4
+carries tos, ecn, ttl, id, offset and flags, so reading v6 at the v4 offsets
+reported the hop limit as the protocol. Both fixed and covered by tests using
+lines from the firewall.
+
+### Firewall rules say more in the list
+
+Interface, protocol, both sides with their ports, and the description. Each
+side is marked with what it is — host, network, alias, interface, any —
+because four rules that look alike in a list can be doing very different
+things, and pfSense does not say which is which anywhere visible. The tracker,
+IP version and logging flag stay on the detail screen: they matter when you are
+working on a rule, not when you are looking for one.
+
+### Overview charts are taller, and keep four hours
+
+60 samples was chosen when the chart was a sparkline. A pinned interface is
+pinned to be looked at, so the tracker keeps 480 points — four hours at the
+default refresh — and the Overview draws them at twice the height. pfSense
+keeps months in RRD and this app cannot read it, so the history it keeps itself
+is all there is.
+
+### The ARP tab is gone from Network
+
+Clients already joins ARP with leases and static mappings, names each device
+and shows its filter log. A second, thinner view of the same table was a place
+to look that answered less.
+
+### An eighth rule: the snippet catalogue
+
+Regenerating the batches cut from the first batch to a `// MARK:` comment, and
+`rrdProbe` had been added between them — so it was deleted while still named in
+`all`, which does not compile.
+
+The members suite now checks both directions: a name in `all` that is not
+declared, and a snippet declared but missing from `all`. The second matters
+independently — `all` is what the publish check audits and what
+`check-snippets.sh` exercises, so a snippet absent from it is unaudited.
+
+Two of today's edits have now cut a wider range than intended. Deleting by
+index between two markers is fast and does not notice what it passes over.
+
+### The batch accumulator collided with a body's own variable
+
+Clients and the ARP table came back empty on device, with no error anywhere.
+The batch had succeeded.
+
+The accumulator was called `$sections`, and `host_overrides` uses that name for
+a local — starting with `$sections = [];`. Every section captured before it was
+discarded, and its own `$sections[] = …` appends left the result structurally
+valid and wrong. So the app decoded a well-formed response containing nothing,
+and reported success.
+
+That is the worst shape a bug can take here: an empty network and a broken
+fetch look identical, which is the thing this app keeps having to distinguish.
+
+The accumulator is `$vaktpost_batch` now, and a test asserts no other snippet
+mentions that name — the accumulator shares scope with every body in its group,
+so the collision is structural rather than bad luck. A second test asserts each
+capture appears after its own body and before the next, since a capture in the
+wrong place stores the previous section's result under this section's name and
+decodes cleanly.
+
+Clients and the ARP tab also say when a fetch failed rather than showing their
+empty state. ARP already did; Clients did not, and "No clients seen" is a
+reassuring sentence to show somebody whose firewall is not answering.
+
+### Floating rules name every interface they apply to
+
+`opt5,opt6,opt7,lan,opt10,opt11,opt12,opt13,opt2,opt3,opt4` was printed raw,
+which is both unreadable and the one place the configured names matter most.
+A list covering everything now reads "all interfaces"; a shorter one names the
+first two and counts the rest.
+
+### The drift test was comparing the wrong thing
+
+Every batch "had drifted from" every one of its parts. Not drift: the test
+compared `script`, which is the *wrapped* form — every snippet gets an
+`ini_set`, a lock release and a `json_encode` tail, and a batch has one wrapper
+rather than five, so comparing scripts compares the wrappers too and can never
+match.
+
+`PHPSnippet` now exposes its unwrapped `body`, and the test compares that.
+
+Worth recording how this got shipped: I simulated the assertion before writing
+it and the simulation passed, because it compared bodies while the test I then
+wrote compared scripts. Checking a test by re-implementing it only works if the
+re-implementation does the same thing, and mine quietly did the right thing
+where the test did the wrong one.
+
+### The widget is gone
+
+It was the least-used surface and the most expensive: a second target, a shared
+snapshot type, an App Group, and its own copy of the palettes and the Dynamic
+Type modifier. It also carried a bug found an hour ago — it looked up
+throughput by the wrong key and had been showing no rate at all.
+
+Removing it takes the App Group with it, which removes the one thing that made
+a first install fail: an App Group must be registered on the developer account
+before Xcode will sign against it. The entitlements file is now deliberately
+empty, and the layout check warns if anything reappears in it.
+
+### Icons: the simulator was never going to work
+
+`NSPOSIXErrorDomain 5` — `EIO`, an I/O error — from the simulator, where the
+earlier device attempts gave `EAGAIN`. Two failures that look alike and are
+not: the simulator has no Home Screen icon database to write to, so alternate
+icons cannot work there at all.
+
+Showing the domain and code is what made this visible. "The operation couldn't
+be completed" had been the same sentence for both, and I had spent two rounds
+treating a simulator limitation as a timing problem — adding delays, then
+waiting for `.foregroundActive`, then a pending retry, none of which could ever
+have helped there.
+
+The picker now says so before the tap rather than after: the simulator cannot
+change app icons, and the choice will apply on a device. Retrying is not
+offered, because a suggestion that can never work is worse than none.
+
+The device path keeps the pending retry, which is still the right answer for
+`EAGAIN`.
+
+### Icons: a refused change is remembered
+
+`setAlternateIconName` kept returning `EAGAIN` on a device where the app was
+plainly in front and all five alternates were registered. The documented reason
+is that the app is not `.foregroundActive`, and waiting for that was not
+enough.
+
+So rather than keep guessing at delays: a refused icon is kept and applied when
+the app next becomes active. Leaving Settings and coming back does it. That
+turns a failure the person can do nothing about into one they can, and costs
+nothing when the call works first time. The picker says what is pending.
+
+Errors now include the domain and code. "The operation couldn't be completed"
+is the same sentence for a dozen different problems, and knowing which one is
+the whole difficulty.
+
+### A diagnostics screen
+
+Every section already recorded why it failed, but that error only appeared on
+the card it belonged to — so an empty Gateways card meant finding the Gateways
+card to learn why, and "is the app healthy" meant visiting nine screens.
+Several of this app's own bugs went unnoticed for a session because the
+evidence was scattered.
+
+Under More: what is failing, what has stopped being retried and after how many
+attempts, and the connection itself. Nothing is fetched; it is what the last
+refresh already found out.
+
+It also writes down what this app cannot read and why — blocked hosts, live
+HAProxy status, UPnP maps, historical graphs. Each cost a round of guessing to
+establish, and an empty screen looks identical to a broken one without the
+explanation.
+
+### The widget was showing no rate at all
+
+It looked up throughput by `device` while the tracker stores by `seriesKey` —
+the VLAN-on-a-lagg bug, fixed in the tracker weeks ago and missed in this copy.
+The key never matched, so the rate was always absent.
+
+It also follows whatever is pinned to the Overview now rather than always the
+uplink, and says which interface it is showing. A bare rate does not say what
+it is a rate of.
+
+A test asserts the two keys stay in step.
+
+### The ARP tab searches the name it shows
+
+It displayed the resolved name — DNS override, then lease, then static mapping
+— but searched only the announced hostname. Typing the name on the row in front
+of you found nothing.
+
+### iPad gets a list and a detail side by side
+
+The app was an enlarged phone: a column of cards down the middle of a 13-inch
+screen, and tapping one replaced the whole thing. Clients and Firewall suffer
+most, because comparing two entries is most of what you do there.
+
+Both now show the list on the left and the selection on the right at regular
+width, and behave exactly as before on a phone.
+
+Two decisions worth recording:
+
+- **An HStack, not a `NavigationSplitView`.** A split view can only be a root,
+  and these screens are not all roots — Firewall is pushed from More. Nesting
+  one inside a navigation stack puts the detail in the wrong column or drops
+  it. An HStack composes anywhere and gives the same thing.
+- **Selection is an identifier, not the item.** A stored copy of a row goes
+  stale on the next refresh: thirty seconds later the detail pane would be
+  showing counters from before the last sample. The id is looked up again each
+  time, so the detail follows the data — and the compact path is derived from
+  the same selection, so a back swipe clears it and the two layouts cannot
+  disagree about what is showing.
+
+Every other screen caps its content at 720 points on iPad. Cards designed for a
+phone's width become lines of text a foot wide with a status pill marooned at
+the end, which is harder to read than the layout it replaced.
+
+### A seventh rule: assignments to properties that do not exist
+
+The batch decoders assigned `self.arpEntries` where the property is `arp` — a
+name I invented rather than checked, in a file with sixty-odd stored properties
+to confuse it against.
+
+The members suite could not see it: its typed-binding rule needs a written type
+annotation, and `self` has none. It now checks assignments to `self.x` against
+the properties the enclosing type declares, which names the same line the
+compiler does.
+
+### Text scales with the person's setting
+
+Every font in the app was `Font.system(size:)`, which does not scale — the same
+points whether text is set to xSmall or to the largest accessibility size. On a
+monitoring app you read on a phone, that meant somebody who needs larger text
+got a dashboard they could not read.
+
+All 246 call sites now use a `.scaledFont` modifier that multiplies by the
+current Dynamic Type ratio, relative to `.body` throughout: the sizes were
+chosen against each other, and scaling them by different curves would pull a
+card apart at large sizes. Converted by rewrite rather than by hand — a missed
+site leaves one unscaled label that nobody notices until somebody complains.
+
+Three things the conversion needed beyond the fonts:
+
+- The icon wells scale too. A 22pt well clips a symbol that has grown to 30pt.
+  The decorative rails down the side of a card stay fixed: they are not text.
+- Row summaries allow two lines instead of one. "Allow Cloudflare to HAP…" says
+  less than two lines of it.
+- The modifier lives in its own file compiled by both targets. The widget uses
+  it as well, and it does not compile `Components.swift` — putting it there
+  would have broken the extension build.
+
+`Font.custom(_:size:relativeTo:)` scales natively but needs a font name, and
+naming the system font by string is fragile across releases. `@ScaledMetric`
+gives the ratio directly and keeps the system font.
+
+A test fails the build if a fixed font size reappears, which is how all 246 got
+there: one at a time, each looking reasonable on its own.
+
+### A refresh is five calls instead of twenty-two
+
+pfSense serialises XML-RPC, so every request queued behind the last and behind
+whatever the webConfigurator was doing. The cost of a refresh was in the round
+trips, not the work.
+
+Three of those calls were the *same* telemetry snippet, run separately for
+system status, the state table and filesystems. That was free to fix and should
+have been noticed long ago.
+
+The rest are grouped into four calls by screen: core (telemetry, firmware,
+interfaces, gateways, services), clients (ARP, leases, static mappings, host
+overrides, aliases), VPN, and system. The filter log stays on its own because it
+takes a parameter.
+
+Grouped rather than combined into one, because a PHP fatal cannot be caught: a
+single call would mean one bad section blanking the whole dashboard. Four groups
+bound that to the screens they serve, and errors are still recorded against
+individual sections — "batch_core failed" would be an implementation detail
+leaking onto a screen, and would leave four other cards blank with no
+explanation.
+
+The batches were generated from the existing snippet bodies rather than
+retyped, so there is no transcription risk — but there are now two copies of
+each body, and a test asserts each batch contains its parts verbatim. Without
+it, fixing a field name in one and not the other would leave a screen quietly
+reading the wrong key. The individual snippets stay because that is what
+`check-snippets.sh` exercises when debugging one section against a live
+firewall.
+
+Row unwrapping is now shared between the batched and solo paths, so the `data`
+envelope, bare lists and keyed-object folding behave identically either way.
+
+### The read-only check failed about once in twelve runs
+
+It forked two greps for every function name it found — well over a hundred
+processes — and under load an occasional fork failed, which reads as "not on
+the allowlist". It named a different innocent function each time, which is what
+made it look like noise.
+
+I dismissed it as flaky three times this session before looking. That is the
+wrong instinct: an intermittent check is worse than one that always fails,
+because it trains you to ignore the one thing standing between this app and a
+snippet that writes to a firewall.
+
+Now a single pass. Zero failures in thirty runs, and it still catches a planted
+`system_reboot_now`.
+
+### Interfaces report whether they have byte counters at all
+
+The throughput chart has never charted anything, and said "collecting samples"
+throughout — a message that cannot distinguish "this started a moment ago" from
+"no sample will ever arrive". The likeliest cause is `get_interface_info()` not
+returning the counters the app reads.
+
+The snippet now reports explicitly whether they are present, and the chart says
+which situation it is in rather than promising a sample that may never come.
+
+### Icon switching waits for the app to be active
+
+A fixed 0.6s retry was a guess at a delay, and it kept failing. `EAGAIN` from
+`setAlternateIconName` means iOS declined at that moment, and the moment that
+matters is the scene's state: it refuses unless the app is `.foregroundActive`,
+which it is not during a navigation push, a sheet presentation, or while a
+screen is still animating in.
+
+So it now waits for the app to actually be active rather than guessing how long
+that takes, and retries up to eight times a quarter-second apart. If it still
+refuses, the message says how many attempts were made and what the build
+registered — the difference between "try again" and "this build is wrong" is
+not something to leave a person guessing at.
+
+The registered names are shown on any failure now. Previously they appeared
+only when icons were missing, which meant their absence was itself a clue and
+nobody could read it.
+
 ### Two different icon failures, told apart
 
 `setAlternateIconName` returns the same unhelpful "resource temporarily
@@ -1353,6 +1845,498 @@ on is how a list stops being read.
   dedicated account, and the field should not argue with them.
 - Acknowledged and silenced alerts are counted separately, so the same alert is
   not reported as hidden twice for two different reasons.
+
+### Every log line opens, not just filter lines
+
+A DHCP or OpenVPN line is a sentence with a syslog prefix, and the list shows
+two lines of one that may run to twenty. Tapping any line now splits off the
+timestamp, host and process, gives the message room to wrap, and names any IPv4
+address in it — a lease going to 172.16.1.161 is more use when the screen also
+says which device that is.
+
+IPv4 only. An IPv6 address cannot be told from a MAC or a fragment of a
+timestamp without more care than a convenience like this deserves, and a wrong
+guess would put a name against the wrong thing.
+
+### "What this app cannot read" is gone
+
+It listed RRD history as unreachable on the same build that now attempts to
+read it, which is the kind of stale certainty that makes a whole screen less
+trustworthy. Each gap is now said where it comes up, by the screen that has it.
+
+### Smaller things from a pass on the device
+
+- The Network tab's interface cards carry the same chart the Overview does.
+  Lifetime counters say how much has gone through an interface since boot and
+  nothing about whether anything is going through it now.
+- Rule and NAT rows keep FROM, TO and PORT to one line each. A rule whose
+  source expands to twenty networks was four lines tall in a list of
+  ninety-eight, and the list exists to be scanned.
+- Their detail screens put one address per line instead of a wrapped run. A
+  wrapped run breaks mid-address, so `198.51.100.0/22` can end one line and
+  start the next.
+- `WHY` is `DESC`.
+
+### Observing an optional does not compile
+
+Two of the six views held their tracker as an optional, and `@ObservedObject`
+cannot wrap one. Both were defensive wrappers around store properties that are
+never nil, so the optional bought nothing and cost the redraw — which is how
+the staleness got in.
+
+I made the same conversion by hand twice and got the same compile error twice,
+so rule 10 now checks both directions: an observable held as a plain `let`, and
+something observed that is optional or not observable at all. The fix for one
+is the failure mode of the other.
+
+### The chart never redrew, and five others had the same fault
+
+The diagnostics screen settled it in one look: three points recorded for WAN_1,
+a card saying "none yet", and VLAN_100 saying "1 so far" — three different
+numbers for one tracker. The chart was not stale in the data; it was not
+re-rendering at all.
+
+`ThroughputChart` held `let store: DashboardStore`. SwiftUI decides whether to
+re-render by comparing a view's stored properties, and a reference never
+changes — so the body ran once, when the card was created, and kept whatever it
+saw. A card created before the first sample said "none yet" for the rest of the
+session. VLAN_100 was created a refresh later and froze at one.
+
+Nothing about that is a compile error. It produces a screen that is quietly,
+permanently wrong, which is the worst kind of bug this app has produced, and I
+spent four rounds reasoning about PHP field names and tracker arithmetic that
+were correct the whole time.
+
+A tenth rule now flags a View holding an ObservableObject as a plain `let`. It
+found five more on its first run: gateway latency and three VPN throughput
+cards had the same fault and would have been just as wrong. The VPN one held
+the tracker as an optional, which cannot be observed at all — the store's
+tracker is never nil, so the optional bought nothing and cost the redraw.
+
+The rule also needed tightening: matching `ThemeManager` inside
+`ThemeManager.Selection` reported a nested enum as an observable, and a rule
+that has to be argued with is a rule that gets ignored.
+
+### Historical traffic, where the firewall will give it up
+
+pfSense records months of per-interface traffic in `/var/db/rrd`, and this app
+has only ever shown what it watched since launch. The interface screen now
+reads a day of it and draws it under the live chart — separate rather than
+merged, because one is five-minute averages over a day and the other is two
+seconds, and on a shared axis the live one would be a vertical line.
+
+The read is guarded. RRD is a binary format normally read by `rrdtool`, a shell
+binary, and shelling out is what the snippet rules forbid; PHP can read it only
+with the `rrd` extension loaded, which is not standard on pfSense. Where
+`rrd_fetch` exists it is used, and where it does not the screen says exactly
+that instead of showing an empty chart that looks like an interface with no
+traffic.
+
+Every interface at once, with no parameter, because a snippet is a constant —
+interpolating an interface name would mean assembling PHP at runtime, which is
+the one thing that would make the allowlist unreviewable. Downsampled to 120
+points a series: a day at RRD's finest resolution is 1440 buckets per direction
+per interface, which is a megabyte of JSON to draw a line 200 points wide.
+
+### Rules and NAT read as four labelled lines
+
+FROM, TO, PORT, WHY — in that order, so a column of rules can be read down
+rather than across. The port has its own row because it belongs to neither side
+and squeezing it beside one made both wrap. NAT cards took the same shape, with
+SENDS for the target.
+
+The kind marker went with the alias names: with the names resolved it was
+labelling an address as "alias", which describes where the value came from
+rather than what it is. The detail screens resolve too — the name above its
+members was the same duplication the list had already dropped.
+
+### One chip per interface, not one per combination
+
+A floating rule names every interface it applies to, so the raw values produced
+a chip reading "OPENVPN1, OPENVPN2 +11" — a filter for a set nobody thinks in.
+The chips are now individual interfaces, and choosing one shows every rule that
+applies to it, floating rules included.
+
+### Sharing a log showed a blank page
+
+The button handed `UIActivityViewController` an array of a hundred-odd separate
+strings, so it tried to preview a hundred documents at once and rendered an
+empty sheet with a placeholder icon. A log excerpt is one thing you are
+sharing; it travels as one document now, through `ShareLink`.
+
+### Back from a rule went to More, not the rule list
+
+`MasterDetail` created a `NavigationStack` of its own, and Firewall is pushed
+from More — so a stack nested inside a stack, and going back popped the outer
+one. A screen that may be pushed cannot own the stack it is pushed into.
+
+It drives the ambient stack now, which works whether the screen is a tab root
+or pushed. Clients is wrapped by the shell again, as it was before.
+
+### Rules and NAT show addresses again, not alias names
+
+Adding the kind markers reintroduced the alias names in the rows — the thing
+that had already been removed once. Both sides and both ports resolve, with the
+kind still marked so an entry expanding to several addresses is not mistaken
+for one.
+
+### The dashboard chart reports its own state
+
+The two-second detail chart draws and the thirty-second dashboard chart does
+not, and reading the code has not explained why: the keys match, the counters
+arrive — the Network tab renders them — and the arithmetic is covered by
+passing tests.
+
+So rather than reason about it further, Diagnostics now lists every series the
+tracker holds, how many points each has, and which interfaces have a baseline
+but no rate. One look at that screen says whether ingest is running at all,
+which is the fact I have been guessing at.
+
+### A ninth rule: views used but not defined
+
+Removing the ARP pane with a non-greedy regex matched to the wrong closing
+brace and took `InterfaceCard` and `ARPRow` with it. `ARPRow` was meant to go;
+`InterfaceCard` was not, and the Network tab stopped compiling.
+
+That is the third edit today to delete more than intended. The members suite
+now flags a `*View`, `*Card` or `*Row` that is used but defined nowhere, which
+is what all three looked like from the outside.
+
+### Tapping a client went black and bounced back
+
+`MasterDetail`'s compact path was a computed binding whose getter built a fresh
+array on every evaluation, so SwiftUI saw the path change identity
+mid-transition and unwound it. The path is held now and mirrored to the
+selection in both directions.
+
+Tidier code that does not work is worse than plainer code that does, and the
+derived binding was chosen for tidiness.
+
+### Filter log lines open
+
+`filterlog` writes a documented CSV and the app was showing it raw — a wall of
+commas where the rule, the direction and the ports are countable but not
+readable. Tapping one now names them, resolves the addresses to the devices the
+firewall knows, and finds the rule the tracker refers to. The raw line stays at
+the bottom, because parsing is lenient and the tail varies.
+
+Two offsets were wrong before the real lines were tried: the protocol appears
+twice, a number then a name, and taking the number gave a column reading "6"
+where "tcp" belonged. IPv6 carries class, flow label and hop limit where IPv4
+carries tos, ecn, ttl, id, offset and flags, so reading v6 at the v4 offsets
+reported the hop limit as the protocol. Both fixed and covered by tests using
+lines from the firewall.
+
+### Firewall rules say more in the list
+
+Interface, protocol, both sides with their ports, and the description. Each
+side is marked with what it is — host, network, alias, interface, any —
+because four rules that look alike in a list can be doing very different
+things, and pfSense does not say which is which anywhere visible. The tracker,
+IP version and logging flag stay on the detail screen: they matter when you are
+working on a rule, not when you are looking for one.
+
+### Overview charts are taller, and keep four hours
+
+60 samples was chosen when the chart was a sparkline. A pinned interface is
+pinned to be looked at, so the tracker keeps 480 points — four hours at the
+default refresh — and the Overview draws them at twice the height. pfSense
+keeps months in RRD and this app cannot read it, so the history it keeps itself
+is all there is.
+
+### The ARP tab is gone from Network
+
+Clients already joins ARP with leases and static mappings, names each device
+and shows its filter log. A second, thinner view of the same table was a place
+to look that answered less.
+
+### An eighth rule: the snippet catalogue
+
+Regenerating the batches cut from the first batch to a `// MARK:` comment, and
+`rrdProbe` had been added between them — so it was deleted while still named in
+`all`, which does not compile.
+
+The members suite now checks both directions: a name in `all` that is not
+declared, and a snippet declared but missing from `all`. The second matters
+independently — `all` is what the publish check audits and what
+`check-snippets.sh` exercises, so a snippet absent from it is unaudited.
+
+Two of today's edits have now cut a wider range than intended. Deleting by
+index between two markers is fast and does not notice what it passes over.
+
+### The batch accumulator collided with a body's own variable
+
+Clients and the ARP table came back empty on device, with no error anywhere.
+The batch had succeeded.
+
+The accumulator was called `$sections`, and `host_overrides` uses that name for
+a local — starting with `$sections = [];`. Every section captured before it was
+discarded, and its own `$sections[] = …` appends left the result structurally
+valid and wrong. So the app decoded a well-formed response containing nothing,
+and reported success.
+
+That is the worst shape a bug can take here: an empty network and a broken
+fetch look identical, which is the thing this app keeps having to distinguish.
+
+The accumulator is `$vaktpost_batch` now, and a test asserts no other snippet
+mentions that name — the accumulator shares scope with every body in its group,
+so the collision is structural rather than bad luck. A second test asserts each
+capture appears after its own body and before the next, since a capture in the
+wrong place stores the previous section's result under this section's name and
+decodes cleanly.
+
+Clients and the ARP tab also say when a fetch failed rather than showing their
+empty state. ARP already did; Clients did not, and "No clients seen" is a
+reassuring sentence to show somebody whose firewall is not answering.
+
+### Floating rules name every interface they apply to
+
+`opt5,opt6,opt7,lan,opt10,opt11,opt12,opt13,opt2,opt3,opt4` was printed raw,
+which is both unreadable and the one place the configured names matter most.
+A list covering everything now reads "all interfaces"; a shorter one names the
+first two and counts the rest.
+
+### The drift test was comparing the wrong thing
+
+Every batch "had drifted from" every one of its parts. Not drift: the test
+compared `script`, which is the *wrapped* form — every snippet gets an
+`ini_set`, a lock release and a `json_encode` tail, and a batch has one wrapper
+rather than five, so comparing scripts compares the wrappers too and can never
+match.
+
+`PHPSnippet` now exposes its unwrapped `body`, and the test compares that.
+
+Worth recording how this got shipped: I simulated the assertion before writing
+it and the simulation passed, because it compared bodies while the test I then
+wrote compared scripts. Checking a test by re-implementing it only works if the
+re-implementation does the same thing, and mine quietly did the right thing
+where the test did the wrong one.
+
+### The widget is gone
+
+It was the least-used surface and the most expensive: a second target, a shared
+snapshot type, an App Group, and its own copy of the palettes and the Dynamic
+Type modifier. It also carried a bug found an hour ago — it looked up
+throughput by the wrong key and had been showing no rate at all.
+
+Removing it takes the App Group with it, which removes the one thing that made
+a first install fail: an App Group must be registered on the developer account
+before Xcode will sign against it. The entitlements file is now deliberately
+empty, and the layout check warns if anything reappears in it.
+
+### Icons: the simulator was never going to work
+
+`NSPOSIXErrorDomain 5` — `EIO`, an I/O error — from the simulator, where the
+earlier device attempts gave `EAGAIN`. Two failures that look alike and are
+not: the simulator has no Home Screen icon database to write to, so alternate
+icons cannot work there at all.
+
+Showing the domain and code is what made this visible. "The operation couldn't
+be completed" had been the same sentence for both, and I had spent two rounds
+treating a simulator limitation as a timing problem — adding delays, then
+waiting for `.foregroundActive`, then a pending retry, none of which could ever
+have helped there.
+
+The picker now says so before the tap rather than after: the simulator cannot
+change app icons, and the choice will apply on a device. Retrying is not
+offered, because a suggestion that can never work is worse than none.
+
+The device path keeps the pending retry, which is still the right answer for
+`EAGAIN`.
+
+### Icons: a refused change is remembered
+
+`setAlternateIconName` kept returning `EAGAIN` on a device where the app was
+plainly in front and all five alternates were registered. The documented reason
+is that the app is not `.foregroundActive`, and waiting for that was not
+enough.
+
+So rather than keep guessing at delays: a refused icon is kept and applied when
+the app next becomes active. Leaving Settings and coming back does it. That
+turns a failure the person can do nothing about into one they can, and costs
+nothing when the call works first time. The picker says what is pending.
+
+Errors now include the domain and code. "The operation couldn't be completed"
+is the same sentence for a dozen different problems, and knowing which one is
+the whole difficulty.
+
+### A diagnostics screen
+
+Every section already recorded why it failed, but that error only appeared on
+the card it belonged to — so an empty Gateways card meant finding the Gateways
+card to learn why, and "is the app healthy" meant visiting nine screens.
+Several of this app's own bugs went unnoticed for a session because the
+evidence was scattered.
+
+Under More: what is failing, what has stopped being retried and after how many
+attempts, and the connection itself. Nothing is fetched; it is what the last
+refresh already found out.
+
+It also writes down what this app cannot read and why — blocked hosts, live
+HAProxy status, UPnP maps, historical graphs. Each cost a round of guessing to
+establish, and an empty screen looks identical to a broken one without the
+explanation.
+
+### The widget was showing no rate at all
+
+It looked up throughput by `device` while the tracker stores by `seriesKey` —
+the VLAN-on-a-lagg bug, fixed in the tracker weeks ago and missed in this copy.
+The key never matched, so the rate was always absent.
+
+It also follows whatever is pinned to the Overview now rather than always the
+uplink, and says which interface it is showing. A bare rate does not say what
+it is a rate of.
+
+A test asserts the two keys stay in step.
+
+### The ARP tab searches the name it shows
+
+It displayed the resolved name — DNS override, then lease, then static mapping
+— but searched only the announced hostname. Typing the name on the row in front
+of you found nothing.
+
+### iPad gets a list and a detail side by side
+
+The app was an enlarged phone: a column of cards down the middle of a 13-inch
+screen, and tapping one replaced the whole thing. Clients and Firewall suffer
+most, because comparing two entries is most of what you do there.
+
+Both now show the list on the left and the selection on the right at regular
+width, and behave exactly as before on a phone.
+
+Two decisions worth recording:
+
+- **An HStack, not a `NavigationSplitView`.** A split view can only be a root,
+  and these screens are not all roots — Firewall is pushed from More. Nesting
+  one inside a navigation stack puts the detail in the wrong column or drops
+  it. An HStack composes anywhere and gives the same thing.
+- **Selection is an identifier, not the item.** A stored copy of a row goes
+  stale on the next refresh: thirty seconds later the detail pane would be
+  showing counters from before the last sample. The id is looked up again each
+  time, so the detail follows the data — and the compact path is derived from
+  the same selection, so a back swipe clears it and the two layouts cannot
+  disagree about what is showing.
+
+Every other screen caps its content at 720 points on iPad. Cards designed for a
+phone's width become lines of text a foot wide with a status pill marooned at
+the end, which is harder to read than the layout it replaced.
+
+### A seventh rule: assignments to properties that do not exist
+
+The batch decoders assigned `self.arpEntries` where the property is `arp` — a
+name I invented rather than checked, in a file with sixty-odd stored properties
+to confuse it against.
+
+The members suite could not see it: its typed-binding rule needs a written type
+annotation, and `self` has none. It now checks assignments to `self.x` against
+the properties the enclosing type declares, which names the same line the
+compiler does.
+
+### Text scales with the person's setting
+
+Every font in the app was `Font.system(size:)`, which does not scale — the same
+points whether text is set to xSmall or to the largest accessibility size. On a
+monitoring app you read on a phone, that meant somebody who needs larger text
+got a dashboard they could not read.
+
+All 246 call sites now use a `.scaledFont` modifier that multiplies by the
+current Dynamic Type ratio, relative to `.body` throughout: the sizes were
+chosen against each other, and scaling them by different curves would pull a
+card apart at large sizes. Converted by rewrite rather than by hand — a missed
+site leaves one unscaled label that nobody notices until somebody complains.
+
+Three things the conversion needed beyond the fonts:
+
+- The icon wells scale too. A 22pt well clips a symbol that has grown to 30pt.
+  The decorative rails down the side of a card stay fixed: they are not text.
+- Row summaries allow two lines instead of one. "Allow Cloudflare to HAP…" says
+  less than two lines of it.
+- The modifier lives in its own file compiled by both targets. The widget uses
+  it as well, and it does not compile `Components.swift` — putting it there
+  would have broken the extension build.
+
+`Font.custom(_:size:relativeTo:)` scales natively but needs a font name, and
+naming the system font by string is fragile across releases. `@ScaledMetric`
+gives the ratio directly and keeps the system font.
+
+A test fails the build if a fixed font size reappears, which is how all 246 got
+there: one at a time, each looking reasonable on its own.
+
+### A refresh is five calls instead of twenty-two
+
+pfSense serialises XML-RPC, so every request queued behind the last and behind
+whatever the webConfigurator was doing. The cost of a refresh was in the round
+trips, not the work.
+
+Three of those calls were the *same* telemetry snippet, run separately for
+system status, the state table and filesystems. That was free to fix and should
+have been noticed long ago.
+
+The rest are grouped into four calls by screen: core (telemetry, firmware,
+interfaces, gateways, services), clients (ARP, leases, static mappings, host
+overrides, aliases), VPN, and system. The filter log stays on its own because it
+takes a parameter.
+
+Grouped rather than combined into one, because a PHP fatal cannot be caught: a
+single call would mean one bad section blanking the whole dashboard. Four groups
+bound that to the screens they serve, and errors are still recorded against
+individual sections — "batch_core failed" would be an implementation detail
+leaking onto a screen, and would leave four other cards blank with no
+explanation.
+
+The batches were generated from the existing snippet bodies rather than
+retyped, so there is no transcription risk — but there are now two copies of
+each body, and a test asserts each batch contains its parts verbatim. Without
+it, fixing a field name in one and not the other would leave a screen quietly
+reading the wrong key. The individual snippets stay because that is what
+`check-snippets.sh` exercises when debugging one section against a live
+firewall.
+
+Row unwrapping is now shared between the batched and solo paths, so the `data`
+envelope, bare lists and keyed-object folding behave identically either way.
+
+### The read-only check failed about once in twelve runs
+
+It forked two greps for every function name it found — well over a hundred
+processes — and under load an occasional fork failed, which reads as "not on
+the allowlist". It named a different innocent function each time, which is what
+made it look like noise.
+
+I dismissed it as flaky three times this session before looking. That is the
+wrong instinct: an intermittent check is worse than one that always fails,
+because it trains you to ignore the one thing standing between this app and a
+snippet that writes to a firewall.
+
+Now a single pass. Zero failures in thirty runs, and it still catches a planted
+`system_reboot_now`.
+
+### Interfaces report whether they have byte counters at all
+
+The throughput chart has never charted anything, and said "collecting samples"
+throughout — a message that cannot distinguish "this started a moment ago" from
+"no sample will ever arrive". The likeliest cause is `get_interface_info()` not
+returning the counters the app reads.
+
+The snippet now reports explicitly whether they are present, and the chart says
+which situation it is in rather than promising a sample that may never come.
+
+### Icon switching waits for the app to be active
+
+A fixed 0.6s retry was a guess at a delay, and it kept failing. `EAGAIN` from
+`setAlternateIconName` means iOS declined at that moment, and the moment that
+matters is the scene's state: it refuses unless the app is `.foregroundActive`,
+which it is not during a navigation push, a sheet presentation, or while a
+screen is still animating in.
+
+So it now waits for the app to actually be active rather than guessing how long
+that takes, and retries up to eight times a quarter-second apart. If it still
+refuses, the message says how many attempts were made and what the build
+registered — the difference between "try again" and "this build is wrong" is
+not something to leave a person guessing at.
+
+The registered names are shown on any failure now. Previously they appeared
+only when icons were missing, which meant their absence was itself a clue and
+nobody could read it.
 
 ### Two different icon failures, told apart
 

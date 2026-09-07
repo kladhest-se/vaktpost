@@ -56,7 +56,7 @@ struct SettingsView: View {
                     set: { store.alertsSilenced = !$0 }
                 )) {
                     Text("Show alerts")
-                        .font(.system(size: 14))
+                        .scaledFont(14)
                         .foregroundStyle(theme.label)
                 }
                 .tint(theme.accentColor)
@@ -64,7 +64,7 @@ struct SettingsView: View {
                 if !store.alertsSilenced {
                     Hairline()
                     Text("Kinds to show")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(theme.labelMuted)
 
                     ForEach(VaktpostAlert.Category.allCases, id: \.rawValue) { category in
@@ -77,11 +77,11 @@ struct SettingsView: View {
                         )) {
                             HStack(spacing: 8) {
                                 Image(systemName: category.symbol)
-                                    .font(.system(size: 12))
+                                    .scaledFont(12)
                                     .foregroundStyle(theme.labelMuted)
-                                    .frame(width: 18)
+                                    .scaledFrame(width: 18)
                                 Text(category.displayName)
-                                    .font(.system(size: 13))
+                                    .scaledFont(13)
                                     .foregroundStyle(theme.label)
                             }
                         }
@@ -101,12 +101,12 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Warn above")
-                        .font(.system(size: 14))
+                        .scaledFont(14)
                         .foregroundStyle(theme.label)
                     Spacer()
                     Text(store.temperatureWarnOverride
                             .map { String(format: "%.0f °C", $0) } ?? "automatic")
-                        .font(.system(size: 14, design: .monospaced))
+                        .scaledFont(14, design: .monospaced)
                         .foregroundStyle(theme.labelMuted)
                 }
 
@@ -123,7 +123,7 @@ struct SettingsView: View {
                 Text(store.temperatureWarnOverride == nil
                      ? "Following the sensor: \(sensorDescription). Slide up to set your own."
                      : "Critical at \(Int((store.temperatureWarnOverride ?? 0) + 10)) °C. Slide below 50 to go back to automatic.")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
             }
         }
@@ -151,7 +151,7 @@ struct SettingsView: View {
                 Text(theme.selection == .auto
                      ? "Auto follows iOS: Latte in light, Mocha in dark. Currently \(theme.current.displayName)."
                      : "\(theme.current.displayName), whatever iOS is set to.")
-                    .font(.system(size: 12))
+                    .scaledFont(12)
                     .foregroundStyle(theme.labelFaint)
             }
         }
@@ -181,7 +181,7 @@ struct SettingsView: View {
         Slab(rail: .info, title: "Vaktpost") {
             VStack(alignment: .leading, spacing: 8) {
                 Text("A read-only dashboard for pfSense CE and Plus, talking to the firewall's built-in XML-RPC service. Nothing to install.")
-                    .font(.system(size: 13))
+                    .scaledFont(13)
                     .foregroundStyle(theme.labelMuted)
                 Hairline()
                 FieldRow(key: "Transport", value: "xmlrpc.php", mono: false)
@@ -190,7 +190,7 @@ struct SettingsView: View {
                 FieldRow(key: "Writes", value: "none", mono: false)
                 FieldRow(key: "Firewalls", value: "\(store.registry.servers.count)", mono: false)
                 Text("Not affiliated with Netgate or the Catppuccin project. pfSense is a trademark of Netgate.")
-                    .font(.system(size: 11))
+                    .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
             }
         }
@@ -216,16 +216,16 @@ struct ThemeSwatch: View {
             HStack(spacing: 4) {
                 if case .auto = selection {
                     Image(systemName: "circle.lefthalf.filled")
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(p.subtext0)
                 }
                 Text(selection.displayName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .scaledFont(13, weight: .semibold)
                     .foregroundStyle(p.text)
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 13))
+                        .scaledFont(13)
                         .foregroundStyle(p.green)
                 }
             }

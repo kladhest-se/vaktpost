@@ -568,3 +568,47 @@ struct ACMECertificate: Identifiable {
     /// expire and nothing will notice.
     var health: Health { enabled ? .ok : .warn }
 }
+
+// MARK: - RRD history
+
+/// One series of historical traffic, as pfSense recorded it.
+struct RRDSeries: Identifiable {
+    var id: String { "\(file)-\(name)" }
+    /// The interface the file belongs to, as pfSense names its files — `wan`,
+    /// `opt3`, `lan`. Not the administrator's label, so it needs the same
+    /// lookup everything else on screen gets.
+    var file: String
+    var name: String
+    var points: [(at: Date, value: Double)]
+
+    init(_ d: JSONDict) {
+        file = d.string("file") ?? "?"
+        name = d.string("series") ?? "?"
+        points = d.list("points").compactMap { entry in
+            guard let row = JSONDict(entry),
+                  let at = row.int("at"),
+                  let value = row.double("value") else { return nil }
+            return (Date(timeIntervalSince1970: TimeInterval(at)), value)
+        }
+    }
+
+    /// RRD stores traffic as bytes per second; the app speaks bits.
+    var bitsPerSecond: [Double] { points.map { $0.value * 8 } }
+}
+
+/// What the firewall could tell us about its own history.
+struct RRDHistory {
+    var available: Bool
+    var series: [RRDSeries]
+
+    init(_ d: JSONDict) {
+        available = d.bool("available") ?? false
+        series = d.list("data").compactMap { JSONDict($0) }.map(RRDSeries.init)
+    }
+
+    /// The two directions for one interface, matched on the file name pfSense
+    /// uses rather than the name shown on screen.
+    func series(forFile file: String) -> [RRDSeries] {
+        series.filter { $0.file == file }
+    }
+}

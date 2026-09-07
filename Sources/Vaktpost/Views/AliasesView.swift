@@ -37,7 +37,7 @@ struct AliasesView: View {
                 } else {
                     HStack {
                         Text("\(aliases.count) of \(store.aliases.count) aliases")
-                            .font(.system(size: 12, design: .monospaced))
+                            .scaledFont(12, design: .monospaced)
                             .foregroundStyle(theme.labelFaint)
                         Spacer()
                     }
@@ -50,6 +50,7 @@ struct AliasesView: View {
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 28)
+            .readableWidth()
         }
         .refreshable { await store.refreshManually() }
         .background(theme.bg.ignoresSafeArea())
@@ -69,16 +70,16 @@ struct AliasRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(alias.name)
-                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                        .scaledFont(15, weight: .semibold, design: .monospaced)
                         .foregroundStyle(theme.label)
                     Spacer()
                     Text("\(alias.addresses.count)")
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .scaledFont(12, weight: .bold, design: .monospaced)
                         .foregroundStyle(theme.labelFaint)
                 }
                 if let d = alias.descr, !d.isEmpty {
                     Text(d)
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(theme.labelMuted)
                 }
                 if !alias.addresses.isEmpty {
@@ -86,14 +87,14 @@ struct AliasRow: View {
                     ForEach(Array(shown.enumerated()), id: \.offset) { idx, addr in
                         HStack {
                             Text(addr)
-                                .font(.system(size: 12, design: .monospaced))
+                                .scaledFont(12, design: .monospaced)
                                 .foregroundStyle(theme.label)
                             Spacer()
                             if idx < alias.details.count {
                                 Text(alias.details[idx])
-                                    .font(.system(size: 11))
+                                    .scaledFont(11)
                                     .foregroundStyle(theme.labelFaint)
-                                    .lineLimit(1)
+                                    .lineLimit(2)
                             }
                         }
                     }
@@ -102,7 +103,7 @@ struct AliasRow: View {
                             withAnimation { expanded.toggle() }
                         } label: {
                             Text(expanded ? "Show less" : "Show all \(alias.addresses.count)")
-                                .font(.system(size: 12, weight: .medium))
+                                .scaledFont(12, weight: .medium)
                                 .foregroundStyle(theme.accentColor)
                         }
                     }

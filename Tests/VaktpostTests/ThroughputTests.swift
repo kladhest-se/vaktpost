@@ -196,3 +196,28 @@ final class LiveThroughputTests: XCTestCase {
         XCTAssertTrue(live.points(for: key).isEmpty)
     }
 }
+
+extension LiveThroughputTests {
+
+    func testTheWidgetKeyMatchesTheTrackerKey() {
+        // The widget looked up `latest(for: iface.device)` while the tracker
+        // stores under `seriesKey`, so it never found a series and showed no
+        // rate at all. The tracker was fixed weeks earlier and this copy was
+        // missed — the two have to be asserted equal somewhere.
+        // Name and device deliberately different, which is the case that
+        // broke: a VLAN's name is VLAN_100 and its device is lagg0.100.
+        let wan = iface("WAN_1", hwif: "ix0", inBytes: 0, outBytes: 0)
+        XCTAssertNotEqual(wan.seriesKey, wan.device,
+                          "if these are equal the test proves nothing")
+
+        let tracker = ThroughputTracker(capacity: 10)
+        let t0 = Date()
+        tracker.ingest([wan], at: t0)
+        tracker.ingest([iface("WAN_1", hwif: "ix0", inBytes: 250_000, outBytes: 125_000)],
+                       at: t0.addingTimeInterval(2))
+
+        XCTAssertNil(tracker.latest(for: wan.device),
+                     "the device key must not resolve, or the bug is back")
+        XCTAssertNotNil(tracker.latest(for: wan.seriesKey))
+    }
+}

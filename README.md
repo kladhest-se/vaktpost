@@ -14,7 +14,7 @@ every request. The app's read-only behaviour is enforced by an audited
 allowlist of PHP snippets rather than by the transport, which is a weaker
 guarantee than the REST build it replaced.
 
-**Tabs:** Overview · Clients · Network · Logs · More (Alerts, VPN, Firewall, System, Firewalls, Settings). Plus a home screen widget.
+**Tabs:** Overview · Clients · Network · Logs · More (Alerts, VPN, Firewall, System, Firewalls, Settings).
 
 ---
 
@@ -195,15 +195,6 @@ Each section fails independently: an uninstalled package or a privilege the key 
 
 **Firewall browser.** Read-only rules, NAT port forwards and aliases, filterable by interface and searchable. The firewall objects are loaded lazily on first navigation to save bandwidth — they are large, static, and most users never look. v2 returns filter addresses as objects rather than strings; `FilterAddress` in `Models/FirewallModels.swift` renders both shapes.
 
-**Widget.** Small and medium families showing health, gateway latency, interfaces up and uplink rate.
-
-### Widget: how it gets its data
-
-The widget does no networking. Doing so would need the API key in a shared keychain access group and a second copy of the TLS pinning logic running outside the app's control, so instead the app writes a small JSON snapshot to the App Group container after each refresh and calls `WidgetCenter.reloadAllTimelines()`.
-
-The cost is honest: **the widget only advances while the app is open or gets a background slot from iOS.** It shows the age of its data so a stale card is obvious. If you need genuine push-on-event alerting, that needs something server-side — a monitoring host that watches the firewall and sends a real push — not an iOS widget.
-
-Set up requires an App Group. `group.se.kladhest.vaktpost` is declared in both entitlements files; change it in `Resources/Entitlements/*.entitlements` and `Sources/Vaktpost/Shared/SharedSnapshot.swift` if you use a different identifier, then re-run `make project`.
 
 ### What UniFi does that this cannot
 
@@ -248,16 +239,14 @@ Sources/Vaktpost/
   App/VaktpostApp.swift        entry point + tab shell
   Theme/                       Catppuccin palettes, ThemeManager, components, sparkline
   Core/                        JSONValue, ServerProfile + ServerRegistry, Keychain
-  Shared/SharedSnapshot.swift  App Group payload (also compiled into the widget)
   Net/                         APIClient, TrustEvaluator (TLS pinning)
   Models/                      status, clients, VPN, firewall objects, system, alerts
   Store/                       DashboardStore, ThroughputTracker
   Views/                       Overview, Clients, Network, Logs, More,
                                Alerts, VPN, Firewall, System, Servers,
                                Settings, Onboarding
-Sources/VaktpostWidget/        WidgetKit extension
 Tests/VaktpostTests/           decoder, client join, throughput, health mapping
-Resources/Entitlements/        App Group entitlements for both targets
+Resources/Entitlements/        Entitlements (empty; nothing is required)
 public-web/                    project website (static, no build step)
 ```
 

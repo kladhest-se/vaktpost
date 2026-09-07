@@ -74,6 +74,25 @@ final class ThroughputTracker: ObservableObject {
 
     func points(for device: String) -> [Point] { series[device] ?? [] }
 
+    /// What the tracker has, for the diagnostics screen.
+    ///
+    /// The dashboard chart has never drawn a line while the two-second detail
+    /// chart does, and reading the code has not explained why — the keys
+    /// match, the counters arrive, and the arithmetic is covered by tests. So
+    /// the app reports its own state instead of being reasoned about.
+    var summary: [(key: String, points: Int, lastSample: Date?)] {
+        series.keys.sorted().map { key in
+            (key, series[key]?.count ?? 0, last[key]?.at)
+        }
+    }
+
+    /// Interfaces a reading has been taken for but which have no rate yet.
+    /// One baseline and no second sample is the normal state for thirty
+    /// seconds after launch and a bug if it persists.
+    var awaitingSecondSample: [String] {
+        last.keys.filter { (series[$0]?.isEmpty ?? true) }.sorted()
+    }
+
     func latest(for device: String) -> Point? { series[device]?.last }
 
     /// Clears everything — used when switching firewalls, since counters from a

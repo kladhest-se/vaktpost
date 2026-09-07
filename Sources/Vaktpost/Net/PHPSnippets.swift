@@ -33,8 +33,17 @@ struct PHPSnippet {
     let name: String
     let script: String
 
+    /// The PHP as written, without the wrapper.
+    ///
+    /// Kept because the batches contain their parts' bodies but not their
+    /// wrappers — every snippet gets `ini_set`, the lock release and the
+    /// `json_encode` tail, and a batch has exactly one of each rather than
+    /// five. Anything comparing a snippet to a batch has to compare bodies.
+    let body: String
+
     private init(_ name: String, _ body: String) {
         self.name = name
+        self.body = body
         // The wrapper, applied to every snippet.
         //
         // `display_errors` off: a PHP notice printed into the response body
@@ -93,6 +102,9 @@ struct PHPSnippet {
         "wg_get_status",
         "ipsec_list_sa", "get_notices", "get_system_pkg_version",
         "openssl_x509_parse", "base64_decode", "in_array",
+        "extension_loaded", "glob", "basename", "filemtime", "is_numeric",
+        // Reads an RRD file. There is no writing counterpart in any snippet.
+        "rrd_fetch",
         // Probed with function_exists before use; see `pfTables`.
         "pfSense_get_pf_table", "pfr_get_table_addrs",
     ]
@@ -313,6 +325,17 @@ struct PHPSnippet {
       $data = get_interface_info($ifdescr);
       $data["descr"] = $ifname;
       $data["name"] = $ifdescr;
+      // Counters, explicitly.
+      //
+      // get_interface_info() is documented to include these and the throughput
+      // chart has never charted anything, which points at them arriving under
+      // a name the app does not read or not arriving at all. Setting them from
+      // the same call the counters snippet uses removes the question: if they
+      // are absent here they are absent everywhere, and the chart can say so
+      // instead of waiting forever for a sample.
+      $data["inbytes"] = $data["inbytes"];
+      $data["outbytes"] = $data["outbytes"];
+      $data["counters_present"] = (isset($data["inbytes"]) && isset($data["outbytes"]));
       $rows[] = $data;
     }
     $toreturn = ["data" => $rows];
@@ -804,6 +827,657 @@ struct PHPSnippet {
     ];
     """)
 
+    /// Everything the Overview and Network tabs need.
+    ///
+    /// One call instead of 5. pfSense serialises XML-RPC, so each
+    /// request queues behind the last and behind the webConfigurator — the cost
+    /// of a refresh was in the round trips, not the work.
+    ///
+    /// The bodies are the same PHP the individual snippets use, in sequence,
+    /// each capturing `$toreturn` before the next overwrites it.
+    ///
+    /// The accumulator is named `$vaktpost_batch` rather than something ordinary
+    /// because it shares scope with every body here. `$sections` was the first
+    /// choice and `host_overrides` uses that name for a local, resetting it
+    /// halfway through — three sections were discarded and the batch returned
+    /// success, so Clients and ARP were empty with nothing reported.
+    ///
+    /// Grouped rather than combined into one: a PHP fatal cannot be caught, so
+    /// a single call would mean one bad section blanking the whole dashboard.
+    static let batchCore = PHPSnippet("batch_core", """
+    $vaktpost_batch = [];
+
+    require_once '/usr/local/www/includes/functions.inc.php';
+    require_once '/etc/inc/config.inc';
+    require_once '/etc/inc/pfsense-utils.inc';
+    require_once '/etc/inc/system.inc';
+    global $config;
+
+    $mbuf = null; $mbufpercent = null;
+    get_mbuf($mbuf, $mbufpercent);
+    $mbuf_parts = explode("/", $mbuf);
+    $has_mbuf = count($mbuf_parts) > 1;
+
+    $pfstate = get_pfstate();
+    $pfstate_parts = explode("/", $pfstate);
+
+    $load = explode(",", get_load_average());
+
+    // cpu_usage() returns "<total ticks>|<idle ticks>", not a percentage.
+    // Taking floatval of that gave a CPU meter reading 995026240%. The ticks
+    // are passed through and differenced on the device, which is how any
+    // FreeBSD CPU figure has to be produced.
+    $cpu = explode("|", cpu_usage());
+
+    // Temperature, from whichever source this hardware exposes.
+    //
+    // `get_temp()` returns empty on a box whose Thermal Sensors widget is
+    // happily showing 83 °C, because that widget reads a sysctl directly and
+    // the one it finds depends on the chipset — "PCH 0" is dev.pchtherm.0 on
+    // Intel server boards, where dev.cpu.0 does not exist.
+    //
+    // Each candidate is tried in turn and the first that answers wins. Values
+    // come back formatted as "83.0C", which floatval reads correctly.
+    // Sysctls first, then get_temp().
+    //
+    // Not because get_temp() is unreliable — it works here — but because it
+    // returns a number without saying which sensor produced it, and the number
+    // alone is not interpretable. 81 °C is unremarkable for a chipset and
+    // worth investigating on a CPU die. Probing the sysctls identifies the
+    // sensor, which is what lets the app pick a threshold that is not a guess.
+    $temp = "";
+    $temp_source = "";
+    if (function_exists("get_single_sysctl")) {
+      $probes = [
+        "dev.pchtherm.0.temperature",
+        "hw.acpi.thermal.tz0.temperature",
+        "dev.cpu.0.temperature",
+      ];
+      foreach ($probes as $oid) {
+        $reading = get_single_sysctl($oid);
+        if ($reading !== "" && $reading !== null) {
+          $temp = $reading;
+          $temp_source = $oid;
+          break;
+        }
+      }
+    }
+    if ($temp === "" || $temp === null) { $temp = get_temp(); }
+
+    // An array of ["name" => "1537", "descr" => "Super Micro 1537"].
+    $platform = system_identify_specific_platform();
+
+    $system = is_array($config["system"]) ? $config["system"] : [];
+
+    $toreturn = [
+      "hostname" => $system["hostname"],
+      "domain" => $system["domain"],
+      "platform" => is_array($platform) ? $platform["descr"] : $platform,
+      "serial" => system_get_serial(),
+      "cpu_count" => (int) get_cpu_count(),
+      "cpu_ticks_total" => (int) $cpu[0],
+      "cpu_ticks_idle" => count($cpu) > 1 ? (int) $cpu[1] : null,
+      "mem_usage" => floatval(mem_usage()),
+      "swap_usage" => floatval(swap_usage()),
+      "uptime_sec" => (int) get_uptime_sec(),
+      "temp_c" => ($temp === "" || $temp === null) ? null : floatval($temp),
+      // Which sensor answered. A chipset runs far hotter than a CPU die, so
+      // the same number means different things and needs a different label
+      // and a different threshold.
+      "temp_source" => $temp_source,
+      "cpu_load_avg" => [
+        floatval(trim($load[0])), floatval(trim($load[1])), floatval(trim($load[2])),
+      ],
+      "mbuf_used" => $has_mbuf ? (int) $mbuf_parts[0] : null,
+      "mbuf_total" => $has_mbuf ? (int) $mbuf_parts[1] : null,
+      "mbuf_usage" => $has_mbuf ? floatval($mbufpercent) : null,
+      "currentstates" => (int) $pfstate_parts[0],
+      "maximumstates" => (int) $pfstate_parts[1],
+      "filesystems" => get_mounted_filesystems(),
+    ];
+    $vaktpost_batch["telemetry"] = $toreturn;
+
+    require_once '/etc/inc/pkg-utils.inc';
+    // Returns ["installed_version" => "26.07", "version" => "26.07",
+    //          "pkg_version_compare" => "="]. The comparison is "<" when the
+    //          installed version is behind, which is the only reliable signal —
+    //          comparing the two strings fails on release suffixes.
+    $update = get_system_pkg_version();
+    $toreturn = [
+      "version" => trim(file_get_contents("/etc/version")),
+      "installed_version" => $update["installed_version"],
+      "latest_version" => $update["version"],
+      "update_available" => ($update["pkg_version_compare"] === "<"),
+    ];
+    $vaktpost_batch["firmware"] = $toreturn;
+
+    require_once '/etc/inc/interfaces.inc';
+    require_once '/usr/local/www/includes/functions.inc.php';
+    $rows = [];
+    foreach (get_configured_interface_with_descr() as $ifdescr => $ifname) {
+      $data = get_interface_info($ifdescr);
+      $data["descr"] = $ifname;
+      $data["name"] = $ifdescr;
+      // Counters, explicitly.
+      //
+      // get_interface_info() is documented to include these and the throughput
+      // chart has never charted anything, which points at them arriving under
+      // a name the app does not read or not arriving at all. Setting them from
+      // the same call the counters snippet uses removes the question: if they
+      // are absent here they are absent everywhere, and the chart can say so
+      // instead of waiting forever for a sample.
+      $data["inbytes"] = $data["inbytes"];
+      $data["outbytes"] = $data["outbytes"];
+      $data["counters_present"] = (isset($data["inbytes"]) && isset($data["outbytes"]));
+      $rows[] = $data;
+    }
+    $toreturn = ["data" => $rows];
+    $vaktpost_batch["interfaces"] = $toreturn;
+
+    require_once '/etc/inc/gwlb.inc';
+    $toreturn = ["data" => return_gateways_status(true)];
+    $vaktpost_batch["gateways"] = $toreturn;
+
+    require_once '/etc/inc/service-utils.inc';
+    $rows = [];
+    foreach (get_services() as $service) {
+      if (!is_array($service)) { continue; }
+      $service["status"] = get_service_status($service) ? "running" : "stopped";
+      $rows[] = $service;
+    }
+    $toreturn = ["data" => $rows];
+    $vaktpost_batch["services"] = $toreturn;
+
+    $toreturn = ["sections" => $vaktpost_batch];
+    """)
+
+    /// Everything the Clients tab joins together, plus the aliases it names devices from.
+    ///
+    /// One call instead of 5. pfSense serialises XML-RPC, so each
+    /// request queues behind the last and behind the webConfigurator — the cost
+    /// of a refresh was in the round trips, not the work.
+    ///
+    /// The bodies are the same PHP the individual snippets use, in sequence,
+    /// each capturing `$toreturn` before the next overwrites it.
+    ///
+    /// The accumulator is named `$vaktpost_batch` rather than something ordinary
+    /// because it shares scope with every body here. `$sections` was the first
+    /// choice and `host_overrides` uses that name for a local, resetting it
+    /// halfway through — three sections were discarded and the batch returned
+    /// success, so Clients and ARP were empty with nothing reported.
+    ///
+    /// Grouped rather than combined into one: a PHP fatal cannot be caught, so
+    /// a single call would mean one bad section blanking the whole dashboard.
+    static let batchClients = PHPSnippet("batch_clients", """
+    $vaktpost_batch = [];
+
+    require_once '/etc/inc/system.inc';
+    $toreturn = ["data" => system_get_arp_table(false)];
+    $vaktpost_batch["arp_table"] = $toreturn;
+
+    require_once '/etc/inc/system.inc';
+    $leases = system_get_dhcpleases(false);
+    $toreturn = ["data" => is_array($leases["lease"]) ? $leases["lease"] : []];
+    $vaktpost_batch["dhcp_leases"] = $toreturn;
+
+    global $config;
+    $rows = [];
+    if (is_array($config["dhcpd"])) {
+      foreach ($config["dhcpd"] as $iface => $conf) {
+        if (!is_array($conf) || !is_iterable($conf["staticmap"])) { continue; }
+        foreach ($conf["staticmap"] as $entry) {
+          if (!is_array($entry)) { continue; }
+          $entry["interface"] = $iface;
+          $rows[] = $entry;
+        }
+      }
+    }
+    $toreturn = ["data" => $rows];
+    $vaktpost_batch["static_mappings"] = $toreturn;
+
+    $rows = [];
+    $sections = [];
+
+    if (function_exists("config_get_path")) {
+      $sections[] = config_get_path("unbound/hosts", []);
+      $sections[] = config_get_path("dnsmasq/hosts", []);
+    } else {
+      global $config;
+      foreach (["unbound", "dnsmasq"] as $service) {
+        $section = $config[$service];
+        if (!is_array($section)) { continue; }
+        $hosts = $section["hosts"];
+        if (!is_array($hosts)) { continue; }
+        $sections[] = $hosts;
+      }
+    }
+
+    foreach ($sections as $hosts) {
+      if (!is_array($hosts)) { continue; }
+      foreach ($hosts as $entry) {
+        if (!is_array($entry)) { continue; }
+
+        $rows[] = [
+          "host" => strval($entry["host"]),
+          "domain" => strval($entry["domain"]),
+          "ip" => strval($entry["ip"]),
+          "descr" => strval($entry["descr"]),
+        ];
+
+        // Aliases are additional names for the same address.
+        $aliases = $entry["aliases"];
+        if (!is_array($aliases)) { continue; }
+        $items = $aliases["item"];
+        if (!is_array($items)) { continue; }
+
+        foreach ($items as $alias) {
+          if (!is_array($alias)) { continue; }
+          $rows[] = [
+            "host" => strval($alias["host"]),
+            "domain" => strval($alias["domain"]),
+            "ip" => strval($entry["ip"]),
+            "descr" => strval($alias["description"]),
+          ];
+        }
+      }
+    }
+
+    $toreturn = ["data" => $rows];
+    $vaktpost_batch["host_overrides"] = $toreturn;
+
+    global $config;
+    $aliases = $config["aliases"];
+    $toreturn = ["data" => (is_array($aliases) && is_iterable($aliases["alias"])) ? $aliases["alias"] : []];
+    $vaktpost_batch["firewall_aliases"] = $toreturn;
+
+    $toreturn = ["sections" => $vaktpost_batch];
+    """)
+
+    /// Every VPN technology in one pass.
+    ///
+    /// One call instead of 4. pfSense serialises XML-RPC, so each
+    /// request queues behind the last and behind the webConfigurator — the cost
+    /// of a refresh was in the round trips, not the work.
+    ///
+    /// The bodies are the same PHP the individual snippets use, in sequence,
+    /// each capturing `$toreturn` before the next overwrites it.
+    ///
+    /// The accumulator is named `$vaktpost_batch` rather than something ordinary
+    /// because it shares scope with every body here. `$sections` was the first
+    /// choice and `host_overrides` uses that name for a local, resetting it
+    /// halfway through — three sections were discarded and the batch returned
+    /// success, so Clients and ARP were empty with nothing reported.
+    ///
+    /// Grouped rather than combined into one: a PHP fatal cannot be caught, so
+    /// a single call would mean one bad section blanking the whole dashboard.
+    static let batchVpn = PHPSnippet("batch_vpn", """
+    $vaktpost_batch = [];
+
+    require_once '/etc/inc/openvpn.inc';
+    $toreturn = ["data" => openvpn_get_active_servers()];
+    $vaktpost_batch["openvpn_servers"] = $toreturn;
+
+    require_once '/etc/inc/openvpn.inc';
+    $toreturn = ["data" => openvpn_get_active_clients()];
+    $vaktpost_batch["openvpn_clients"] = $toreturn;
+
+    require_once '/etc/inc/ipsec.inc';
+    $toreturn = ["data" => ipsec_list_sa()];
+    $vaktpost_batch["ipsec_sas"] = $toreturn;
+
+    $path = "/usr/local/pkg/wireguard/includes/wg.inc";
+    $tunnels = [];
+    $peers = [];
+
+    if (file_exists($path)) {
+      require_once $path;
+      $status = wg_get_status();
+
+      if (is_array($status)) {
+        foreach ($status as $name => $tunnel) {
+          if (!is_array($tunnel)) { continue; }
+          $conf = is_array($tunnel["config"]) ? $tunnel["config"] : [];
+
+          $tunnels[] = [
+            "name" => $name,
+            "descr" => $conf["descr"],
+            "enabled" => ($conf["enabled"] == "yes"),
+            "listen_port" => $tunnel["listen_port"],
+            "mtu" => $tunnel["mtu"],
+            "status" => $tunnel["status"],
+            "public_key" => $tunnel["public_key"],
+            "transfer_rx" => $tunnel["transfer_rx"],
+            "transfer_tx" => $tunnel["transfer_tx"],
+            "peer_count" => is_array($tunnel["peers"]) ? count($tunnel["peers"]) : 0,
+          ];
+
+          if (!is_array($tunnel["peers"])) { continue; }
+          foreach ($tunnel["peers"] as $key => $peer) {
+            if (!is_array($peer)) { continue; }
+            $pconf = is_array($peer["config"]) ? $peer["config"] : [];
+
+            $allowed = [];
+            if (is_iterable($pconf["allowedips"]["row"])) {
+              foreach ($pconf["allowedips"]["row"] as $row) {
+                if (!is_array($row) || !$row["address"]) { continue; }
+                $allowed[] = $row["mask"]
+                  ? $row["address"] . "/" . $row["mask"]
+                  : $row["address"];
+              }
+            }
+
+            // "(none)" is what wg prints for a peer that has never connected.
+            $endpoint = $peer["endpoint"];
+            if ($endpoint == "(none)") { $endpoint = ""; }
+
+            $peers[] = [
+              "tun" => $name,
+              "public_key" => $key,
+              "descr" => $pconf["descr"],
+              "enabled" => ($pconf["enabled"] == "yes"),
+              "endpoint" => $endpoint,
+              "latest_handshake" => $peer["latest_handshake"],
+              "transfer_rx" => $peer["transfer_rx"],
+              "transfer_tx" => $peer["transfer_tx"],
+              "allowed_ips" => $allowed,
+            ];
+          }
+        }
+      }
+    }
+
+    $toreturn = ["tunnels" => $tunnels, "peers" => $peers];
+    $vaktpost_batch["wireguard"] = $toreturn;
+
+    $toreturn = ["sections" => $vaktpost_batch];
+    """)
+
+    /// The slower-moving system facts.
+    ///
+    /// One call instead of 5. pfSense serialises XML-RPC, so each
+    /// request queues behind the last and behind the webConfigurator — the cost
+    /// of a refresh was in the round trips, not the work.
+    ///
+    /// The bodies are the same PHP the individual snippets use, in sequence,
+    /// each capturing `$toreturn` before the next overwrites it.
+    ///
+    /// The accumulator is named `$vaktpost_batch` rather than something ordinary
+    /// because it shares scope with every body here. `$sections` was the first
+    /// choice and `host_overrides` uses that name for a local, resetting it
+    /// halfway through — three sections were discarded and the batch returned
+    /// success, so Clients and ARP were empty with nothing reported.
+    ///
+    /// Grouped rather than combined into one: a PHP fatal cannot be caught, so
+    /// a single call would mean one bad section blanking the whole dashboard.
+    static let batchSystem = PHPSnippet("batch_system", """
+    $vaktpost_batch = [];
+
+    require_once '/etc/inc/notices.inc';
+    $value = get_notices("all");
+    if (!$value) { $value = []; }
+    $rows = [];
+    foreach ($value as $key => $notice) {
+      if (!is_array($notice)) { continue; }
+      $notice["created_at"] = $key;
+      $rows[] = $notice;
+    }
+    $toreturn = ["data" => $rows];
+    $vaktpost_batch["notices"] = $toreturn;
+
+    global $config;
+    $rows = [];
+
+    // Names ACME manages, so the general list can leave them to their own
+    // screen. Matching in the app would need ACME loaded first, and the two
+    // screens load independently.
+    $acmeNames = [];
+    $installed = $config["installedpackages"];
+    $acme = is_array($installed) ? $installed["acme"] : "";
+    if (is_array($acme)) {
+      $certs = $acme["certificates"];
+      if (is_array($certs) && is_iterable($certs["item"])) {
+        foreach ($certs["item"] as $entry) {
+          if (!is_array($entry)) { continue; }
+          $acmeNames[] = strval($entry["name"]);
+          $acmeNames[] = strval($entry["descr"]);
+        }
+      }
+    }
+    foreach (["cert", "ca"] as $section) {
+      if (!is_iterable($config[$section])) { continue; }
+      foreach ($config[$section] as $item) {
+        if (!is_array($item) || !$item["crt"]) { continue; }
+        $parsed = openssl_x509_parse(base64_decode($item["crt"]));
+        if (!is_array($parsed)) { continue; }
+        $rows[] = [
+          "refid" => $item["refid"],
+          "descr" => $item["descr"],
+          "is_ca" => $section == "ca",
+          "is_acme" => in_array(strval($item["descr"]), $acmeNames),
+          "valid_from" => $parsed["validFrom_time_t"],
+          "valid_until" => $parsed["validTo_time_t"],
+        ];
+      }
+    }
+    $toreturn = ["data" => $rows];
+    $vaktpost_batch["certificates"] = $toreturn;
+
+    global $config;
+    $rows = [];
+
+    foreach (["dyndnses" => "dyndns", "dnsupdates" => "dnsupdate"] as $section => $key) {
+      $conf = $config[$section];
+      if (!is_array($conf) || !is_iterable($conf[$key])) { continue; }
+
+      foreach ($conf[$key] as $entry) {
+        if (!is_array($entry)) { continue; }
+
+        $host = strval($entry["host"]);
+        $domain = strval($entry["domain"]);
+        $fqdn = ($domain !== "") ? $host . "." . $domain : $host;
+
+        // The cache file holds "<address>|<unix time>", not just an address.
+        // Reading it whole put "203.0.113.9|1788038229" on screen where an
+        // address belonged, and threw away the timestamp the firewall had
+        // already recorded — the modification time is when the file was
+        // touched, which is not the same as when the address last changed.
+        $cached = "";
+        $when = 0;
+        $best = "";
+        foreach (glob("/conf/dyndns_*.cache") as $path) {
+          $base = basename($path);
+          // Prefer a file naming both host and domain; fall back to the host.
+          if ($domain !== "" && strpos($base, $domain) !== false && strpos($base, $host) !== false) {
+            $best = $path;
+          } elseif ($best === "" && strpos($base, $host) !== false) {
+            $best = $path;
+          }
+        }
+        if ($best !== "") {
+          $raw = trim(file_get_contents($best));
+          $parts = explode("|", $raw);
+          $cached = $parts[0];
+          $when = (count($parts) > 1) ? intval($parts[1]) : filemtime($best);
+        }
+
+        $rows[] = [
+          "host" => $fqdn,
+          "type" => strval($entry["type"]),
+          "interface" => strval($entry["interface"]),
+          "descr" => strval($entry["descr"]),
+          // pfSense stores this as an empty element when on, which reads as
+          // false. Presence of the key is what means enabled; a disabled entry
+          // has no key at all. Every entry showed DISABLED before this.
+          "enabled" => array_key_exists("enable", $entry),
+          "cached_address" => $cached,
+          "updated_at" => $when,
+        ];
+      }
+    }
+
+    $toreturn = ["data" => $rows];
+    $vaktpost_batch["dyndns"] = $toreturn;
+
+    global $config;
+    $installed = $config["installedpackages"];
+    $rows = [];
+
+    if (is_array($installed) && is_iterable($installed["package"])) {
+      foreach ($installed["package"] as $item) {
+        if (!is_array($item)) { continue; }
+        $rows[] = [
+          "name" => strval($item["name"]),
+          "descr" => strval($item["descr"]),
+          "installed_version" => strval($item["version"]),
+          "latest_version" => strval($item["version"]),
+          // No live comparison without shelling out, so this never claims an
+          // update is available rather than guessing that none is.
+          "update_available" => false,
+        ];
+      }
+    }
+
+    $toreturn = ["data" => $rows];
+    $vaktpost_batch["packages"] = $toreturn;
+
+    require_once '/etc/inc/interfaces.inc';
+    global $config;
+    $vips = [];
+    $virtualip = $config["virtualip"];
+    if (is_array($virtualip) && is_iterable($virtualip["vip"])) {
+      foreach ($virtualip["vip"] as $vip) {
+        if (!is_array($vip) || $vip["mode"] != "carp") { continue; }
+        $vip["status"] = get_carp_interface_status("_vip" . $vip["uniqid"]);
+        $vips[] = $vip;
+      }
+    }
+    $toreturn = ["enable" => get_carp_status() ? true : false, "interfaces" => $vips];
+    $vaktpost_batch["carp"] = $toreturn;
+
+    $toreturn = ["sections" => $vaktpost_batch];
+    """)
+
+    /// Can RRD history be read at all?
+    ///
+    /// pfSense keeps months of per-interface, per-gateway and system history in
+    /// `/var/db/rrd/*.rrd`, and this app shows only what it has watched since
+    /// launch. Reading that history is the one thing that would make it better
+    /// than the web UI on a phone.
+    ///
+    /// The obstacle is that RRD files are a binary format read by `rrdtool`,
+    /// a shell binary — pfSense's own graph page shells out to it. PHP can read
+    /// them directly only if the `rrd` extension is loaded, which is not
+    /// standard here.
+    ///
+    /// So this reports what exists before anything is built on it. Three
+    /// features have been designed against a guess about what the firewall
+    /// exposes, and two of those guesses were wrong.
+    static let rrdProbe = PHPSnippet("rrd_probe", """
+    $functions = [];
+    foreach (["rrd_fetch", "rrd_info", "rrd_lastupdate", "rrd_graph",
+              "rrd_first", "rrd_last"] as $fn) {
+      if (function_exists($fn)) { $functions[] = $fn; }
+    }
+
+    $extension = extension_loaded("rrd");
+
+    // The catalogue of what could be charted: the names say what each file
+    // holds — wan-traffic.rrd, system-processor.rrd, per-gateway quality.
+    $files = [];
+    $dir = "/var/db/rrd";
+    if (file_exists($dir)) {
+      foreach (glob($dir . "/*.rrd") as $path) {
+        $files[] = [
+          "name" => basename($path),
+          "bytes" => filesize($path),
+          "modified" => filemtime($path),
+        ];
+      }
+    }
+
+    // pfSense's own helpers, in case one returns data rather than a rendered
+    // graph. Probed, never called.
+    $helpers = [];
+    if (file_exists("/etc/inc/rrd.inc")) {
+      require_once '/etc/inc/rrd.inc';
+      foreach (["rrd_get_data", "get_rrd_data", "rrd_fetch_data"] as $fn) {
+        if (function_exists($fn)) { $helpers[] = $fn; }
+      }
+    }
+
+    $toreturn = [
+      "extension_loaded" => $extension,
+      "php_functions" => $functions,
+      "pfsense_helpers" => $helpers,
+      "rrd_inc_present" => file_exists("/etc/inc/rrd.inc"),
+      "file_count" => count($files),
+      "files" => $files,
+    ];
+    """)
+
+    /// Historical throughput for every interface, from pfSense's own RRD files.
+    ///
+    /// pfSense records months of per-interface traffic in
+    /// `/var/db/rrd/<iface>-traffic.rrd`, and this app has only ever shown
+    /// what it watched since launch. That is the gap this closes — where it
+    /// can be closed.
+    ///
+    /// RRD is a binary format normally read by `rrdtool`, a shell binary, and
+    /// shelling out is what the snippet rules forbid. PHP can read it directly
+    /// only with the `rrd` extension loaded, which is not standard on pfSense.
+    /// The attempt is guarded: where `rrd_fetch` exists it is used, and where
+    /// it does not the response says so rather than returning an empty series
+    /// that looks like an interface with no traffic.
+    ///
+    /// Every interface at once, with no parameter, because a snippet is a
+    /// constant — interpolating an interface name would mean assembling PHP at
+    /// runtime, which is the one thing that would make the allowlist
+    /// unreviewable.
+    ///
+    /// Downsampled to at most 120 points per series. A day at RRD's finest
+    /// resolution is 1440 buckets per direction per interface, which is a
+    /// megabyte of JSON to draw a line 200 points wide.
+    static let rrdTraffic = PHPSnippet("rrd_traffic", """
+    $available = function_exists("rrd_fetch");
+    $rows = [];
+
+    if ($available) {
+      foreach (glob("/var/db/rrd/*-traffic.rrd") as $path) {
+        $result = rrd_fetch($path, ["AVERAGE", "--start", "-86400", "--end", "now"]);
+        if (!is_array($result) || !is_array($result["data"])) { continue; }
+
+        foreach ($result["data"] as $series => $values) {
+          if (!is_iterable($values)) { continue; }
+
+          $points = [];
+          foreach ($values as $when => $value) {
+            // RRD writes NaN for gaps, which JSON cannot carry.
+            if (!is_numeric($value)) { continue; }
+            $points[] = ["at" => intval($when), "value" => floatval($value)];
+          }
+
+          $total = count($points);
+          if ($total > 120) {
+            $step = intval($total / 120);
+            $thinned = [];
+            foreach ($points as $index => $point) {
+              if ($index % $step === 0) { $thinned[] = $point; }
+            }
+            $points = $thinned;
+          }
+
+          $rows[] = [
+            "file" => basename($path, "-traffic.rrd"),
+            "series" => strval($series),
+            "points" => $points,
+          ];
+        }
+      }
+    }
+
+    $toreturn = ["available" => $available, "data" => $rows];
+    """)
+
     // MARK: - Firewall objects
 
     static let firewallRules = PHPSnippet("firewall_rules", """
@@ -1030,7 +1704,8 @@ struct PHPSnippet {
         [telemetry, firmware, packages, packageUpdates, notices, interfaces, interfaceCounters, gateways, arpTable, dhcpLeases,
          staticMappings, hostOverrides, services, openvpnServers, openvpnClients, ipsecSAs,
          wireguard, pfTables, haproxy, acme, firewallRules, firewallAliases, portForwards, carp,
-         certificates, dyndns, ping]
+         certificates, dyndns, ping, rrdProbe, rrdTraffic,
+         batchCore, batchClients, batchVpn, batchSystem]
         + LogSource.allCases.map { log($0, limit: 100) }
     }
 }

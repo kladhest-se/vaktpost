@@ -27,7 +27,7 @@ struct ServersView: View {
                     HStack {
                         Image(systemName: "plus.circle.fill")
                         Text("Add firewall")
-                            .font(.system(size: 14, weight: .semibold))
+                            .scaledFont(14, weight: .semibold)
                         Spacer()
                     }
                     .padding(14)
@@ -40,7 +40,7 @@ struct ServersView: View {
 
                 Slab(rail: .idle, title: "Switching") {
                     Text("Throughput history is per-firewall and is cleared on switch — byte counters from a different box would otherwise chart as one enormous spike.")
-                        .font(.system(size: 12))
+                        .scaledFont(12)
                         .foregroundStyle(theme.labelFaint)
                 }
             }
@@ -72,22 +72,22 @@ struct ServerCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text(server.displayName)
-                            .font(.system(size: 15, weight: .semibold))
+                            .scaledFont(15, weight: .semibold)
                             .foregroundStyle(theme.label)
                         if isActive { StatusPill(text: "active", health: .ok) }
                         if !server.hasCredentials { StatusPill(text: "no password", health: .warn) }
                     }
                     Text(server.baseURL)
-                        .font(.system(size: 11, design: .monospaced))
+                        .scaledFont(11, design: .monospaced)
                         .foregroundStyle(theme.labelFaint)
-                        .lineLimit(1)
+                        .lineLimit(2)
                     if !server.pinnedFingerprint.isEmpty {
                         Text("pinned \(server.pinnedFingerprint.prefix(12))…")
-                            .font(.system(size: 10, design: .monospaced))
+                            .scaledFont(10, design: .monospaced)
                             .foregroundStyle(theme.ok)
                     } else if server.allowUntrustedTLS {
                         Text("untrusted TLS accepted")
-                            .font(.system(size: 10, design: .monospaced))
+                            .scaledFont(10, design: .monospaced)
                             .foregroundStyle(theme.warn)
                     }
                 }
@@ -140,7 +140,7 @@ struct ServerEditView: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text("PASSWORD")
-                                .font(.system(size: 11, weight: .semibold))
+                                .scaledFont(11, weight: .semibold)
                                 .tracking(0.8)
                                 .foregroundStyle(theme.labelFaint)
                             HStack {
@@ -153,7 +153,7 @@ struct ServerEditView: View {
                                 }
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
-                                .font(.system(size: 14, design: .monospaced))
+                                .scaledFont(14, design: .monospaced)
                                 Button { showKey.toggle() } label: {
                                     Image(systemName: showKey ? "eye.slash" : "eye")
                                         .foregroundStyle(theme.labelMuted)
@@ -171,13 +171,13 @@ struct ServerEditView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Toggle(isOn: $profile.allowUntrustedTLS) {
                             Text("Allow untrusted certificate")
-                                .font(.system(size: 14))
+                                .scaledFont(14)
                                 .foregroundStyle(theme.label)
                         }
                         .tint(theme.accentColor)
 
                         TextField("not pinned", text: $profile.pinnedFingerprint)
-                            .font(.system(size: 11, design: .monospaced))
+                            .scaledFont(11, design: .monospaced)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .padding(10)
@@ -197,7 +197,7 @@ struct ServerEditView: View {
                             }
                         } label: {
                             Text("Pin last seen certificate")
-                                .font(.system(size: 13, weight: .medium))
+                                .scaledFont(13, weight: .medium)
                                 .foregroundStyle(theme.accentColor)
                         }
                     }
@@ -219,7 +219,7 @@ struct ServerEditView: View {
                 if let message {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(message)
-                            .font(.system(size: 12))
+                            .scaledFont(12)
                             .foregroundStyle(messageHealth.color(theme))
                         if messageHealth == .warn, !isExisting {
                             Button("Test Connection") {
@@ -236,7 +236,7 @@ struct ServerEditView: View {
                                     }
                                 }
                             }
-                            .font(.system(size: 12, weight: .medium))
+                            .scaledFont(12, weight: .medium)
                             .foregroundStyle(theme.accentColor)
                         }
                     }
@@ -247,7 +247,7 @@ struct ServerEditView: View {
                         confirmDelete = true
                     } label: {
                         Text("Remove this firewall")
-                            .font(.system(size: 14, weight: .semibold))
+                            .scaledFont(14, weight: .semibold)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                             .background(theme.card)
@@ -379,14 +379,14 @@ struct LabelledField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased())
-                .font(.system(size: 11, weight: .semibold))
+                .scaledFont(11, weight: .semibold)
                 .tracking(0.8)
                 .foregroundStyle(theme.labelFaint)
             TextField(placeholder, text: $text)
                 .keyboardType(keyboard)
                 .textInputAutocapitalization(autocap ? .sentences : .never)
                 .autocorrectionDisabled()
-                .font(.system(size: 14))
+                .scaledFont(14)
                 .foregroundStyle(theme.label)
                 .padding(10)
                 .background(theme.cardRaised)

@@ -78,6 +78,7 @@ struct CertificatesView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
+            .readableWidth()
             }
             .refreshable { await store.refreshManually() }
         }
@@ -96,11 +97,11 @@ struct CertificatesView: View {
                 Text(soon.isEmpty
                      ? "Nothing expiring soon"
                      : "\(soon.count) expiring or expired")
-                    .font(.system(size: 14, weight: .semibold))
+                    .scaledFont(14, weight: .semibold)
                     .foregroundStyle(theme.label)
                 if let next {
                     Text("Next: \(next.descr) — \(next.expiryDescription)")
-                        .font(.system(size: 11))
+                        .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
                 }
             }
@@ -117,7 +118,7 @@ struct CertificateRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(cert.descr.isEmpty ? "(unnamed)" : cert.descr)
-                        .font(.system(size: 14, weight: .semibold))
+                        .scaledFont(14, weight: .semibold)
                         .foregroundStyle(theme.label)
                         .textSelection(.enabled)
                     Spacer(minLength: 8)
