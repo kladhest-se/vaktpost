@@ -242,6 +242,29 @@ on is how a list stops being read.
 - Acknowledged and silenced alerts are counted separately, so the same alert is
   not reported as hidden twice for two different reasons.
 
+### NaN broke the whole RRD response
+
+The history read failed with "the response wasn't in the expected XML-RPC
+format", which is a sentence that fits a PHP fatal, an HTTP error page and a
+truncated body equally well.
+
+The likely cause: RRD writes NaN for gaps in its data, `is_numeric(NAN)` is
+true in PHP, and `json_encode` fails *outright* on NaN — returning false for
+the whole document rather than skipping that value. The wrapper then puts a
+boolean where a JSON string belongs, and the app reports a malformed response.
+One missing sample poisoned everything. `is_finite` is the check that actually
+excludes it, and INF with it.
+
+The other floats the snippets encode all come from `floatval` on a string,
+which yields 0.0 rather than NaN, so this was the only exposure.
+
+### A malformed response now says what came back
+
+Whether or not NaN was the cause, "not in the expected format" was never going
+to identify it. The error now carries the first 200 characters of what the
+firewall actually said — pfSense prints its fatals into the response, so that
+usually names the function and the file.
+
 ### Every log line opens, not just filter lines
 
 A DHCP or OpenVPN line is a sentence with a syslog prefix, and the list shows
@@ -1845,6 +1868,29 @@ on is how a list stops being read.
   dedicated account, and the field should not argue with them.
 - Acknowledged and silenced alerts are counted separately, so the same alert is
   not reported as hidden twice for two different reasons.
+
+### NaN broke the whole RRD response
+
+The history read failed with "the response wasn't in the expected XML-RPC
+format", which is a sentence that fits a PHP fatal, an HTTP error page and a
+truncated body equally well.
+
+The likely cause: RRD writes NaN for gaps in its data, `is_numeric(NAN)` is
+true in PHP, and `json_encode` fails *outright* on NaN — returning false for
+the whole document rather than skipping that value. The wrapper then puts a
+boolean where a JSON string belongs, and the app reports a malformed response.
+One missing sample poisoned everything. `is_finite` is the check that actually
+excludes it, and INF with it.
+
+The other floats the snippets encode all come from `floatval` on a string,
+which yields 0.0 rather than NaN, so this was the only exposure.
+
+### A malformed response now says what came back
+
+Whether or not NaN was the cause, "not in the expected format" was never going
+to identify it. The error now carries the first 200 characters of what the
+firewall actually said — pfSense prints its fatals into the response, so that
+usually names the function and the file.
 
 ### Every log line opens, not just filter lines
 

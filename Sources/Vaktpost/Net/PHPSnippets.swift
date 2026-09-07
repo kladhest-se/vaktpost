@@ -102,7 +102,7 @@ struct PHPSnippet {
         "wg_get_status",
         "ipsec_list_sa", "get_notices", "get_system_pkg_version",
         "openssl_x509_parse", "base64_decode", "in_array",
-        "extension_loaded", "glob", "basename", "filemtime", "is_numeric",
+        "extension_loaded", "glob", "basename", "filemtime", "is_numeric", "is_finite",
         // Reads an RRD file. There is no writing counterpart in any snippet.
         "rrd_fetch",
         // Probed with function_exists before use; see `pfTables`.
@@ -1451,8 +1451,17 @@ struct PHPSnippet {
 
           $points = [];
           foreach ($values as $when => $value) {
-            // RRD writes NaN for gaps, which JSON cannot carry.
+            // RRD writes NaN for gaps, and `is_numeric(NAN)` is true in PHP
+            // while `json_encode` fails outright on it — returning false for
+            // the whole document, not just that value. The wrapper then sends
+            // a boolean where a JSON string belongs and the app reports a
+            // response that was not XML-RPC, which is a long way from "one
+            // sample was missing".
+            //
+            // `is_finite` is the check that actually excludes it, and INF
+            // with it.
             if (!is_numeric($value)) { continue; }
+            if (!is_finite(floatval($value))) { continue; }
             $points[] = ["at" => intval($when), "value" => floatval($value)];
           }
 

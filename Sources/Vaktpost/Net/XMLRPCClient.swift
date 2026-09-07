@@ -11,7 +11,14 @@ enum RPCError: LocalizedError, Equatable {
     case tls
     case transport(String)
     case fault(Int, String)
-    case malformed
+    /// The response was not XML-RPC, with whatever it actually was.
+    ///
+    /// "The response wasn't in the expected XML-RPC format" is true of a PHP
+    /// fatal, an HTTP error page, a truncated body and a memory limit alike,
+    /// and knowing which is the whole of the debugging. pfSense prints its
+    /// fatals into the response, so the first line of it usually names the
+    /// function and the file.
+    case malformed(String?)
     case cancelled
 
     /// Worth trying once more. Only transport-level failures — a rejected
@@ -36,7 +43,11 @@ enum RPCError: LocalizedError, Equatable {
         case .transport(let m): return m
         case .fault(let code, let message):
             return "The firewall reported an error (\(code)): \(message)"
-        case .malformed: return "The response wasn't in the expected XML-RPC format."
+        case let .malformed(detail):
+            guard let detail, !detail.isEmpty else {
+                return "The response wasn't in the expected XML-RPC format."
+            }
+            return "The firewall did not return XML-RPC. It said: \(detail)"
         case .cancelled: return "Cancelled."
         }
     }
@@ -119,7 +130,7 @@ actor XMLRPCClient {
 
     func runObject(_ snippet: PHPSnippet, timeout: TimeInterval? = nil) async throws -> JSONDict {
         guard let dict = JSONDict(try await run(snippet, timeout: timeout)) else {
-            throw RPCError.malformed
+            throw RPCError.malformed(nil)
         }
         return dict
     }
@@ -240,7 +251,7 @@ actor XMLRPCClient {
             throw RPCError.transport("Firewall returned HTTP \(code).")
         }
 
-        guard let body else { throw RPCError.malformed }
+        guard let body else { throw RPCError.malformed(nil) }
         return try Self.decode(body)
     }
 
@@ -281,20 +292,35 @@ actor XMLRPCClient {
     /// that string, unescape it, and hand it to `JSONDecoder`. A fault
     /// response is recognised and reported with the firewall's own message,
     /// since that is where a PHP error in a snippet surfaces.
+    /// The first useful line of a response that was not XML-RPC.
+    ///
+    /// Trimmed hard: a PHP fatal names its function and file in the first line
+    /// and then prints a stack trace, and an HTML error page is mostly markup.
+    /// Enough to identify the failure, not enough to paste a page into an
+    /// alert.
+    static func excerpt(_ body: String) -> String? {
+        let text = body
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return nil }
+        return text.count > 200 ? String(text.prefix(200)) + "…" : text
+    }
+
     static func decode(_ xml: String) throws -> JSONValue {
         if xml.contains("<fault>") {
             let code = Int(extract(xml, "int") ?? extract(xml, "i4") ?? "") ?? 0
             let message = extract(xml, "string").map(unescape) ?? "no detail"
             throw RPCError.fault(code, message)
         }
-        guard let raw = extract(xml, "string") else { throw RPCError.malformed }
+        guard let raw = extract(xml, "string") else { throw RPCError.malformed(excerpt(xml)) }
         let json = unescape(raw)
-        guard let data = json.data(using: .utf8) else { throw RPCError.malformed }
+        guard let data = json.data(using: .utf8) else { throw RPCError.malformed(nil) }
         let value: JSONValue
         do {
             value = try JSONDecoder().decode(JSONValue.self, from: data)
         } catch {
-            throw RPCError.malformed
+            throw RPCError.malformed(excerpt(json))
         }
         // The wrapper sets this when a snippet finished without assigning a
         // result — a PHP fatal or a memory limit, which otherwise arrives as

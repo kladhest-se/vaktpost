@@ -193,7 +193,7 @@ final class ErrorClassificationTests: XCTestCase {
         XCTAssertFalse(RPCError.unauthorized.isRetryable)
         XCTAssertFalse(RPCError.forbidden.isRetryable)
         XCTAssertFalse(RPCError.tls.isRetryable)
-        XCTAssertFalse(RPCError.malformed.isRetryable)
+        XCTAssertFalse(RPCError.malformed(nil).isRetryable)
         XCTAssertFalse(RPCError.fault(1, "undefined function").isRetryable)
         XCTAssertFalse(RPCError.noCredentials.isRetryable)
         XCTAssertFalse(RPCError.cancelled.isRetryable)

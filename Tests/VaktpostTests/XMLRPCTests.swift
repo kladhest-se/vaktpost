@@ -373,3 +373,28 @@ extension BatchTests {
         }
     }
 }
+
+extension XMLRPCTests {
+
+    func testMalformedCarriesWhatCameBack() {
+        // "The response wasn't in the expected XML-RPC format" is equally true
+        // of a PHP fatal, an HTTP error page and a truncated body, and which
+        // one it is is the whole of the debugging. pfSense prints its fatals
+        // into the response, so the first line usually names the function.
+        let fatal = "PHP Fatal error: Uncaught Error: Call to undefined function rrd_fetch() in /etc/inc/x.inc:12"
+        let error = RPCError.malformed(XMLRPCClient.excerpt(fatal))
+        XCTAssertTrue(error.localizedDescription.contains("rrd_fetch"))
+    }
+
+    func testAnExcerptIsTrimmedNotPasted() {
+        let long = String(repeating: "x", count: 5_000)
+        let excerpt = try? XCTUnwrap(XMLRPCClient.excerpt(long))
+        XCTAssertLessThan(excerpt??.count ?? 0, 250)
+    }
+
+    func testAnEmptyBodyHasNoExcerpt() {
+        // Nothing at all is its own answer, and inventing a detail for it
+        // would be worse than the generic sentence.
+        XCTAssertNil(XMLRPCClient.excerpt("   \n  "))
+    }
+}
