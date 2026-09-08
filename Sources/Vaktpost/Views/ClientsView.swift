@@ -115,44 +115,43 @@ struct ClientsView: View {
     }
 }
 
+/// One device in the list.
+///
+/// A copy of `ClientsView`'s body was pasted over this one — an edit that
+/// replaced every `var body: some View {` in the file rather than the first —
+/// so this struct carried a whole master-detail container and its real card
+/// was left below under another name.
 struct ClientRow: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var store: DashboardStore
     let client: NetworkClient
 
-    @State private var selection: String?
+    /// Whether this row is the phone running the app.
+    ///
+    /// Matched on IP, not MAC. iOS has refused to give an app the Wi-Fi MAC
+    /// since iOS 7 — every app reads `02:00:00:00:00:00` — and Private Wi-Fi
+    /// Address means the address the firewall sees is generated per network
+    /// anyway. The IP is what the system will actually tell us, and it is
+    /// right for as long as the lease lasts.
+    private var isThisDevice: Bool {
+        LocalDevice.isThisDevice(client.ip)
+    }
 
     var body: some View {
-        MasterDetail(
-            selection: $selection,
-            emptyMessage: "Choose a device to see its leases, names and filter log.",
-            list: { listColumn },
-            detail: { id in
-                // Looked up again rather than captured: a stored copy would
-                // show the device as it was at the moment it was tapped, and
-                // the list behind it refreshes every thirty seconds.
-                if let client = store.clients.first(where: { $0.id == id }) {
-                    ClientDetailView(client: client)
-                } else {
-                    Notice(symbol: "questionmark.circle",
-                           title: "That device is no longer in the list")
-                }
-            }
-        )
-    }
-
-    /// Whichever of the client sections failed, if any.
-    private var clientFetchFailure: String? {
-        for section: DashboardStore.Section in [.leases, .arp, .statics, .hostOverrides] {
-            if let message = store.errors[section] { return message }
-        }
-        return nil
-    }
-
-    private var listColumn: some View {
         Slab(rail: client.health) {
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
+                HStack(spacing: 6) {
+                    // This phone, marked.
+                    //
+                    // Picking your own device out of two hundred rows is worth
+                    // a small icon — otherwise it means checking a MAC in
+                    // Settings and scanning for it.
+                    if isThisDevice {
+                        Image(systemName: "iphone.gen3")
+                            .scaledFont(12)
+                            .foregroundStyle(theme.accentColor)
+                            .accessibilityLabel("This device")
+                    }
                     Text(client.name)
                         .scaledFont(15, weight: .semibold)
                         .foregroundStyle(theme.label)
@@ -186,36 +185,7 @@ struct ClientDetailView: View {
 
     private var relatedLog: [LogLine] { store.logLines(matching: client.ip) }
 
-    @State private var selection: String?
-
     var body: some View {
-        MasterDetail(
-            selection: $selection,
-            emptyMessage: "Choose a device to see its leases, names and filter log.",
-            list: { listColumn },
-            detail: { id in
-                // Looked up again rather than captured: a stored copy would
-                // show the device as it was at the moment it was tapped, and
-                // the list behind it refreshes every thirty seconds.
-                if let client = store.clients.first(where: { $0.id == id }) {
-                    ClientDetailView(client: client)
-                } else {
-                    Notice(symbol: "questionmark.circle",
-                           title: "That device is no longer in the list")
-                }
-            }
-        )
-    }
-
-    /// Whichever of the client sections failed, if any.
-    private var clientFetchFailure: String? {
-        for section: DashboardStore.Section in [.leases, .arp, .statics, .hostOverrides] {
-            if let message = store.errors[section] { return message }
-        }
-        return nil
-    }
-
-    private var listColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Slab(rail: client.health, title: "Identity") {
@@ -233,6 +203,17 @@ struct ClientDetailView: View {
                         Hairline()
                         FieldRow(key: "IP", value: client.ip)
                         FieldRow(key: "MAC", value: client.mac)
+                        if LocalDevice.isThisDevice(client.ip) {
+                            // Said in words as well as the icon: an icon alone
+                            // leaves somebody guessing what it claims.
+                            HStack(spacing: 6) {
+                                Image(systemName: "iphone.gen3")
+                                    .scaledFont(11)
+                                Text("This is the device you are using")
+                                    .scaledFont(11)
+                            }
+                            .foregroundStyle(theme.accentColor)
+                        }
 
                         // Every name this device has, not only the one that
                         // won the title. The firewall alias is usually the one

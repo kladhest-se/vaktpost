@@ -9,13 +9,8 @@ struct FirewallView: View {
         var id: String { rawValue }
     }
 
-    enum RuleCategory: String, CaseIterable, Identifiable {
-        case all = "All", floating = "Floating"
-        var id: String { rawValue }
-    }
-
     @State private var pane: Pane = .rules
-    @State private var ruleCategory: RuleCategory = .all
+    @State private var showFloating = false
     @State private var query = ""
     @State private var interfaceFilter: String?
 
@@ -44,6 +39,16 @@ struct FirewallView: View {
 
     private var listColumn: some View {
         VStack(spacing: 0) {
+            // In the content, not the navigation bar.
+            //
+            // `.searchable` puts its field in the nav bar, which animates
+            // itself in and out on focus — the field jumped up the screen the
+            // moment it was tapped. This one stays where it is drawn, like the
+            // Logs and Network fields.
+            InlineSearchField(text: $query, prompt: "Description, address or port")
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+
             Picker("", selection: $pane) {
                 ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
             }
@@ -52,23 +57,35 @@ struct FirewallView: View {
             .padding(.vertical, 10)
 
             if pane == .rules {
-                Picker("Category", selection: $ruleCategory) {
-                    ForEach(RuleCategory.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-
-                if ruleCategory == .all && !interfaceOptions.isEmpty {
+                if !interfaceOptions.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            chip("All", selected: interfaceFilter == nil) { interfaceFilter = nil }
+                            // Floating sits with the interfaces because that is
+                            // what it is: a rule set that belongs to no single
+                            // one of them. "All" is gone — tapping the selected
+                            // chip clears the filter, which is what All did and
+                            // one chip fewer to read.
+                            // First, where a list of filters starts.
+                            //
+                            // It was at the far end, which put the way back to
+                            // "everything" past thirteen interfaces.
+                            chip("All", selected: interfaceFilter == nil && !showFloating) {
+                                interfaceFilter = nil
+                                showFloating = false
+                            }
+                            chip("Floating", selected: showFloating) {
+                                showFloating.toggle()
+                                if showFloating { interfaceFilter = nil }
+                            }
                             ForEach(interfaceOptions, id: \.self) { iface in
                                 chip(store.interfaceLabel(for: iface) ?? iface,
                                      selected: interfaceFilter == iface) {
                                     interfaceFilter = interfaceFilter == iface ? nil : iface
+                                    if interfaceFilter != nil { showFloating = false }
                                 }
                             }
+
+
                         }
                         .padding(.horizontal, 16)
                     }
@@ -93,7 +110,6 @@ struct FirewallView: View {
         // than on the refresh timer — 98 rules is a large payload for a tab
         // most people never open. Nothing called this, so the tab was empty.
         .task { await store.loadFirewallObjects() }
-        .searchable(text: $query, prompt: "Search description, address or port")
         .navigationTitle("Firewall")
     }
 
@@ -122,9 +138,11 @@ struct FirewallView: View {
     }
 
     private var filteredRules: [FirewallRule] {
-        var list = ruleCategory == .floating
-            ? store.rules.filter { $0.isFloating }
-            : store.rules.filter { !$0.isFloating }
+        // No selection shows everything, floating included: with the All chip
+        // gone, "nothing selected" is the way to see the whole set.
+        var list = showFloating
+            ? store.rules.filter(\.isFloating)
+            : store.rules
         if let iface = interfaceFilter {
             list = list.filter { rule in
                 rule.interfaceName.split(separator: ",")
@@ -133,12 +151,31 @@ struct FirewallView: View {
         }
         guard !query.isEmpty else { return list }
         let q = query.lowercased()
-        return list.filter {
-            $0.descr.lowercased().contains(q)
-                || $0.source.lowercased().contains(q)
-                || $0.destination.lowercased().contains(q)
-                || ($0.proto ?? "").lowercased().contains(q)
+        return list.filter { matches($0, q) }
+    }
+
+    /// Whether a rule matches, including through its aliases.
+    ///
+    /// The rows show addresses and ports, not alias names — so searching only
+    /// the raw fields meant typing `443` or `172.16.1.43` found nothing while
+    /// the rule showing exactly those numbers sat on screen. What is displayed
+    /// has to be what is searched.
+    private func matches(_ rule: FirewallRule, _ q: String) -> Bool {
+        if rule.descr.lowercased().contains(q) { return true }
+        if (rule.proto ?? "").lowercased().contains(q) { return true }
+        if rule.interfaceName.lowercased().contains(q) { return true }
+
+        // The name as written, and everything it stands for.
+        for field in [rule.sourceSide.address, rule.destinationSide.address,
+                      rule.sourceSide.port ?? "", rule.destinationSide.port ?? ""]
+        where !field.isEmpty {
+            if field.lowercased().contains(q) { return true }
+            if let members = store.resolveAlias(field),
+               members.contains(where: { $0.lowercased().contains(q) }) {
+                return true
+            }
         }
+        return false
     }
 
     @ViewBuilder
@@ -146,7 +183,7 @@ struct FirewallView: View {
         if let err = store.errors[.firewall] {
             Notice(symbol: "exclamationmark.triangle", title: "Rules unavailable", detail: err, health: .warn)
         } else if filteredRules.isEmpty {
-            let title = ruleCategory == .floating ? "No floating rules" : "No rules returned"
+            let title = showFloating ? "No floating rules" : "No rules returned"
             Notice(symbol: "shield.slash", title: query.isEmpty ? title : "No matches")
         } else {
             countLine("\(filteredRules.count) rules")
@@ -162,11 +199,25 @@ struct FirewallView: View {
     private var filteredForwards: [PortForward] {
         guard !query.isEmpty else { return store.portForwards }
         let q = query.lowercased()
-        return store.portForwards.filter {
-            $0.descr.lowercased().contains(q)
-                || $0.destination.lowercased().contains(q)
-                || $0.target.lowercased().contains(q)
+        return store.portForwards.filter { matches($0, q) }
+    }
+
+    /// Whether a port forward matches, including through its aliases.
+    private func matches(_ pf: PortForward, _ q: String) -> Bool {
+        if pf.descr.lowercased().contains(q) { return true }
+        if (pf.proto ?? "").lowercased().contains(q) { return true }
+        if pf.interfaceName.lowercased().contains(q) { return true }
+
+        for field in [pf.destinationSide.address, pf.target,
+                      pf.destinationSide.port ?? "", pf.localPort ?? ""]
+        where !field.isEmpty {
+            if field.lowercased().contains(q) { return true }
+            if let members = store.resolveAlias(field),
+               members.contains(where: { $0.lowercased().contains(q) }) {
+                return true
+            }
         }
+        return false
     }
 
     @ViewBuilder

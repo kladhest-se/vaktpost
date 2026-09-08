@@ -1,6 +1,16 @@
 import SwiftUI
 
 /// Manages the set of firewalls and which one is on screen.
+/// The list of firewalls, and which one is on screen.
+///
+/// One row per firewall, and nothing else. The previous version carried a
+/// section header repeating the navigation title, a status pill, a fingerprint
+/// prefix, a TLS note, an edit button and an add button in a separate card —
+/// six things competing on a screen that exists to answer "which firewall, and
+/// is anything wrong with it".
+///
+/// What a row needs to say is the name, the address, and whether it can
+/// connect. Everything else belongs to editing it, which is one tap away.
 struct ServersView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var store: DashboardStore
@@ -8,68 +18,63 @@ struct ServersView: View {
 
     @State private var editing: ServerProfile?
     @State private var addingNew = false
-    @State private var confirmLogout = false
-    @State private var selectedServerID: UUID?
 
     var body: some View {
-        List {
-            Section("Firewalls") {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(registry.servers) { server in
-                    ServerCard(
+                    ServerRow(
                         server: server,
                         isActive: server.id == registry.active?.id,
-                        onSelect: {
-                            Task { await store.switchTo(server) }
-                        },
-                        onEdit: {
-                            editing = server
-                        }
+                        onSelect: { Task { await store.switchTo(server) } },
+                        onEdit: { editing = server }
                     )
-                    .listRowInsets(EdgeInsets())
-                    .listRowSeparator(.hidden)
-                }
-                .onDelete(perform: deleteServers)
-            }
-
-            if !registry.servers.isEmpty {
-                Section {
-                    Button {
-                        addingNew = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "plus.circle.fill")
-                            Text("Add firewall")
-                                .scaledFont(14, weight: .semibold)
-                            Spacer()
+                    .contextMenu {
+                        Button {
+                            editing = server
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
                         }
-                        .padding(14)
-                        .frame(maxWidth: .infinity)
-                        .background(theme.card)
-                        .foregroundStyle(theme.accentColor)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        Button(role: .destructive) {
+                            delete(server)
+                        } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
                     }
-                    .buttonStyle(.plain)
                 }
-            }
 
-            if store.isConfigured {
-                Section {
-                    Button(role: .destructive) {
-                        confirmLogout = true
-                    } label: {
-                        Text("Log out")
-                            .scaledFont(14, weight: .semibold)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(theme.card)
-                            .foregroundStyle(theme.bad)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Button {
+                    addingNew = true
+                } label: {
+                    // A row, not a card: it belongs to the same list as the
+                    // firewalls above it and reads as the next item rather
+                    // than a separate control.
+                    HStack(spacing: 10) {
+                        Image(systemName: "plus")
+                            .scaledFont(13, weight: .semibold)
+                        Text("Add firewall")
+                            .scaledFont(14, weight: .medium)
+                        Spacer()
                     }
-                    .buttonStyle(.plain)
+                    .foregroundStyle(theme.accentColor)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity)
+                    .background(theme.card, in: RoundedRectangle(cornerRadius: 12,
+                                                                 style: .continuous))
                 }
+                .buttonStyle(.plain)
+
+                Text("Tap a firewall to switch to it. Press and hold to edit or remove.")
+                    .scaledFont(11)
+                    .foregroundStyle(theme.labelFaint)
+                    .padding(.top, 4)
             }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+            .readableWidth()
         }
-        .listStyle(.plain)
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle("Firewalls")
         .sheet(item: $editing) { server in
@@ -78,69 +83,72 @@ struct ServersView: View {
         .sheet(isPresented: $addingNew) {
             NavigationStack { ServerEditView(profile: ServerProfile()) }
         }
-        .confirmationDialog("Log out?", isPresented: $confirmLogout, titleVisibility: .visible) {
-            Button("Log out", role: .destructive) {
-                Task { await store.logout() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("All metrics, logs, and cached data will be cleared.")
-        }
     }
 
-    private func deleteServers(at offsets: IndexSet) {
-        for index in offsets {
-            let server = registry.servers[index]
-            Task { await store.removed(server) }
-        }
+    private func delete(_ server: ServerProfile) {
+        registry.remove(server)
     }
 }
 
-struct ServerCard: View {
+/// One firewall.
+///
+/// The active one is marked once, by a filled dot rather than a pill — a pill
+/// saying "active" beside a name is a label for something already obvious from
+/// the tick, and it competed with the warnings that matter.
+struct ServerRow: View {
     @EnvironmentObject private var theme: ThemeManager
+
     let server: ServerProfile
     let isActive: Bool
     let onSelect: () -> Void
     let onEdit: () -> Void
 
     var body: some View {
-        Slab(rail: isActive ? .ok : .idle) {
+        Button {
+            if isActive { onEdit() } else { onSelect() }
+        } label: {
             HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(server.displayName)
-                            .scaledFont(15, weight: .semibold)
-                            .foregroundStyle(theme.label)
-                        if isActive { StatusPill(text: "active", health: .ok) }
-                        if !server.hasCredentials { StatusPill(text: "no password", health: .warn) }
-                    }
+                Image(systemName: isActive ? "largecircle.fill.circle" : "circle")
+                    .scaledFont(16)
+                    .foregroundStyle(isActive ? theme.ok : theme.labelFaint)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(server.displayName)
+                        .scaledFont(15, weight: .semibold)
+                        .foregroundStyle(theme.label)
+
                     Text(server.baseURL)
                         .scaledFont(11, design: .monospaced)
                         .foregroundStyle(theme.labelFaint)
-                        .lineLimit(2)
-                    if !server.pinnedFingerprint.isEmpty {
-                        Text("pinned \(server.pinnedFingerprint.prefix(12))…")
-                            .scaledFont(10, design: .monospaced)
-                            .foregroundStyle(theme.ok)
-                    } else if server.allowUntrustedTLS {
-                        Text("untrusted TLS accepted")
-                            .scaledFont(10, design: .monospaced)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    // Only when something is worth saying. A pinned
+                    // certificate is the expected state and says nothing by
+                    // being mentioned; the absence of one does.
+                    if !server.hasCredentials {
+                        Text("No password saved")
+                            .scaledFont(11)
+                            .foregroundStyle(theme.warn)
+                    } else if server.pinnedFingerprint.isEmpty && server.allowUntrustedTLS {
+                        Text("Certificate not pinned")
+                            .scaledFont(11)
                             .foregroundStyle(theme.warn)
                     }
                 }
-                Spacer()
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .scaledFont(11, weight: .semibold)
+                    .foregroundStyle(theme.labelFaint)
             }
-            .contentShape(Rectangle())
-            .onTapGesture { if !isActive { onSelect() } }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity)
+            .background(theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .swipeActions(edge: .trailing) {
-            Button {
-                onEdit()
-            } label: {
-                Label("Edit", systemImage: "pencil")
-            }
-            .tint(theme.accentColor)
-        }
+        .buttonStyle(.plain)
     }
 }
 

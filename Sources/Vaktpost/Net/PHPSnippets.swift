@@ -103,6 +103,8 @@ struct PHPSnippet {
         "ipsec_list_sa", "get_notices", "get_system_pkg_version",
         "openssl_x509_parse", "base64_decode", "in_array",
         "extension_loaded", "glob", "basename", "filemtime", "is_numeric", "is_finite",
+        // Diagnostic reads: they describe an RRD file, they cannot change one.
+        "rrd_last", "rrd_info", "rrd_xport", "gettype", "strpos", "time", "array_keys",
         // Reads an RRD file. There is no writing counterpart in any snippet.
         "rrd_fetch",
         // Probed with function_exists before use; see `pfTables`.
@@ -1437,13 +1439,109 @@ struct PHPSnippet {
     /// Downsampled to at most 120 points per series. A day at RRD's finest
     /// resolution is 1440 buckets per direction per interface, which is a
     /// megabyte of JSON to draw a line 200 points wide.
-    static let rrdTraffic = PHPSnippet("rrd_traffic", """
+    /// How far back to read.
+    ///
+    /// pfSense keeps years of these — its own page offers up to four — and the
+    /// app was asking for one fixed span. The interesting question changes
+    /// with the span: an evening's shape, a working week, a month's growth.
+    enum RRDWindow: String, CaseIterable, Identifiable {
+        case eightHours = "8h", day = "24h", week = "week", month = "month", year = "year"
+
+        var id: String { rawValue }
+
+        /// Seconds, as an integer this file controls. Nothing a caller passes
+        /// reaches the PHP — the enum is the whole vocabulary.
+        var seconds: Int {
+            switch self {
+            case .eightHours: return 28_800
+            case .day: return 86_400
+            case .week: return 604_800
+            case .month: return 2_592_000
+            case .year: return 31_536_000
+            }
+        }
+
+        /// The next span up, for widening past a gap.
+        var next: RRDWindow? {
+            switch self {
+            case .eightHours: return .day
+            case .day: return .week
+            case .week: return .month
+            case .month: return .year
+            case .year: return nil
+            }
+        }
+
+        var displayName: String {
+            switch self {
+            case .eightHours: return "8 hours"
+            case .day: return "Day"
+            case .week: return "Week"
+            case .month: return "Month"
+            case .year: return "Year"
+            }
+        }
+    }
+
+    static func rrdTraffic(_ window: RRDWindow) -> PHPSnippet {
+        // The span comes from the enum above and is rendered as an integer, so
+        // the only thing varying between these is a number this file chose.
+        PHPSnippet("rrd_traffic_\(window.rawValue)", """
     $available = function_exists("rrd_fetch");
     $rows = [];
 
     if ($available) {
       foreach (glob("/var/db/rrd/*-traffic.rrd") as $path) {
-        $result = rrd_fetch($path, ["AVERAGE", "--start", "-86400", "--end", "now"]);
+        // When the file was last written, carried with the data.
+        //
+        // Every value in a day coming back unknown has one dull explanation
+        // that no amount of reading the fetch will reveal: the file is not
+        // being updated. `rrd_last` says so in one number, and asking for it
+        // here saves the person running a separate tool to find out.
+        $last = function_exists("rrd_last") ? intval(rrd_last($path)) : 0;
+        $age = $last > 0 ? (time() - $last) : -1;
+        // Five-minute resolution first, then whatever the defaults give.
+        //
+        // pfSense's own Status → Monitoring draws a full day from these files
+        // at "Resolution: 5 Minutes", while a default fetch of the same file
+        // returned nothing but NaN. The finest archive is not the one holding
+        // the day: rrdtool picks an RRA to satisfy the request, and asking
+        // without a resolution asked for one that has no data in it.
+        //
+        // So this asks for what the firewall's own page asks for, and falls
+        // back only if that comes up empty. Two fetches per file is more work
+        // than one, and this runs on demand rather than on the refresh timer.
+        // `rrd_fetch` only, for now.
+        //
+        // The `rrd_xport` path returned HTTP 502 — the request died rather
+        // than failing — and it did so again after being guarded on the file
+        // declaring the data sources it asks for. Something in that call takes
+        // the process down on this firewall, and the app has no business
+        // finding out which part on a live box every thirty seconds.
+        //
+        // So the refresh takes the call that is known not to crash, even
+        // though it returns unknowns here. An empty chart is a poor result; an
+        // empty chart plus a web server that stops answering is a much worse
+        // one, and this app is a monitor — it should be the last thing to
+        // disturb the thing it watches.
+        //
+        // `vaktpost-tools/bin/rrd-probe.sh` establishes what this extension
+        // will actually take, one isolated call at a time. When that says
+        // which call works, it comes back here.
+        // A week, not a day.
+        //
+        // Every 24-hour window returns nothing but unknowns on this firewall,
+        // and a week returns real values — 320 of them, starting
+        // `inpass=814758.67`. The traffic files stopped being written about a
+        // day ago, so a day-long window lands entirely inside the gap while a
+        // week reaches back past it to the data that is there.
+        //
+        // Asking for a week regardless is also the more honest default: if the
+        // recording resumes, this shows the recent data and the gap behind it,
+        // which is exactly what somebody wants to see after an outage.
+        $result = rrd_fetch($path, ["AVERAGE", "-s", "-\(window.seconds)"]);
+        $resolution_used = 0;
+
         if (!is_array($result) || !is_array($result["data"])) { continue; }
 
         foreach ($result["data"] as $series => $values) {
@@ -1465,6 +1563,11 @@ struct PHPSnippet {
             $points[] = ["at" => intval($when), "value" => floatval($value)];
           }
 
+          // Counted before filtering, so the app can tell "nothing was
+          // recorded" from "everything was rejected on the way in".
+          $seen = is_iterable($values) ? count($values) : 0;
+          $kept = count($points);
+
           $total = count($points);
           if ($total > 120) {
             $step = intval($total / 120);
@@ -1477,7 +1580,12 @@ struct PHPSnippet {
 
           $rows[] = [
             "file" => basename($path, "-traffic.rrd"),
+            "last_update" => $last,
+            "age_seconds" => $age,
+            "resolution" => $resolution_used,
             "series" => strval($series),
+            "values_seen" => $seen,
+            "values_kept" => $kept,
             "points" => $points,
           ];
         }
@@ -1485,6 +1593,152 @@ struct PHPSnippet {
     }
 
     $toreturn = ["available" => $available, "data" => $rows];
+    """)
+    }
+
+
+    /// What `rrd_fetch` actually hands back, for one file.
+    ///
+    /// The app reports 207,504 values offered and none numeric — so the fetch
+    /// works, the structure parses, and every value inside fails
+    /// `is_numeric` or `is_finite`. That narrows it to the values themselves,
+    /// and no amount of reading the code from here will say what they are.
+    ///
+    /// This returns their PHP types and a few of them as strings, plus what
+    /// the file says about itself: its step, when it was last updated, and
+    /// which archives it keeps. A file whose last update is hours old explains
+    /// an all-unknown window on its own.
+    ///
+    /// Diagnostic only — not called by the app, run from `bin/rrd-trace.sh`.
+    static let rrdTrace = PHPSnippet("rrd_trace", """
+    $available = function_exists("rrd_fetch");
+    $toreturn = ["available" => $available];
+
+    if ($available) {
+      $files = glob("/var/db/rrd/*-traffic.rrd");
+
+      // The WAN file, not whichever sorts first.
+      //
+      // Alphabetical order put `ipsec-traffic.rrd` first — an interface that
+      // may carry no traffic at all — so the trace described the least
+      // representative file on the firewall. The uplink is the one somebody
+      // is asking about.
+      $path = "";
+      foreach ($files as $candidate) {
+        if (strpos(basename($candidate), "wan") === 0) { $path = $candidate; break; }
+      }
+      if ($path === "" && count($files) > 0) { $path = $files[0]; }
+      $toreturn["file"] = $path;
+
+      // Every file's age, so one stale file is not mistaken for a stale
+      // firewall, or the other way round.
+      $ages = [];
+      if (function_exists("rrd_last")) {
+        foreach ($files as $candidate) {
+          $ages[] = [
+            "file" => basename($candidate, "-traffic.rrd"),
+            "age_seconds" => time() - intval(rrd_last($candidate)),
+          ];
+        }
+      }
+      $toreturn["all_ages"] = $ages;
+
+      if ($path !== "") {
+        // What the file believes about itself.
+        if (function_exists("rrd_last")) {
+          $last = rrd_last($path);
+          $toreturn["last_update"] = intval($last);
+          $toreturn["last_update_age_seconds"] = time() - intval($last);
+        }
+        if (function_exists("rrd_info")) {
+          $info = rrd_info($path);
+          $keys = [];
+          if (is_array($info)) {
+            foreach ($info as $key => $value) {
+              // Step, DS names and RRA definitions; the rest is noise.
+              if (strpos($key, "step") !== false
+                  || strpos($key, "ds[") !== false
+                  || strpos($key, "rra[") !== false) {
+                $keys[] = $key . " = " . strval($value);
+              }
+            }
+          }
+          $toreturn["info"] = array_slice($keys, 0, 40);
+        }
+
+        // Both calls, so the trace shows the difference rather than only
+        // whichever the app currently prefers.
+        $result = rrd_fetch($path, ["AVERAGE"]);
+        $toreturn["fetch_keys"] = is_array($result) ? array_keys($result) : [];
+
+        // Same guard as the real snippet: a DEF naming a data source the file
+        // does not have takes the whole request down with it, and a trace that
+        // crashes the thing it is tracing is worse than no trace.
+        $trace_has_in = false;
+        if (function_exists("rrd_info")) {
+          $trace_info = rrd_info($path);
+          $trace_has_in = is_array($trace_info)
+            && array_key_exists("ds[inpass].index", $trace_info);
+        }
+        $toreturn["has_inpass"] = $trace_has_in;
+
+        if ($trace_has_in && function_exists("rrd_xport")) {
+          $xp = rrd_xport([
+            "--start", "-86400", "--end", "-60", "--step", "300",
+            "DEF:in=" . $path . ":inpass:AVERAGE",
+            "XPORT:in:inpass",
+          ]);
+          $xp_numeric = 0;
+          $xp_total = 0;
+          if (is_array($xp) && is_array($xp["data"])) {
+            foreach ($xp["data"] as $one) {
+              if (!is_array($one) || !is_array($one["data"])) { continue; }
+              foreach ($one["data"] as $value) {
+                $xp_total = $xp_total + 1;
+                if (is_numeric($value) && is_finite(floatval($value))) {
+                  $xp_numeric = $xp_numeric + 1;
+                }
+              }
+            }
+          }
+          $toreturn["xport_values"] = $xp_total;
+          $toreturn["xport_numeric"] = $xp_numeric;
+        }
+        $toreturn["fetch_start"] = is_array($result) ? strval($result["start"]) : "";
+        $toreturn["fetch_end"] = is_array($result) ? strval($result["end"]) : "";
+        $toreturn["fetch_step"] = is_array($result) ? strval($result["step"]) : "";
+
+        $samples = [];
+        if (is_array($result) && is_array($result["data"])) {
+          foreach ($result["data"] as $ds => $values) {
+            if (!is_iterable($values)) {
+              $samples[] = ["ds" => strval($ds), "type" => gettype($values)];
+              continue;
+            }
+            // The first few values with their types: a float NAN, the string
+            // "nan", and null are three different problems.
+            $shown = [];
+            $count = 0;
+            foreach ($values as $when => $value) {
+              $shown[] = [
+                "at" => strval($when),
+                "type" => gettype($value),
+                "as_string" => strval($value),
+                "is_numeric" => is_numeric($value),
+              ];
+              $count = $count + 1;
+              if ($count >= 5) { break; }
+            }
+            $samples[] = [
+              "ds" => strval($ds),
+              "count" => count($values),
+              "first" => $shown,
+            ];
+          }
+        }
+        $toreturn["series"] = array_slice($samples, 0, 3);
+      }
+    }
     """)
 
     // MARK: - Firewall objects
@@ -1713,8 +1967,9 @@ struct PHPSnippet {
         [telemetry, firmware, packages, packageUpdates, notices, interfaces, interfaceCounters, gateways, arpTable, dhcpLeases,
          staticMappings, hostOverrides, services, openvpnServers, openvpnClients, ipsecSAs,
          wireguard, pfTables, haproxy, acme, firewallRules, firewallAliases, portForwards, carp,
-         certificates, dyndns, ping, rrdProbe, rrdTraffic,
+         certificates, dyndns, ping, rrdProbe, rrdTrace,
          batchCore, batchClients, batchVpn, batchSystem]
         + LogSource.allCases.map { log($0, limit: 100) }
+        + RRDWindow.allCases.map { rrdTraffic($0) }
     }
 }

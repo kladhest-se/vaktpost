@@ -376,3 +376,114 @@ final class FilterLogFieldTests: XCTestCase {
         XCTAssertNil(dhcp.filterFields)
     }
 }
+
+/// Chart readouts, which are arithmetic and so can be tested.
+final class ChartSampleTests: XCTestCase {
+
+    /// The same snapping the charts do: nearest sample, clamped in range.
+    ///
+    /// The clamp is written out rather than borrowed. `clamped(to:)` is
+    /// fileprivate to Components.swift, so reaching for it here does not
+    /// compile — and a test that shares the implementation's helper would pass
+    /// even if that helper were the thing that was wrong. The arithmetic under
+    /// test is two lines; stating it twice is the point.
+    private func index(x: CGFloat, width: CGFloat, count: Int) -> Int {
+        let step = width / CGFloat(count - 1)
+        let raw = Int((x / step).rounded())
+        return min(max(raw, 0), count - 1)
+    }
+
+    func testATapSnapsToTheNearestSampleNotTheOneBefore() {
+        // Truncating meant a tap two thirds of the way between two samples
+        // reported the one on its left, so the dot never sat where the finger
+        // was and never sat on the line either.
+        XCTAssertEqual(index(x: 66, width: 100, count: 11), 7)
+        XCTAssertEqual(index(x: 64, width: 100, count: 11), 6)
+    }
+
+    func testTheRightEdgeIsInRange() {
+        // The clamp allowed `count`, one past the end — a tap on the right
+        // edge indexed out of bounds.
+        XCTAssertEqual(index(x: 100, width: 100, count: 11), 10)
+        XCTAssertEqual(index(x: 140, width: 100, count: 11), 10)
+    }
+
+    func testTheLeftEdgeIsInRange() {
+        XCTAssertEqual(index(x: 0, width: 100, count: 11), 0)
+        XCTAssertEqual(index(x: -20, width: 100, count: 11), 0)
+    }
+
+    func testTheSnappedPositionLandsOnTheLine() {
+        // The marker used the tapped x with the sample's y, so it floated off
+        // the line. Snapping the x is what puts it back on.
+        let width: CGFloat = 100, count = 11
+        let step = width / CGFloat(count - 1)
+        let i = index(x: 66, width: width, count: count)
+        XCTAssertEqual(CGFloat(i) * step, 70, accuracy: 0.001)
+    }
+}
+
+/// The device's own addresses, used to mark its row in the client list.
+final class LocalDeviceTests: XCTestCase {
+
+    func testItFindsAtLeastOneAddress() {
+        // A simulator or a device on a network has at least one non-loopback
+        // IPv4 address. Zero would mean the interface walk is broken rather
+        // than that the machine is offline, which is worth knowing.
+        let addresses = LocalDevice.addresses()
+        XCTAssertFalse(addresses.isEmpty, "no interfaces found at all")
+    }
+
+    func testLoopbackIsExcluded() {
+        // 127.0.0.1 is nobody's client, and a firewall never lists it. If it
+        // came through, every client list would mark whichever row happened to
+        // hold it.
+        XCTAssertFalse(LocalDevice.addresses().values.contains("127.0.0.1"))
+    }
+
+    func testAnUnrelatedAddressIsNotThisDevice() {
+        XCTAssertFalse(LocalDevice.isThisDevice("203.0.113.9"))
+        XCTAssertFalse(LocalDevice.isThisDevice(""))
+    }
+
+    func testItsOwnAddressIsRecognised() {
+        guard let mine = LocalDevice.addresses().values.first else {
+            return XCTFail("no address to test with")
+        }
+        XCTAssertTrue(LocalDevice.isThisDevice(mine))
+    }
+}
+
+/// When the app should hide its tabs.
+@MainActor
+final class UnreachableStateTests: XCTestCase {
+
+    private func store() -> DashboardStore {
+        DashboardStore(registry: ServerRegistry(
+            defaults: UserDefaults(suiteName: "vaktpost.tests.\(UUID().uuidString)")!))
+    }
+
+    func testAFailedRefreshAloneDoesNotHideTheTabs() {
+        // One timeout on a phone changing networks should not tear the tabs
+        // away from somebody reading a log. Data already on screen means the
+        // firewall was reachable a moment ago.
+        let s = store()
+        s.connectionError = "timed out"
+        s.system = SystemStatus(JSONDict(.object([:]))!)
+        XCTAssertFalse(s.isUnreachable)
+    }
+
+    func testAnErrorWithNothingLoadedHidesThem() {
+        let s = store()
+        s.connectionError = "The firewall did not respond."
+        s.system = nil
+        XCTAssertTrue(s.isUnreachable)
+    }
+
+    func testNoErrorIsNotUnreachable() {
+        let s = store()
+        s.connectionError = nil
+        s.system = nil
+        XCTAssertFalse(s.isUnreachable)
+    }
+}

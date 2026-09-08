@@ -137,6 +137,21 @@ final class ServerRegistry: ObservableObject {
         persist()
     }
 
+    /// Records the order the sections are in.
+    ///
+    /// The order lived only in the view's `@State`, so dragging a section
+    /// rearranged the screen and the next appearance put it back: the loader
+    /// filtered `allCases`, which returns declaration order and discards
+    /// whatever was stored. Both halves have to agree that the stored array
+    /// *is* the order.
+    func setOverviewSectionOrder(_ server: ServerProfile, _ sections: [OverviewSection]) {
+        guard let idx = servers.firstIndex(where: { $0.id == server.id }) else { return }
+        var profile = servers[idx]
+        profile.overviewVisibleSections = sections.map(\.rawValue)
+        servers[idx] = profile
+        persist()
+    }
+
     func setOverviewSectionVisibility(_ server: ServerProfile, _ section: OverviewSection, visible: Bool) {
         guard let idx = servers.firstIndex(where: { $0.id == server.id }) else { return }
         var profile = servers[idx]

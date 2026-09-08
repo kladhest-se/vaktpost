@@ -10,6 +10,7 @@ struct NetworkView: View {
         ScrollView {
             PageHeader(title: "Network", subtitle: store.interfaces.count > 0 ? "\(store.interfaces.count) interfaces" : nil)
             VStack(alignment: .leading, spacing: 12) {
+                InlineSearchField(text: $query, prompt: "Filter interfaces")
                 interfacesPane
             }
             .padding(.horizontal, 16)
@@ -17,7 +18,6 @@ struct NetworkView: View {
         }
         .background(theme.bg.ignoresSafeArea())
         .refreshable { await store.refreshManually() }
-        .searchable(text: $query, prompt: "Filter interfaces")
     }
 
     // MARK: Interfaces
@@ -135,7 +135,10 @@ struct InterfaceCard: View {
                     tracker: store.throughput,
                     store: store,
                     device: iface.seriesKey,
-                    height: 44
+                    // The same height as the Overview's. A 44-point strip is
+                    // a sparkline; these are the charts somebody came to the
+                    // Network tab to read.
+                    height: 110
                 )
             }
         }

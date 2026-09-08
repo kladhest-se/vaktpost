@@ -7,8 +7,14 @@ struct OverviewView: View {
 
     @State private var visibleSections: [OverviewSection] = []
     @State private var draggedSection: OverviewSection?
-    @State private var draggingOffset: CGFloat = 0
-    @State private var estimatedSectionHeight: CGFloat = 80
+    /// The measured height of each section.
+    ///
+    /// A single estimate was why dragging felt wrong: the status banner is a
+    /// third of the system card, so one number was too large for half the
+    /// sections and too small for the rest, and a card would jump two places
+    /// or refuse to move. Each row reports its own height and the drag walks
+    /// the real geometry.
+    @State private var sectionHeights: [OverviewSection: CGFloat] = [:]
 
     var isEditingBinding: Binding<Bool> {
         Binding(
@@ -43,8 +49,7 @@ struct OverviewView: View {
                                 registry: registry,
                                 content: { sectionContentView(section) },
                                 draggedSection: $draggedSection,
-                                draggingOffset: $draggingOffset,
-                                estimatedSectionHeight: estimatedSectionHeight,
+                                sectionHeights: $sectionHeights,
                                 currentIndex: index
                             )
                         }
@@ -88,7 +93,13 @@ struct OverviewView: View {
 
     private func loadVisibleSections() {
         guard let active = registry.active else { return }
-        visibleSections = OverviewSection.allCases.filter { active.overviewVisibleSections.contains($0.rawValue) }
+        // The stored array in its stored order.
+        //
+        // Filtering `allCases` returned declaration order and threw the saved
+        // arrangement away, so a section dragged to the top came back in the
+        // middle on the next appearance.
+        visibleSections = active.overviewVisibleSections
+            .compactMap(OverviewSection.init(rawValue:))
     }
     
     @ViewBuilder
@@ -127,7 +138,8 @@ struct OverviewView: View {
         registry.setOverviewSectionVisibility(active, section, visible: true)
     }
 
-    @ViewBuilder
+    /// No `@ViewBuilder`: this returns `AnyView` through explicit `return`
+    /// statements, which turns the builder off anyway and warns about it.
     private func sectionContentView(_ section: OverviewSection) -> AnyView {
         switch section {
         case .status:
@@ -434,7 +446,17 @@ struct OverviewView: View {
                         Spacer()
                     }
                     Hairline()
-                    ForEach(store.firewallLog.prefix(4)) { LogRow(line: $0, compact: true) }
+                    // Tappable, like the same rows on the Logs tab. A blocked
+                    // line on the Overview is the one somebody most wants to
+                    // open, and it was the one place they could not.
+                    ForEach(store.firewallLog.prefix(4)) { line in
+                        NavigationLink {
+                            LogDetailView(line: line)
+                        } label: {
+                            LogRow(line: line, compact: true)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
         }
@@ -532,79 +554,128 @@ private struct SectionView: View {
     @EnvironmentObject private var theme: ThemeManager
     
     @Binding var draggedSection: OverviewSection?
-    @Binding var draggingOffset: CGFloat
-    let estimatedSectionHeight: CGFloat
+    @Binding var sectionHeights: [OverviewSection: CGFloat]
     let currentIndex: Int
 
-    @GestureState private var gestureOffset: CGFloat = 0
     @State private var isDragging = false
-    
-    private var sectionOffset: CGFloat {
-        guard let dragged = draggedSection,
-              dragged != section else {
-            return 0
-        }
-        return 0
+
+    /// Where the drag started, in the list.
+    ///
+    /// The rows reorder while the finger is still down, so `currentIndex`
+    /// changes underneath the gesture. The origin is fixed at the start and
+    /// every target is computed from it, which is what keeps a drag from
+    /// fighting its own reordering.
+    @State private var dragOrigin: Int?
+    @State private var translation: CGFloat = 0
+
+    /// How far the dragged card is from its slot.
+    ///
+    /// The card follows the finger; its slot has already moved to wherever the
+    /// reordering put it, so the visible offset is the finger's travel minus
+    /// the distance the slot itself has travelled. Without that subtraction
+    /// the card runs away from the cursor by a row each time the list shifts.
+    private var liveOffset: CGFloat {
+        guard isDragging, let origin = dragOrigin else { return 0 }
+        // The distance this card's slot has already travelled, in real
+        // heights: the rows it passed are not all the same size, so counting
+        // them and multiplying by an average put the card visibly off the
+        // finger by the third row.
+        return translation - travelled(from: origin, to: currentIndex)
     }
 
-    @State private var dropTargetIndex: Int?
-    @State private var isAnimating = false
-    @State private var dragDistance: CGFloat = 0
+    /// The height of the rows between two positions, signed.
+    private func travelled(from: Int, to: Int) -> CGFloat {
+        guard from != to else { return 0 }
+        let range = from < to ? (from + 1)...to : (to + 1)...from
+        let distance = range.reduce(CGFloat.zero) { total, index in
+            guard visibleSections.indices.contains(index) else { return total }
+            return total + height(of: visibleSections[index])
+        }
+        return from < to ? distance : -distance
+    }
+
+    /// A measured height, or a middling default until the row has been laid
+    /// out once.
+    private func height(of section: OverviewSection) -> CGFloat {
+        sectionHeights[section] ?? 80
+    }
+
+    /// Where a drag of this distance should land, measured in real rows.
+    private func targetIndex(from origin: Int, translation: CGFloat) -> Int {
+        var index = origin
+        var remaining = translation
+
+        if remaining > 0 {
+            while index < visibleSections.count - 1 {
+                let next = height(of: visibleSections[index + 1])
+                    // Two thirds, not half.
+                //
+                // Half means a card swaps the instant it overlaps its
+                // neighbour, so a small wobble near a boundary flips it back
+                // and forth. The extra sixth is hysteresis: enough that a
+                // deliberate move still feels immediate and a shaky hand does
+                // not.
+                guard remaining > next * 0.66 else { break }
+                remaining -= next
+                index += 1
+            }
+        } else {
+            while index > 0 {
+                let previous = height(of: visibleSections[index - 1])
+                guard -remaining > previous * 0.66 else { break }
+                remaining += previous
+                index -= 1
+            }
+        }
+        return index
+    }
 
     private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 0)
+        DragGesture(minimumDistance: 4)
             .onChanged { value in
-                isDragging = true
-                draggedSection = section
-                dragDistance = value.translation.height
-                
-                let dragSteps = Int(dragDistance / estimatedSectionHeight)
-                dropTargetIndex = max(0, min(visibleSections.count - 1, currentIndex + dragSteps))
-            }
-            .onEnded { value in
-                isDragging = false
-                dragDistance = 0
-                
-                let dragSteps = Int(value.translation.height / estimatedSectionHeight)
-                let finalIndex = max(0, min(visibleSections.count - 1, currentIndex + dragSteps))
-                
-                if abs(value.translation.height) > 20, finalIndex != currentIndex {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                        var newSections = visibleSections
-                        let fromIndex = newSections.firstIndex(of: section)!
-                        let item = newSections.remove(at: fromIndex)
-                        let toIndex = finalIndex > fromIndex ? finalIndex - 1 : finalIndex
-                        newSections.insert(item, at: toIndex)
-                        visibleSections = newSections
+                if dragOrigin == nil {
+                    dragOrigin = currentIndex
+                    isDragging = true
+                    draggedSection = section
+                }
+                translation = value.translation.height
+
+                guard let origin = dragOrigin else { return }
+
+                // Walk the real rows rather than dividing by an average.
+                //
+                // A card swaps once it is more than halfway over its
+                // neighbour, and "halfway" depends on how tall that neighbour
+                // is — which is what made this feel jumpy with sections
+                // ranging from a banner to a full system card.
+                let target = targetIndex(from: origin, translation: translation)
+
+                if target != currentIndex,
+                   let from = visibleSections.firstIndex(of: section) {
+                    // Reorder as the finger moves. Everything else animates
+                    // into place because the ForEach re-renders with the new
+                    // order — the cards move in relation to each other, which
+                    // is the whole point of dragging one.
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                        var reordered = visibleSections
+                        let item = reordered.remove(at: from)
+                        reordered.insert(item, at: target)
+                        visibleSections = reordered
                     }
                 }
-                
-                dropTargetIndex = nil
-                draggedSection = nil
             }
-    }
+            .onEnded { _ in
+                // Saved once, at the end. Persisting on every swap would write
+                // the profile a dozen times during one gesture.
+                persistOrder(visibleSections)
 
-    private var dropIndicatorOffset: CGFloat {
-        guard let target = dropTargetIndex else {
-            return 0
-        }
-        
-        let dragged = draggedSection
-        let draggedIndex = dragged.map { visibleSections.firstIndex(of: $0) } ?? .none
-        
-        if let draggedIndex = draggedIndex, target > currentIndex {
-            // Dragging down - sections between current and target move up
-            if currentIndex > draggedIndex && currentIndex <= target {
-                return -estimatedSectionHeight
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    isDragging = false
+                    translation = 0
+                    dragOrigin = nil
+                    draggedSection = nil
+                }
             }
-        } else if let draggedIndex = draggedIndex, target < currentIndex {
-            // Dragging up - sections between target and current move down
-            if currentIndex < draggedIndex && currentIndex >= target {
-                return estimatedSectionHeight
-            }
-        }
-        
-        return 0
     }
 
     var body: some View {
@@ -635,10 +706,6 @@ private struct SectionView: View {
                 Spacer()
             }
             .animation(.easeInOut(duration: 0.2), value: isEditing)
-            .offset(y: section == draggedSection ? gestureOffset + dragDistance : dropIndicatorOffset)
-            .scaleEffect(section == draggedSection ? 1.03 : 1.0)
-            .opacity(section == draggedSection ? 0.95 : 1.0)
-            .shadow(color: section == draggedSection ? .black.opacity(0.2) : .clear, radius: 12, y: section == draggedSection ? 8 : 0)
             
             if isEditing {
                 sectionMockup
@@ -646,6 +713,31 @@ private struct SectionView: View {
                 content()
             }
         }
+        // Lifted as a whole, not just its title.
+        //
+        // These were on the header row, so dragging moved the heading and left
+        // the card behind it — the offsets that used to nudge the neighbours
+        // are gone because the list reorders underneath instead.
+        // Reports its own height so the drag can walk real geometry. Read
+        // during layout and written back once it changes, which is cheap: a
+        // section's height only moves when its contents do.
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: SectionHeightKey.self,
+                                       value: [section: proxy.size.height])
+            }
+        )
+        .onPreferenceChange(SectionHeightKey.self) { heights in
+            for (key, value) in heights where sectionHeights[key] != value {
+                sectionHeights[key] = value
+            }
+        }
+        .offset(y: liveOffset)
+        .scaleEffect(isDragging ? 1.03 : 1.0)
+        .opacity(isDragging ? 0.95 : 1.0)
+        .shadow(color: isDragging ? .black.opacity(0.2) : .clear,
+                radius: 12, y: isDragging ? 8 : 0)
+        .zIndex(isDragging ? 1 : 0)
         .gesture(isEditing ? dragGesture : nil)
     }
     
@@ -660,12 +752,23 @@ private struct SectionView: View {
         registry.setOverviewSectionVisibility(active, section, visible: false)
     }
     
+    /// Writes the arrangement back to the profile.
+    ///
+    /// Every path that reorders has to call this: the order is stored per
+    /// firewall, and a rearrangement that lives only in view state is undone
+    /// the next time the screen appears.
+    private func persistOrder(_ sections: [OverviewSection]) {
+        guard let active = registry.active else { return }
+        registry.setOverviewSectionOrder(active, sections)
+    }
+
     private func moveSectionUp() {
         guard let currentIndex = visibleSections.firstIndex(of: section),
               currentIndex > 0 else { return }
         var newSections = visibleSections
         newSections.swapAt(currentIndex, currentIndex - 1)
         visibleSections = newSections
+        persistOrder(newSections)
     }
     
     private func moveSectionDown() {
@@ -674,6 +777,7 @@ private struct SectionView: View {
         var newSections = visibleSections
         newSections.swapAt(currentIndex, currentIndex + 1)
         visibleSections = newSections
+        persistOrder(newSections)
     }
 }
 
@@ -697,5 +801,19 @@ extension View {
         } else {
             self
         }
+    }
+}
+
+/// Collects each section's measured height.
+///
+/// A dictionary rather than a single value, because the rows report
+/// independently and the drag needs all of them at once — it walks from one
+/// row to another and has to know how tall each one it passes is.
+struct SectionHeightKey: PreferenceKey {
+    static var defaultValue: [OverviewSection: CGFloat] { [:] }
+
+    static func reduce(value: inout [OverviewSection: CGFloat],
+                       nextValue: () -> [OverviewSection: CGFloat]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }

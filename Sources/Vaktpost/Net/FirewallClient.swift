@@ -162,8 +162,8 @@ actor FirewallClient {
     }
 
     /// A day of recorded traffic, if this pfSense can read its own RRD files.
-    func rrdTraffic() async throws -> RRDHistory {
-        RRDHistory(try await rpc.runObject(.rrdTraffic, timeout: 60))
+    func rrdTraffic(_ window: PHPSnippet.RRDWindow) async throws -> RRDHistory {
+        RRDHistory(try await rpc.runObject(PHPSnippet.rrdTraffic(window), timeout: 90))
     }
 
     // MARK: Batches

@@ -127,6 +127,28 @@ struct DiagnosticsView: View {
                     }
                 }
             }
+                GroupHeading(text: "Historical traffic")
+                Slab(rail: rrdRail) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(rrdHeadline)
+                            .scaledFont(13)
+                            .foregroundStyle(theme.label)
+                        if let detail = rrdDetail {
+                            Text(detail)
+                                .scaledFont(11, design: .monospaced)
+                                .foregroundStyle(theme.labelFaint)
+                                .textSelection(.enabled)
+                        }
+                        if store.rrdHistory == nil && !store.isLoadingRRD {
+                            Button("Read it now") {
+                                Task { await store.loadRRD() }
+                            }
+                            .scaledFont(13, weight: .semibold)
+                            .foregroundStyle(theme.accentColor)
+                        }
+                    }
+                }
+
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 28)
@@ -135,6 +157,82 @@ struct DiagnosticsView: View {
         .refreshable { await store.refreshManually() }
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle("Diagnostics")
+    }
+
+    // MARK: RRD
+    //
+    // On this screen because a chart that draws nothing cannot explain itself
+    // in the space it has, and because "which files came back" is the fact
+    // that decides whether history will ever work here. The throughput panel
+    // above settled the same kind of question in one screenshot.
+
+    private var rrdRail: Health {
+        if store.errors[.rrd] != nil { return .warn }
+        guard let history = store.rrdHistory else { return .idle }
+        return history.available && !history.series.isEmpty ? .ok : .warn
+    }
+
+    private var rrdHeadline: String {
+        if store.isLoadingRRD { return "Reading…" }
+        if store.errors[.rrd] != nil { return "The read failed" }
+        guard let history = store.rrdHistory else { return "Not read yet" }
+        if !history.available { return "This pfSense cannot read RRD from PHP" }
+        if history.series.isEmpty { return "Readable, but no traffic series came back" }
+        return "\(history.series.count) series across \(Set(history.series.map(\.file)).count) interfaces"
+    }
+
+    private var rrdDetail: String? {
+        if let err = store.errors[.rrd] { return err }
+        guard let history = store.rrdHistory else { return nil }
+        if !history.available {
+            return "rrd_fetch is not available; that needs the PHP rrd extension."
+        }
+        let files = Array(Set(history.series.map(\.file))).sorted()
+        guard !files.isEmpty else {
+            return "No *-traffic.rrd files were found in /var/db/rrd."
+        }
+        // Point counts as well as names.
+        //
+        // "144 series" tells us the fetch worked and nothing about whether any
+        // of them carry samples — a series that parsed to zero points renders
+        // as a blank chart, which is what sent the last round of guessing.
+        let samples = history.series.reduce(0) { $0 + $1.points.count }
+        let withData = history.series.filter { !$0.points.isEmpty }.count
+        // What the firewall had, beside what survived: all-unknown values and
+        // an empty file look the same once they reach the app.
+        let seen = history.series.reduce(0) { $0 + $1.valuesSeen }
+
+        // When the firewall last wrote one of these files.
+        //
+        // If that is hours ago, a day of unknown values needs no further
+        // explanation — pfSense writes them every minute while monitoring is
+        // on, so a stale file means the recording stopped, not that the app
+        // read it wrongly.
+        var freshness = ""
+        let ages = history.series.map(\.ageSeconds).filter { $0 >= 0 }
+        if let newest = ages.min() {
+            freshness = newest < 120
+                ? "\nLast written \(newest)s ago."
+                : "\nLast written \(newest / 60) minutes ago — pfSense writes these every minute while monitoring is on, so nothing has been recorded since."
+        }
+
+        // Which window answered, so a week-long fallback succeeding is not
+        // mistaken for the day working.
+        let windows = Set(history.series.filter { !$0.points.isEmpty }.map(\.resolution))
+        var how = ""
+        if let used = windows.first, windows.count == 1 {
+            switch used {
+            case 300: how = " at 5-minute resolution"
+            case 60: how = " at 1-minute resolution"
+            case -1: how = " — but only over a week, so nothing recent is recorded"
+            default: how = " at rrdtool's default"
+            }
+        }
+
+        return "\(samples) samples in \(withData) of \(history.series.count) series\(how)"
+            + " — \(seen) values offered, \(samples) numeric"
+            + freshness + "\n"
+            + files.joined(separator: ", ")
     }
 
     private var summary: some View {

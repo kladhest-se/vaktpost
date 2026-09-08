@@ -18,8 +18,41 @@ struct SettingsView: View {
                 GroupHeading(text: "Alerts")
                 alertsSlab
 
-                GroupHeading(text: "Temperature")
-                temperatureSlab
+
+                GroupHeading(text: "Diagnostics")
+                NavigationLink { DiagnosticsView() } label: {
+                    Slab(rail: store.errors.isEmpty ? .idle : .warn) {
+                        HStack(spacing: 10) {
+                            Image(systemName: store.errors.isEmpty
+                                  ? "stethoscope" : "stethoscope.circle.fill")
+                                .scaledFont(15)
+                                .foregroundStyle(store.errors.isEmpty
+                                                 ? theme.labelMuted : theme.warn)
+                                .scaledFrame(width: 22)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Diagnostics")
+                                    .scaledFont(14, weight: .medium)
+                                    .foregroundStyle(theme.label)
+                                // The count here rather than on a toolbar
+                                // icon: this is a screen somebody visits when
+                                // something looks wrong, not a thing to watch.
+                                Text(store.errors.isEmpty
+                                     ? "Everything is answering"
+                                     : "\(store.errors.count) section\(store.errors.count == 1 ? "" : "s") failing")
+                                    .scaledFont(11)
+                                    .foregroundStyle(store.errors.isEmpty
+                                                     ? theme.labelFaint : theme.warn)
+                            }
+
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .scaledFont(11, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
 
                 GroupHeading(text: "About")
                 aboutSlab
@@ -63,10 +96,17 @@ struct SettingsView: View {
 
                 if !store.alertsSilenced {
                     Hairline()
-                    Text("Kinds to show")
+                    Text("Kinds of alerts")
                         .scaledFont(12)
                         .foregroundStyle(theme.labelMuted)
 
+                    // Sensors is one of these now, with no special treatment.
+                    //
+                    // It had its own heading and a slider, which made a
+                    // temperature threshold look like a different class of
+                    // setting from the switches under it. The threshold has not
+                    // gone: it is a long press on the row, which is where iOS
+                    // puts a secondary choice and costs nothing to leave there.
                     ForEach(VaktpostAlert.Category.allCases, id: \.rawValue) { category in
                         Toggle(isOn: Binding(
                             get: { !store.mutedAlertCategories.contains(category.rawValue) },
@@ -86,37 +126,41 @@ struct SettingsView: View {
                             }
                         }
                         .tint(theme.accentColor)
+                        .contextMenu {
+                            if category == .sensor { temperatureMenu }
+                        }
                     }
                 }
             }
         }
     }
 
-    /// Temperature alert settings.
-    private var temperatureSlab: some View {
-        Slab(rail: .info) {
-            if let sys = store.system, !sys.temperatureLabel.isEmpty {
-                Toggle(isOn: Binding(
-                    get: { store.temperatureWarnOverride == nil },
-                    set: { store.temperatureWarnOverride = $0 ? nil : 80 }
-                )) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Temperature warnings")
-                            .scaledFont(14)
-                            .foregroundStyle(theme.label)
-                        Text("Warn at \(Int(sys.temperatureThresholds.warn)) °C (automatic)")
-                            .scaledFont(12)
-                            .foregroundStyle(theme.labelMuted)
-                    }
+    /// Where the temperature alert fires, as a menu on the Sensors row.
+    ///
+    /// Fixed steps rather than a slider: the useful answers are "follow the
+    /// sensor" and a handful of round numbers, and a slider asked somebody to
+    /// aim for one of them.
+    @ViewBuilder
+    private var temperatureMenu: some View {
+        Button {
+            store.temperatureWarnOverride = nil
+        } label: {
+            Label("Automatic", systemImage: store.temperatureWarnOverride == nil
+                  ? "checkmark" : "thermometer.medium")
+        }
+        ForEach([70, 75, 80, 85, 90, 95], id: \.self) { degrees in
+            Button {
+                store.temperatureWarnOverride = Double(degrees)
+            } label: {
+                if Int(store.temperatureWarnOverride ?? -1) == degrees {
+                    Label("Warn at \(degrees) °C", systemImage: "checkmark")
+                } else {
+                    Text("Warn at \(degrees) °C")
                 }
-                .tint(theme.accentColor)
-            } else {
-                Text("No temperature sensors available")
-                    .scaledFont(13)
-                    .foregroundStyle(theme.labelFaint)
             }
         }
     }
+
 
     private var themeSlab: some View {
         Slab(rail: .info, title: "Theme") {

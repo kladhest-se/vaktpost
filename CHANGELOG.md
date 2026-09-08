@@ -242,6 +242,566 @@ on is how a list stops being read.
 - Acknowledged and silenced alerts are counted separately, so the same alert is
   not reported as hidden twice for two different reasons.
 
+### Sensors is an ordinary kind of alert
+
+It had its own heading and a slider, which made a temperature threshold look
+like a different class of setting from the switches under it. It is a row like
+the rest now, with a thermometer beside it.
+
+That needed a real category: temperature alerts rode under Capacity, so
+somebody who wanted to stop hearing about a warm chipset had to silence disk
+and memory warnings with it.
+
+The threshold has not gone — it is a long press on the row, in fixed steps
+rather than a slider. The useful answers are "follow the sensor" and a handful
+of round numbers, and a slider asked somebody to aim for one of them.
+
+"Kinds to show" is "Kinds of alerts".
+
+### The app stopped calling the thing that crashes
+
+`rrd_xport` returned 502 again after being guarded on the file declaring its
+data sources. Something in that call takes the process down on this firewall,
+and finding out which part is not work the app should do on a live box every
+thirty seconds.
+
+The refresh takes `rrd_fetch` — which returns unknowns here, but does not
+crash. An empty chart is a poor result; an empty chart plus a web server that
+stops answering is a much worse one. A monitoring app should be the last thing
+to disturb what it watches, and for two builds this one was the worst thing on
+the network.
+
+### The tabs go away when the firewall does not answer
+
+Five tabs of empty cards is a worse answer than one sentence. Each screen
+explained its own emptiness separately and none said the thing they had in
+common, so somebody would pull to refresh on five screens to learn the same
+fact once.
+
+In its place: the firewall's name, its own error text rather than a paraphrase
+— a refused certificate, a wrong password and an unreachable address need
+different things doing about them — a Try again button, and what to check in
+the order that resolves it quickest. Pinning is mentioned only when pinning is
+on.
+
+The toolbar stays, so another firewall can be chosen or this one's address
+corrected without getting past the error first.
+
+It takes an error *and* nothing loaded. One timeout on a phone changing
+networks should not tear the tabs away from somebody reading a log.
+
+### Firewall rules search what they show
+
+The rows show addresses and ports, not alias names, so searching only the raw
+fields meant typing `443` found nothing while the rule showing exactly that sat
+on screen. Search resolves aliases now, in both rules and NAT.
+
+The search field moved into the content: `.searchable` puts its field in the
+navigation bar, which animates itself in and out on focus, so the field jumped
+up the screen the moment it was tapped.
+
+"All" is the first chip rather than the last — the way back to everything was
+past thirteen interfaces.
+
+### Diagnostics lives in Settings
+
+A stethoscope on every screen was one icon too many, and it watched for a
+condition nobody needs watched continuously — diagnostics is where you go when
+something already looks wrong, not something to keep an eye on.
+
+It is a row in Settings now, saying either "Everything is answering" or how
+many sections are failing, and turning amber when they are. The toolbar keeps
+the alerts bell and the gear.
+
+### Settings is a toolbar button
+
+Both were rows in the More list, several taps from anywhere. They are now a
+gear and a stethoscope in the top right of every tab, beside the alerts bell,
+and the stethoscope fills and turns amber when a section is failing — the count
+was previously only visible by opening the list they were buried in.
+
+The toolbar itself was written out five times, once per tab: five places to
+edit and five chances to leave one behind, which had already happened. It is
+one modifier now.
+
+### The recording did stop, and the archives prove it
+
+The probe read the file's archives: 60s covering 20 hours, 300s covering 60,
+3600s covering 77 days, and a daily one covering six years. Every window
+shorter than a day returns nothing. The week window returns 320 values whose
+newest is 26 hours old and oldest 167 — data that ends exactly where
+`rrd_last` says the last write was.
+
+So the traffic recording stopped about 26 hours ago, and the fine archives have
+been filling with unknowns since. My first reading was right; I abandoned it
+twice on pfSense pages that carried the same "Mon Sep 07 19:49" caption — the
+time of the render, not the data.
+
+The app opens on the shortest span that has anything in it, rather than on an
+empty chart. An empty chart where a longer span has data looks like a broken
+feature rather than a firewall that stopped recording. It says when it widened,
+because a picker that moves by itself looks like a mis-tap, and an explicit tap
+is answered with exactly that span and the sentence explaining why it is empty.
+
+### The probe asks where the data is, not just whether
+
+pfSense draws an 8-hour graph from the same file the app finds empty at 8
+hours, so recent data exists and "the recording stopped" was wrong again.
+
+The probe now lists the file's archives — each one's consolidation function,
+resolution and how far back it reaches — and then asks for the same window at
+four resolutions, reporting for each how many values were numeric *and how old
+the newest and oldest of them are*.
+
+A count says whether a window found something. The ages say where the data
+lives in time, which is the question every wrong answer so far has turned on.
+
+The twelve older variants went: they asked the same thing without the timing,
+and twelve requests where six will do is twelve chances to disturb a firewall.
+
+### The history chart says what it is showing
+
+A line with no numbers on it says "there was traffic" and nothing else. It now
+carries the peak rate above it, a legend naming which colour is in and which is
+out, and the ends of the span along the bottom — formatted for the span, so a
+day shows hours and a year shows months.
+
+An empty span says why. The 8-hour and day windows come back empty on this
+firewall while the week is full, because the recording stopped a day ago:
+whichever span did find data knows when it ended, and the empty one borrows
+that sentence rather than leaving somebody to work it out from the picker.
+
+### The client list marks this phone
+
+Picking your own device out of two hundred rows meant checking a MAC in
+Settings and scanning for it.
+
+Matched on IP, not MAC. iOS has refused to give an app the Wi-Fi MAC since
+iOS 7 — every app reads `02:00:00:00:00:00` — and Private Wi-Fi Address means
+the address the firewall sees is generated per network anyway. The IP is what
+the system will tell us, and it is right for as long as the lease lasts, which
+is the same window in which the client list is worth looking at.
+
+### ClientsView's body had been pasted over two other structs
+
+`ClientRow` and `ClientDetailView` each carried a copy of the master-detail
+container, and their real content sat below under the name `listColumn`. An
+edit that replaced every `var body: some View {` in the file rather than the
+first, some rounds ago.
+
+Both restored. It compiled and ran the whole time, which is why nobody noticed.
+
+### An eleventh rule: helpers in the wrong type
+
+Four helpers were inserted into `RRDChart` while `InterfaceDetailView` used
+them — the edit anchored on `peak`, a property both types declare, so it landed
+in whichever came first. The compiler reports "cannot find X in scope" a minute
+later and one file at a time.
+
+The members suite now names both sides: which type declares the helper and
+which type wants it. Only `private` members, and only names declared once in a
+file, since an internal helper may legitimately be shared.
+
+Its first run reported seven uses of `points` that were all locals inside
+functions. Locals and parameters are excluded now — a rule that cries wolf gets
+switched off, and this one nearly earned it before being checked.
+
+### Choose the span: 8 hours to a year
+
+pfSense keeps years of these — its own page offers up to four — and the app
+asked for one fixed window. Which span answers the question changes: an
+evening's shape, a working week, a month's growth.
+
+The interface screen has a picker now. Each span is fetched once and kept, so
+moving between them is instant after the first look, and switching firewalls
+clears the lot — another box's history under this one's interface names would
+be nonsense.
+
+The snippet is built from a closed enum, the same way the log snippets are: the
+span is an `Int` this file chose, rendered as digits. The read-only check
+flagged the interpolation, correctly, and its exemption list now names
+`window.seconds` and `window.rawValue` with the reason. I verified the rule
+still catches an unapproved interpolation afterwards — the first attempt at
+that test edited nothing and passed, which proved only that a probe with a bad
+anchor proves nothing.
+
+### A week reads; a day does not
+
+The probe found it: every 24-hour window returns nothing but unknowns, and
+`AVERAGE -s -604800` returns 320 numeric values starting `inpass=814758.67`.
+With `rrd_last` at 25.6 hours, the picture is finally consistent — the traffic
+files stopped being written about a day ago, so a day-long window lands
+entirely inside the gap while a week reaches back past it.
+
+So the app fetches a week. That is the better default regardless: when the
+recording resumes it shows the recent data *and* the gap behind it, which is
+what anybody wants to see after an outage.
+
+The card is "Recent history" rather than "Last 24 hours", and says how old the
+newest sample is when it is more than two hours back. A chart drawn from
+day-old data without saying so is quietly misleading, which is a worse failure
+than the empty one it replaces.
+
+My first reading — that the recording had stopped — was right. I abandoned it
+on a screenshot of a cached page and spent four rounds on the wrong thing.
+
+### rrd_xport is fatal on this firewall — established
+
+Six isolated steps: the functions exist, the file is readable, `rrd_last`,
+`rrd_info` and `rrd_fetch` all answer, and `rrd_xport` returns HTTP 502. That
+is a finding rather than a guess, and it took building the tool properly to get
+it.
+
+The probe stops calling xport now and searches the safe space instead — six
+`rrd_fetch` shapes, each its own request, printing how many values came back
+and how many were numeric. `--dump` is passed so the numbers appear: "2 keys:
+values, numeric" is the shape of an answer, not the answer.
+
+Two quoting faults found by exercising it against a stand-in rather than a
+firewall: the argument list arrived as `["'AVERAGE, -r, 60'"]`, one string
+where three arguments belong. The variations are plain space-separated lists
+split in PHP now, which cannot be got wrong by three levels of shell quoting.
+
+### The probe was running the whole suite
+
+Its first step calls nothing but `function_exists`, and it reported HTTP 502.
+That cannot happen, and it did — because the script set `PT_PROBE` in the
+environment, while `check-snippets.sh` sets that variable itself from
+`--script`. The value was overwritten with an empty string, so every step
+quietly ran the entire snippet suite instead: thirty snippets including the
+`rrd_traffic` one that was crashing the firewall. The 502 was real and came
+from there.
+
+So a tool built to isolate one call was firing all of them, at a firewall
+already being hurt by one of them. It pipes through `--script -` now, which is
+the supported interface, and I exercised the whole flow against a stand-in
+before it went near a real box.
+
+The failure message was the other half of the problem: it grepped the entire
+output for "502" and announced a crash. It prints what actually came back now
+and only stops on a result line that says so — a confident message about
+something the tool had not established is worse than no message.
+
+### bin/rrd-probe.sh
+
+Six steps, each its own request: which functions exist, whether the file is
+readable, `rrd_last`, `rrd_info`, `rrd_fetch`, then `rrd_xport` with a single
+data source over one hour.
+
+A crash takes the whole response with it, so asking several things in one call
+learns only that something in it was fatal. Separate requests mean the first
+step that reports 502 is the call that cannot be used, and everything above it
+is known good.
+
+This is the tool for finding that edge deliberately, rather than by pointing
+the app at a firewall and watching what happens — which is what the last two
+rounds amounted to.
+
+### The xport attempt returned HTTP 502
+
+Not an error — the request died. A `DEF:` naming a data source a file does not
+have makes the rrd extension abort the process, and the loop asked every
+`*-traffic.rrd` for `inpass` and `outpass`. Not all of them carry those.
+
+Each file is now asked what it holds, through `rrd_info`, before anything is
+built against it; a file that does not answer falls back to `rrd_fetch` rather
+than being risked. The trace script's own xport probe got the same guard — a
+trace that crashes the thing it is tracing is worse than no trace.
+
+Worth stating plainly: this crashed the firewall's web server on every refresh
+that reached it. Guarding the call was not an afterthought I skipped, it was
+one I did not think to make, on a call I had not used before.
+
+### rrd_fetch was the wrong call
+
+Status → Monitoring set to Traffic / WAN_1 draws a full current day at
+five-minute resolution from the same file that four different `rrd_fetch`
+windows returned nothing but NaN from. The data is there, it is readable, and
+the function was wrong — which is where three rounds of window-tuning should
+have led much sooner.
+
+`rrd_xport` is what rrdtool provides for getting values out rather than a
+picture. The consolidation function, the window and the step are stated in the
+DEF, so nothing is left to a default that turns out to mean something else, and
+it is the call the firewall's own graphing takes one layer down. `--end -60`
+rather than `now`, because the current bucket has not closed.
+
+`rrd_fetch` stays as a fallback for an extension without xport, and the trace
+script now runs both and says which one reads the file.
+
+### Superseded: four windows
+
+Two guesses have now failed — an explicit day, then five-minute resolution —
+each producing a day of NaN from a file the firewall graphs. A third guess is
+not worth making, so the snippet asks for each plausible shape in turn and
+keeps whichever carries data: 5-minute, 1-minute, rrdtool's default, then a
+week.
+
+The week is the useful one. If the traffic archives really did stop a day ago,
+a week-long window still finds the data before the gap — which separates
+"nothing is recorded" from "nothing recent is recorded", and those need
+different answers.
+
+Diagnostics names the window that answered, so a week-long fallback succeeding
+is not mistaken for the day working.
+
+### The firewalls screen, simplified
+
+A row per firewall and nothing else. It had a section header repeating the
+title, a status pill, a fingerprint prefix, a TLS note, an edit button and an
+add button in its own card — six things competing on a screen that exists to
+answer which firewall is in use and whether anything is wrong with it.
+
+A row says the name, the address, and a warning only when there is one: a
+pinned certificate is the expected state and says nothing by being mentioned,
+while its absence does. The active one is a filled dot rather than a pill
+labelled "active" beside a name that is already obviously selected.
+
+### Not stopped — the wrong archive
+
+I said the recording had stopped, on the strength of `rrd_last` reading 25
+hours old. The firewall's own Status → Monitoring then drew a full current day
+from the same files. The data is there; the conclusion was wrong, and it sent
+somebody looking for a setting that was not the problem.
+
+That page draws its day at "Resolution: 5 Minutes". A fetch with no resolution
+asks rrdtool for the finest archive it has, which on these files holds nothing
+for the window — a day of NaN from a file that is being written every minute.
+
+The snippet asks for 300-second resolution now, the same as the firewall's own
+page, and falls back to the default only if that comes up empty. Which one
+answered is carried back, so it cannot be guessed at again.
+
+The empty-chart message and the trace script's verdict both asserted the
+recording had stopped. They name both possibilities now and say which page
+settles it: an old timestamp is a lead, not a verdict.
+
+### The RRD files stopped being written 25 hours ago
+
+The trace settled it: `last written 19:49:24 (90541s ago)`, every value in the
+24-hour window NaN, and the file header showing `unknown_sec = 24`. Nothing has
+been recorded since. That is a firewall-side condition — pfSense writes these
+every minute while monitoring is on — and no fetch argument reaches around it.
+
+So the app was right all along and its message was the only thing wrong. The
+snippet now carries each file's last-write time, and both the diagnostics panel
+and the empty chart say how long it has been rather than counting series
+nobody can act on.
+
+Two faults in the trace script itself, both mine:
+
+- It described `/var/db/rrd/ipsec-traffic.rrd` — the first file alphabetically,
+  and quite possibly an interface carrying no traffic at all. It looks at the
+  WAN file now, and reports every file's age so one dead interface is not read
+  as a dead firewall.
+- It blamed a step mismatch. The age check ran *after* the NaN check, and I put
+  it there deliberately in the last round while fixing something else. A file
+  unwritten for 25 hours explains all-NaN completely; the dull cause has to be
+  ruled out before the interesting one is offered.
+
+### A trace script for the RRD history
+
+"207,504 values offered, 0 numeric" rules out the transport, the snippet's
+shape and the Swift decoding, and leaves the values themselves — which cannot
+be identified by reading code from here. Three rounds have gone on guessing
+between the possibilities.
+
+`bin/rrd-trace.sh` asks the firewall directly: the values' PHP types, the first
+few as strings, the file's step and archives, and how long since it was last
+written. Then it says what that means, because a type dump still leaves
+somebody to interpret it.
+
+The NaN check comes before the numeric one, deliberately: `is_numeric(NAN)` is
+true in PHP, so a NaN reads as a number right up until `json_encode` refuses
+it. That confusion is what put a whole day of unknowns behind a fetch that
+looked like it worked.
+
+It runs `check-snippets.sh --only rrd_trace` rather than owning a second copy
+of the transport, so the password is prompted for once by the script that
+already does that carefully.
+
+### Editing a firewall stopped working
+
+Edit was a `swipeActions`, which does nothing outside a `List` — converting
+that screen away from one silently removed the only way to change a firewall's
+address. It is a button on the card now, with an entry in the context menu
+beside Remove.
+
+Removing the List was right; not checking what the List had been providing was
+not.
+
+### The All chip is back, at the end
+
+Taking it out left "no filter" as a state reachable only by tapping the
+selected chip again, which nothing on screen suggested. At the far end of the
+row it is out of the way of the interfaces without being invisible.
+
+### Every RRD value came back unknown
+
+Eight series per interface, none with a sample in them — so the fetch works and
+the data structure parses, and every value inside is being rejected.
+
+The window was asked for as `--start -86400 --end now`. rrdtool's own default
+is the last day ending now, which is exactly what is wanted, so the arguments
+are gone: `rrd_fetch($path, ["AVERAGE"])`. Whatever the extension made of that
+explicit window, not passing one cannot be misread.
+
+The response now also counts values offered against values kept. Nothing
+recorded and everything rejected produce the same empty chart, and they need
+different fixes.
+
+### The firewalls sheet belonged to a different app
+
+A `List` with `.plain` style keeps the system background — white in light
+appearance — where every other screen is a ScrollView over `theme.bg`. It is
+one now. The section header went with it: the navigation title already says
+"Firewalls", and saying it twice on one screen reads as a mistake.
+
+Removing a firewall moved from swipe to a context menu, since swipe-to-delete
+is a List behaviour and the List is gone.
+
+### RRD reads, and the chart was drawing the wrong eight lines
+
+The diagnostics panel answered it: 144 series across 18 interfaces, so
+`rrd_fetch` is present and the data arrives. A pfSense traffic file holds eight
+data sources — pass and block, in and out, v4 and v6 — and the chart drew all
+eight, which puts six near-flat lines under the two worth reading and gives the
+app nowhere to say which is which.
+
+It draws the pass series now, coloured by direction, and skips any series with
+no samples. A chart with nothing left to draw says so instead of rendering
+blank. The diagnostics panel counts samples as well as series, since "144
+series" says the fetch worked and nothing about whether any of them carry data.
+
+### Smaller things from a pass on the device
+
+- Search moved below the page heading on Logs and Network. `.searchable` puts
+  its field in the navigation bar, above the header these screens draw
+  themselves, so the search came first and the title second.
+- Floating is a chip beside the interfaces, which is what it is: a rule set
+  belonging to no single one of them. "All" is gone — tapping the selected chip
+  clears the filter, which is what All did with one chip fewer to read.
+- The temperature threshold moved into the alerts card under "Sensors". It is a
+  threshold for one kind of alert, and standing alone it looked like a
+  different sort of setting.
+- Network charts are the same height as the Overview's. A 44-point strip is a
+  sparkline; these are the charts somebody opened that tab to read.
+- Filter lines in the Overview's firewall card open their detail, like the same
+  rows on the Logs tab.
+- First-run setup offers to pin the certificate. The edit screen has offered it
+  for a while and the first-run screen did not, which is backwards: a first
+  connection is when pinning is worth most and when nobody thinks to look for
+  it.
+- Dragging a section needs two thirds of a neighbour's height rather than half.
+  Half means a card swaps the instant it overlaps, so a wobble near a boundary
+  flips it back and forth.
+
+### The firewall menu manages firewalls
+
+"Log out" was the only thing that menu offered besides switching, which framed
+the app as something you sign in and out of. It is not — it holds a list of
+firewalls, and what you want from that menu is to add one, fix an address or
+remove one you no longer run. It opens the management page now, and the active
+firewall carries a tick, which with three of them the menu previously gave no
+clue about.
+
+The bulk "log out" on the management page went too: firewalls are removed
+individually by swipe, and removing one clears its credentials, so it did
+nothing the swipe does not.
+
+### The drag was jumpy because one height stood for all of them
+
+Sections range from a status banner to a full system card, and the drag divided
+the finger's travel by a single 80-point estimate. One number was too large for
+half the sections and too small for the rest, so a card would jump two places
+or refuse to move.
+
+Each row reports its own height through a preference key now, and the drag
+walks the real geometry: a card swaps once it is more than halfway over its
+neighbour, where halfway depends on how tall that neighbour actually is. The
+offset that keeps the card under the finger sums the real heights it has passed
+rather than multiplying a count by an average.
+
+### The RRD state is on the diagnostics screen
+
+A chart that draws nothing cannot explain itself in the space it has. The
+diagnostics screen now says which of the five states the last read reached —
+not read, reading, failed, unsupported, or working — and in the working case
+lists the file names that came back, because those are what the interface
+screens match against.
+
+The same panel settled the throughput mystery in one screenshot. It is a better
+tool than another round of me reasoning about it.
+
+### Sections move while you drag them
+
+The drag computed a drop target and applied it only on release, so nothing
+moved until you let go — and the offset that was meant to nudge the neighbours
+returned zero unconditionally, so it never could have.
+
+The list reorders now while the finger is down. Everything else animates into
+place because the ForEach re-renders with the new order, which is what makes
+the cards move in relation to each other. The dragged card's offset is the
+finger's travel minus the distance its own slot has moved, or it runs away from
+the cursor by a row each time the list shifts.
+
+The lift, scale and shadow were on the header row rather than the card, so
+dragging moved a heading and left its contents behind. They are on the card.
+
+The row height is still an estimate — sections differ a lot, and measuring each
+one needs a preference key per section. The comment says so rather than
+implying it is measured.
+
+### Tooltip bubbles ran off the edge
+
+`.position` centres a bubble on the x it is given, so a sample at either end
+put half of it outside the chart. The marker stays on the sample and the label
+slides in far enough to stay readable.
+
+### An empty RRD card said nothing at all
+
+`RRDHistoryView` had no branch for "read, and empty" or "not read yet", so both
+rendered as a blank card — which is how a screen can be least useful. Every
+state says something now, and the working state lists the file names that came
+back, because those are what the interface screens match against.
+
+### The overview's arrangement was never saved
+
+Dragging a section rearranged the screen and the next appearance put it back.
+The order lived only in the view's `@State`, and the loader rebuilt it by
+filtering `allCases` — which returns declaration order and discards whatever
+was stored. Both halves had to agree that the stored array *is* the order.
+
+All three paths that reorder now write it back to the profile, so it is kept
+per firewall like the rest of that screen's settings.
+
+### Chart readouts sat off the line
+
+Three faults in the same few lines.
+
+`.offset` on a ZStack child is measured from the *centre* of the stack, while
+the paths are drawn from its top-left — so every marker and label was displaced
+by half the chart in both directions. `.position` is the one that takes the
+same coordinates the line does.
+
+The index truncated instead of rounding, so a tap two thirds of the way between
+two samples reported the one on its left. And the marker was drawn at the
+tapped x with the sample's y, so it floated off the line by however far the
+finger was from a sample. The tap now snaps to the nearest sample and both
+coordinates come from it.
+
+The clamp allowed `count`, one past the end: a tap on the right edge of either
+chart indexed out of bounds. That one was a crash waiting for somebody to tap
+the last pixel.
+
+### "No recorded history" meant three different things
+
+Never read, cannot be read, and read-but-nothing-matched all fell through to
+the same sentence. They are separate now, and the last one lists the file names
+the firewall actually returned — RRD files are named for pfSense's internal
+handle, so if that differs from what the app expects the match is one string
+away from working, and an empty chart alone would send us guessing again.
+
 ### NaN broke the whole RRD response
 
 The history read failed with "the response wasn't in the expected XML-RPC
@@ -1868,6 +2428,248 @@ on is how a list stops being read.
   dedicated account, and the field should not argue with them.
 - Acknowledged and silenced alerts are counted separately, so the same alert is
   not reported as hidden twice for two different reasons.
+
+### Sensors is an ordinary kind of alert
+
+It had its own heading and a slider, which made a temperature threshold look
+like a different class of setting from the switches under it. It is a row like
+the rest now, with a thermometer beside it.
+
+That needed a real category: temperature alerts rode under Capacity, so
+somebody who wanted to stop hearing about a warm chipset had to silence disk
+and memory warnings with it.
+
+The threshold has not gone — it is a long press on the row, in fixed steps
+rather than a slider. The useful answers are "follow the sensor" and a handful
+of round numbers, and a slider asked somebody to aim for one of them.
+
+"Kinds to show" is "Kinds of alerts".
+
+### The RRD files stopped being written 25 hours ago
+
+The trace settled it: `last written 19:49:24 (90541s ago)`, every value in the
+24-hour window NaN, and the file header showing `unknown_sec = 24`. Nothing has
+been recorded since. That is a firewall-side condition — pfSense writes these
+every minute while monitoring is on — and no fetch argument reaches around it.
+
+So the app was right all along and its message was the only thing wrong. The
+snippet now carries each file's last-write time, and both the diagnostics panel
+and the empty chart say how long it has been rather than counting series
+nobody can act on.
+
+Two faults in the trace script itself, both mine:
+
+- It described `/var/db/rrd/ipsec-traffic.rrd` — the first file alphabetically,
+  and quite possibly an interface carrying no traffic at all. It looks at the
+  WAN file now, and reports every file's age so one dead interface is not read
+  as a dead firewall.
+- It blamed a step mismatch. The age check ran *after* the NaN check, and I put
+  it there deliberately in the last round while fixing something else. A file
+  unwritten for 25 hours explains all-NaN completely; the dull cause has to be
+  ruled out before the interesting one is offered.
+
+### A trace script for the RRD history
+
+"207,504 values offered, 0 numeric" rules out the transport, the snippet's
+shape and the Swift decoding, and leaves the values themselves — which cannot
+be identified by reading code from here. Three rounds have gone on guessing
+between the possibilities.
+
+`bin/rrd-trace.sh` asks the firewall directly: the values' PHP types, the first
+few as strings, the file's step and archives, and how long since it was last
+written. Then it says what that means, because a type dump still leaves
+somebody to interpret it.
+
+The NaN check comes before the numeric one, deliberately: `is_numeric(NAN)` is
+true in PHP, so a NaN reads as a number right up until `json_encode` refuses
+it. That confusion is what put a whole day of unknowns behind a fetch that
+looked like it worked.
+
+It runs `check-snippets.sh --only rrd_trace` rather than owning a second copy
+of the transport, so the password is prompted for once by the script that
+already does that carefully.
+
+### Editing a firewall stopped working
+
+Edit was a `swipeActions`, which does nothing outside a `List` — converting
+that screen away from one silently removed the only way to change a firewall's
+address. It is a button on the card now, with an entry in the context menu
+beside Remove.
+
+Removing the List was right; not checking what the List had been providing was
+not.
+
+### The All chip is back, at the end
+
+Taking it out left "no filter" as a state reachable only by tapping the
+selected chip again, which nothing on screen suggested. At the far end of the
+row it is out of the way of the interfaces without being invisible.
+
+### Every RRD value came back unknown
+
+Eight series per interface, none with a sample in them — so the fetch works and
+the data structure parses, and every value inside is being rejected.
+
+The window was asked for as `--start -86400 --end now`. rrdtool's own default
+is the last day ending now, which is exactly what is wanted, so the arguments
+are gone: `rrd_fetch($path, ["AVERAGE"])`. Whatever the extension made of that
+explicit window, not passing one cannot be misread.
+
+The response now also counts values offered against values kept. Nothing
+recorded and everything rejected produce the same empty chart, and they need
+different fixes.
+
+### The firewalls sheet belonged to a different app
+
+A `List` with `.plain` style keeps the system background — white in light
+appearance — where every other screen is a ScrollView over `theme.bg`. It is
+one now. The section header went with it: the navigation title already says
+"Firewalls", and saying it twice on one screen reads as a mistake.
+
+Removing a firewall moved from swipe to a context menu, since swipe-to-delete
+is a List behaviour and the List is gone.
+
+### RRD reads, and the chart was drawing the wrong eight lines
+
+The diagnostics panel answered it: 144 series across 18 interfaces, so
+`rrd_fetch` is present and the data arrives. A pfSense traffic file holds eight
+data sources — pass and block, in and out, v4 and v6 — and the chart drew all
+eight, which puts six near-flat lines under the two worth reading and gives the
+app nowhere to say which is which.
+
+It draws the pass series now, coloured by direction, and skips any series with
+no samples. A chart with nothing left to draw says so instead of rendering
+blank. The diagnostics panel counts samples as well as series, since "144
+series" says the fetch worked and nothing about whether any of them carry data.
+
+### Smaller things from a pass on the device
+
+- Search moved below the page heading on Logs and Network. `.searchable` puts
+  its field in the navigation bar, above the header these screens draw
+  themselves, so the search came first and the title second.
+- Floating is a chip beside the interfaces, which is what it is: a rule set
+  belonging to no single one of them. "All" is gone — tapping the selected chip
+  clears the filter, which is what All did with one chip fewer to read.
+- The temperature threshold moved into the alerts card under "Sensors". It is a
+  threshold for one kind of alert, and standing alone it looked like a
+  different sort of setting.
+- Network charts are the same height as the Overview's. A 44-point strip is a
+  sparkline; these are the charts somebody opened that tab to read.
+- Filter lines in the Overview's firewall card open their detail, like the same
+  rows on the Logs tab.
+- First-run setup offers to pin the certificate. The edit screen has offered it
+  for a while and the first-run screen did not, which is backwards: a first
+  connection is when pinning is worth most and when nobody thinks to look for
+  it.
+- Dragging a section needs two thirds of a neighbour's height rather than half.
+  Half means a card swaps the instant it overlaps, so a wobble near a boundary
+  flips it back and forth.
+
+### The firewall menu manages firewalls
+
+"Log out" was the only thing that menu offered besides switching, which framed
+the app as something you sign in and out of. It is not — it holds a list of
+firewalls, and what you want from that menu is to add one, fix an address or
+remove one you no longer run. It opens the management page now, and the active
+firewall carries a tick, which with three of them the menu previously gave no
+clue about.
+
+The bulk "log out" on the management page went too: firewalls are removed
+individually by swipe, and removing one clears its credentials, so it did
+nothing the swipe does not.
+
+### The drag was jumpy because one height stood for all of them
+
+Sections range from a status banner to a full system card, and the drag divided
+the finger's travel by a single 80-point estimate. One number was too large for
+half the sections and too small for the rest, so a card would jump two places
+or refuse to move.
+
+Each row reports its own height through a preference key now, and the drag
+walks the real geometry: a card swaps once it is more than halfway over its
+neighbour, where halfway depends on how tall that neighbour actually is. The
+offset that keeps the card under the finger sums the real heights it has passed
+rather than multiplying a count by an average.
+
+### The RRD state is on the diagnostics screen
+
+A chart that draws nothing cannot explain itself in the space it has. The
+diagnostics screen now says which of the five states the last read reached —
+not read, reading, failed, unsupported, or working — and in the working case
+lists the file names that came back, because those are what the interface
+screens match against.
+
+The same panel settled the throughput mystery in one screenshot. It is a better
+tool than another round of me reasoning about it.
+
+### Sections move while you drag them
+
+The drag computed a drop target and applied it only on release, so nothing
+moved until you let go — and the offset that was meant to nudge the neighbours
+returned zero unconditionally, so it never could have.
+
+The list reorders now while the finger is down. Everything else animates into
+place because the ForEach re-renders with the new order, which is what makes
+the cards move in relation to each other. The dragged card's offset is the
+finger's travel minus the distance its own slot has moved, or it runs away from
+the cursor by a row each time the list shifts.
+
+The lift, scale and shadow were on the header row rather than the card, so
+dragging moved a heading and left its contents behind. They are on the card.
+
+The row height is still an estimate — sections differ a lot, and measuring each
+one needs a preference key per section. The comment says so rather than
+implying it is measured.
+
+### Tooltip bubbles ran off the edge
+
+`.position` centres a bubble on the x it is given, so a sample at either end
+put half of it outside the chart. The marker stays on the sample and the label
+slides in far enough to stay readable.
+
+### An empty RRD card said nothing at all
+
+`RRDHistoryView` had no branch for "read, and empty" or "not read yet", so both
+rendered as a blank card — which is how a screen can be least useful. Every
+state says something now, and the working state lists the file names that came
+back, because those are what the interface screens match against.
+
+### The overview's arrangement was never saved
+
+Dragging a section rearranged the screen and the next appearance put it back.
+The order lived only in the view's `@State`, and the loader rebuilt it by
+filtering `allCases` — which returns declaration order and discards whatever
+was stored. Both halves had to agree that the stored array *is* the order.
+
+All three paths that reorder now write it back to the profile, so it is kept
+per firewall like the rest of that screen's settings.
+
+### Chart readouts sat off the line
+
+Three faults in the same few lines.
+
+`.offset` on a ZStack child is measured from the *centre* of the stack, while
+the paths are drawn from its top-left — so every marker and label was displaced
+by half the chart in both directions. `.position` is the one that takes the
+same coordinates the line does.
+
+The index truncated instead of rounding, so a tap two thirds of the way between
+two samples reported the one on its left. And the marker was drawn at the
+tapped x with the sample's y, so it floated off the line by however far the
+finger was from a sample. The tap now snaps to the nearest sample and both
+coordinates come from it.
+
+The clamp allowed `count`, one past the end: a tap on the right edge of either
+chart indexed out of bounds. That one was a crash waiting for somebody to tap
+the last pixel.
+
+### "No recorded history" meant three different things
+
+Never read, cannot be read, and read-but-nothing-matched all fell through to
+the same sentence. They are separate now, and the last one lists the file names
+the firewall actually returned — RRD files are named for pfSense's internal
+handle, so if that differs from what the app expects the match is one string
+away from working, and an empty chart alone would send us guessing again.
 
 ### NaN broke the whole RRD response
 

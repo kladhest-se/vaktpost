@@ -10,8 +10,13 @@ struct MoreView: View {
     var body: some View {
         ScrollView {
             PageHeader(title: "More", subtitle: nil)
+            // No headings.
+            //
+            // "Sections" labelled the only group on the screen, and "Setup"
+            // was left standing over nothing once Settings and Firewalls moved
+            // to the toolbar and the server menu. A heading that names
+            // everything below it names nothing.
             VStack(alignment: .leading, spacing: 10) {
-                GroupHeading(text: "Sections")
                 link("Alerts", "bell.badge", badge: store.criticalAlertCount) { AlertsView() }
                 link("VPN", "lock.shield", badge: 0) { VPNView() }
                 link("Firewall", "shield.lefthalf.filled", badge: 0) { FirewallView() }
@@ -21,10 +26,6 @@ struct MoreView: View {
                 link("System Certificates", "lock.doc", badge: store.expiringCertificateCount) { CertificatesView() }
                 link("ACME Certificates", "checkmark.seal", badge: store.stalledACME.count) { ACMEView() }
                 link("System", "server.rack", badge: 0) { SystemView() }
-
-                GroupHeading(text: "Setup")
-                link("Diagnostics", "stethoscope", badge: store.errors.count) { DiagnosticsView() }
-                link("Settings", "slider.horizontal.3", badge: 0) { SettingsView() }
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)

@@ -44,7 +44,7 @@ struct RRDHistoryView: View {
             .padding(.bottom, 28)
         }
         .background(theme.bg.ignoresSafeArea())
-        .task { await store.loadRRD() }
+        .task { await store.loadRRD(widenIfEmpty: true) }
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -73,6 +73,27 @@ struct RRDHistoryView: View {
                 Text("This pfSense cannot read its own RRD files from PHP — that needs rrdtool, a shell binary.")
                     .scaledFont(12)
                     .foregroundStyle(theme.labelFaint)
+            } else if let history = store.rrdHistory, history.series.isEmpty {
+                // Readable, and nothing in it. Different from unreadable, and
+                // different again from not having asked — all three rendered
+                // as an empty card before, which is the least useful thing a
+                // screen can do.
+                Text("The firewall can read its RRD files but returned no traffic series. There may be no *-traffic.rrd files in /var/db/rrd.")
+                    .scaledFont(12)
+                    .foregroundStyle(theme.labelFaint)
+            } else if store.rrdHistory == nil {
+                Text("Not read yet.")
+                    .scaledFont(12)
+                    .foregroundStyle(theme.labelFaint)
+            } else if let history = store.rrdHistory {
+                // Working. Say what came back, because the file names are what
+                // the interface screens match against — if the match fails
+                // there, this is where the right names can be read off.
+                let files = Array(Set(history.series.map(\.file))).sorted()
+                Text("\(files.count) interface\(files.count == 1 ? "" : "s") recorded: \(files.joined(separator: ", "))")
+                    .scaledFont(11)
+                    .foregroundStyle(theme.labelFaint)
+                    .textSelection(.enabled)
             }
         }
     }
@@ -88,14 +109,14 @@ struct RRDHistoryView: View {
     }
 
     private var chart: some View {
-        Slab(rail: .info, title: "Last 24 hours") {
+        Slab(rail: .info, title: "Recent history") {
             if let file = selectedFile {
                 let series = interfaces.filter { $0.file == file }
                 if !series.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         RRDChart(series: series)
                             .frame(height: 200)
-                        Text("Five-minute averages from pfSense's own records.")
+                        Text("From pfSense's own records, over the last week.")
                             .scaledFont(10)
                             .foregroundStyle(theme.labelFaint)
                     }

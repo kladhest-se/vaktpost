@@ -58,6 +58,9 @@ struct LogsView: View {
         ScrollView {
             PageHeader(title: "Logs", subtitle: nil)
             VStack(spacing: 8) {
+                InlineSearchField(text: $query, prompt: "Search log text")
+                    .padding(.horizontal, 16)
+
                 Picker("", selection: $source) {
                     ForEach(Source.allCases) { Text($0.rawValue).tag($0) }
                 }
@@ -105,7 +108,6 @@ struct LogsView: View {
         }
         .background(theme.bg.ignoresSafeArea())
         .refreshable { await store.refreshManually() }
-        .searchable(text: $query, prompt: "Search log text")
         .task { await store.beginSecondaryLogs() }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {

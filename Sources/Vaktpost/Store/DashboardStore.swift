@@ -179,6 +179,16 @@ final class DashboardStore: ObservableObject {
     /// Fatal connection error — shown full-screen rather than per card.
     @Published var connectionError: String?
 
+    /// Whether the firewall is not answering at all.
+    ///
+    /// A failed refresh alone is not enough: one timeout on a phone changing
+    /// networks should not tear the tabs away from somebody reading a log.
+    /// This is the state where nothing has come back — an error, and no
+    /// system status to show from an earlier attempt.
+    var isUnreachable: Bool {
+        connectionError != nil && system == nil
+    }
+
     /// The theme the person chose, kept so a relaunch restores it.
     var themeName: String = "auto"
 
@@ -973,26 +983,89 @@ final class DashboardStore: ObservableObject {
 
     @Published var rrdHistory: RRDHistory?
     @Published var isLoadingRRD = false
-    private var hasTriedRRD = false
 
-    /// Loads a day of history, once per session.
+    /// The span currently loaded.
     ///
-    /// On demand rather than on the timer: it reads every interface's RRD file
-    /// and returns a day of data, which is a great deal more work than a
-    /// refresh should do every thirty seconds for a chart nobody may be
-    /// looking at.
-    func loadRRD() async {
-        guard isConfigured, !hasTriedRRD, !isLoadingRRD else { return }
+    /// pfSense keeps years of these, and which span is interesting changes
+    /// with the question — an evening's shape, a working week, a month's
+    /// growth. The app asked for one fixed window and drew whatever came back.
+    @Published var rrdWindow: PHPSnippet.RRDWindow = .week
+
+    /// Whether the span on screen was widened past an empty one rather than
+    /// chosen. The screen says so, because a picker that moved by itself looks
+    /// like a mis-tap.
+    @Published var widenedFromEmpty = false
+
+    /// One cache per window, so flicking between spans does not re-read the
+    /// firewall for something already fetched.
+    private var rrdCache: [PHPSnippet.RRDWindow: RRDHistory] = [:]
+
+    /// Loads a span, widening automatically when the chosen one is empty.
+    ///
+    /// The archives on this firewall are 60s covering 20 hours, 300s covering
+    /// 60, 3600s covering 77 days and a daily one covering six years — and the
+    /// newest recorded value is 26 hours old. So every window shorter than a
+    /// day lands in the gap and returns nothing, while a week finds 320
+    /// values ending where the recording stopped.
+    ///
+    /// Opening a screen on an empty chart when a longer span has data is a bad
+    /// default: it looks like the feature is broken rather than like the
+    /// firewall stopped recording. So an empty span steps up to the next one
+    /// and says which it settled on.
+    ///
+    /// Only when the person has not chosen: an explicit tap on "8 hours" is
+    /// answered with 8 hours and the sentence explaining why it is empty.
+    func loadRRD(_ window: PHPSnippet.RRDWindow? = nil, widenIfEmpty: Bool = false) async {
+        let wanted = window ?? rrdWindow
+        guard isConfigured else { return }
+
+        rrdWindow = wanted
+        if let cached = rrdCache[wanted] {
+            rrdHistory = cached
+            return
+        }
+        guard !isLoadingRRD else { return }
+
         isLoadingRRD = true
-        hasTriedRRD = true
         defer { isLoadingRRD = false }
         do {
-            rrdHistory = try await client.rrdTraffic()
+            let history = try await client.rrdTraffic(wanted)
+            rrdCache[wanted] = history
+            rrdHistory = history
             errors[.rrd] = nil
+
+            let hasData = history.series.contains { !$0.points.isEmpty }
+            if !hasData, widenIfEmpty, let next = wanted.next {
+                isLoadingRRD = false
+                widenedFromEmpty = true
+                await loadRRD(next, widenIfEmpty: true)
+            } else if hasData {
+                widenedFromEmpty = widenedFromEmpty && window == nil
+            }
         } catch {
-            hasTriedRRD = false
             errors[.rrd] = error.localizedDescription
         }
+    }
+
+    /// The newest sample seen in any span fetched this session.
+    ///
+    /// A window shorter than the gap comes back empty and cannot say why on
+    /// its own — the 8-hour and day windows on this firewall return nothing
+    /// while the week returns plenty, because the recording stopped a day ago.
+    /// Whichever span did find data knows when it ended, and that is the
+    /// sentence the empty one needs.
+    var newestRRDSample: Date? {
+        rrdCache.values
+            .flatMap(\.series)
+            .compactMap(\.newestSample)
+            .max()
+    }
+
+    /// Clears the cached spans — used when switching firewalls, since another
+    /// box's history under this one's interface names would be nonsense.
+    func resetRRD() {
+        rrdCache.removeAll()
+        rrdHistory = nil
     }
 
     // MARK: Temperature threshold

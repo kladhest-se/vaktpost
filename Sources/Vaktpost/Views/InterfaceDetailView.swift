@@ -40,7 +40,10 @@ struct InterfaceDetailView: View {
         }
         .background(theme.bg.ignoresSafeArea())
         .task { await store.monitorInterface(iface.seriesKey) }
-        .task { await store.loadRRD() }
+        // Widening on open only. A tap on "8 hours" is answered with 8 hours,
+        // and the empty chart explains itself — silently showing a different
+        // span than the one selected would be worse than showing nothing.
+        .task { await store.loadRRD(widenIfEmpty: true) }
         .navigationTitle(iface.name)
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -170,8 +173,38 @@ struct InterfaceDetailView: View {
     /// them on the same axis would make the live one a vertical line.
     @ViewBuilder
     private var history: some View {
-        Slab(rail: .idle, title: "Last 24 hours") {
+        Slab(rail: .idle, title: "History") {
             VStack(alignment: .leading, spacing: 8) {
+                // The span, chosen here rather than fixed.
+                //
+                // pfSense keeps years of this — its own page offers up to four
+                // — and which span answers the question changes: an evening's
+                // shape, a working week, a month's growth. Each is fetched
+                // once and kept, so moving between them is instant after the
+                // first look.
+                if store.rrdWindow != .eightHours, store.widenedFromEmpty {
+                    // Says that the span moved, and why. A picker that has
+                    // quietly changed under somebody is worse than an empty
+                    // chart, because it looks like they mis-tapped.
+                    Text("Shorter spans are empty — showing \(store.rrdWindow.displayName.lowercased()).")
+                        .scaledFont(10)
+                        .foregroundStyle(theme.labelFaint)
+                }
+
+                Picker("", selection: Binding(
+                    get: { store.rrdWindow },
+                    set: { window in
+                        // Chosen, not widened: the note goes.
+                        store.widenedFromEmpty = false
+                        Task { await store.loadRRD(window) }
+                    }
+                )) {
+                    ForEach(PHPSnippet.RRDWindow.allCases) { window in
+                        Text(window.displayName).tag(window)
+                    }
+                }
+                .pickerStyle(.segmented)
+
                 if store.isLoadingRRD {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
@@ -190,11 +223,32 @@ struct InterfaceDetailView: View {
                         .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
                 } else if !historySeries.isEmpty {
-                    RRDChart(series: historySeries)
+                    RRDChart(series: historySeries, explanation: spanExplanation)
                         .frame(height: 120)
-                    Text("From pfSense's own records, five-minute averages.")
+                    // Says how recent it is, because "recent" is doing real
+                    // work here: this firewall's traffic files stopped being
+                    // written a day ago, so the newest sample is a day old and
+                    // a chart that did not say so would be quietly misleading.
+                    Text(historyCaption)
                         .scaledFont(10)
+                        .foregroundStyle(historyIsStale ? theme.warn : theme.labelFaint)
+                } else if store.rrdHistory == nil {
+                    // Not the same as "no history": nothing has come back yet.
+                    Text("Not read yet.")
+                        .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
+                } else if let names = unmatchedFileNames {
+                    // The interface has no file under any name the app tried.
+                    //
+                    // Listing what did come back is the whole diagnosis: RRD
+                    // files are named for pfSense's internal handle, and if
+                    // that naming differs from what this app expects then the
+                    // match is one string away from working. An empty chart
+                    // alone would send us guessing again.
+                    Text("No file for this interface. The firewall returned: \(names).")
+                        .scaledFont(11)
+                        .foregroundStyle(theme.labelFaint)
+                        .textSelection(.enabled)
                 } else {
                     Text("No recorded history for this interface.")
                         .scaledFont(11)
@@ -211,13 +265,72 @@ struct InterfaceDetailView: View {
     /// everything else uses.
     private var historySeries: [RRDSeries] {
         guard let history = store.rrdHistory else { return [] }
-        let candidates = [iface.internalName, iface.name.lowercased(), iface.device]
-            .compactMap { $0 }
+        // pfSense names these for its internal handle — `wan-traffic.rrd`,
+        // `opt3-traffic.rrd` — but a VLAN's file can carry the device name
+        // instead, and the label is worth trying last.
+        let candidates = [
+            iface.internalName,
+            iface.device,
+            iface.name.lowercased(),
+            iface.name,
+        ].compactMap { $0 }
         for candidate in candidates {
             let found = history.series(forFile: candidate)
             if !found.isEmpty { return found }
         }
         return []
+    }
+
+    /// The files the firewall did return, when none matched this interface.
+    ///
+    /// Capped, since a firewall with fifteen interfaces returns thirty series
+    /// and this is a sentence, not a list.
+    private var unmatchedFileNames: String? {
+        guard let history = store.rrdHistory, history.available else { return nil }
+        let names = Array(Set(history.series.map(\.file))).sorted()
+        guard !names.isEmpty else { return nil }
+        return names.count > 8
+            ? names.prefix(8).joined(separator: ", ") + " +\(names.count - 8)"
+            : names.joined(separator: ", ")
+    }
+
+    /// What to say when the chosen span has nothing in it.
+    ///
+    /// A short span landing inside a gap is the common case here: the 8-hour
+    /// and day windows come back empty while the week is full, because the
+    /// recording stopped a day ago. Saying only "no samples" would leave
+    /// somebody to work that out from the picker.
+    private var spanExplanation: String {
+        if let newest = store.newestRRDSample {
+            let age = Date().timeIntervalSince(newest)
+            if age > TimeInterval(store.rrdWindow.seconds) {
+                let hours = Int(age / 3600)
+                return "Nothing recorded in this span. The newest sample is \(hours) hours old, from \(Fmt.dateTime(newest)) — try a longer one."
+            }
+        }
+        return "Nothing recorded in this span."
+    }
+
+    /// The newest sample across the drawn series.
+    private var newestSample: Date? {
+        historySeries.compactMap(\.newestSample).max()
+    }
+
+    private var historyIsStale: Bool {
+        guard let newest = newestSample else { return false }
+        return Date().timeIntervalSince(newest) > 7200
+    }
+
+    private var historyCaption: String {
+        guard let newest = newestSample else {
+            return "From pfSense's own records."
+        }
+        let age = Date().timeIntervalSince(newest)
+        if age < 7200 {
+            return "From pfSense's own records, up to the last few minutes."
+        }
+        let hours = Int(age / 3600)
+        return "From pfSense's own records. Nothing recorded for \(hours) hours — the newest sample is from \(Fmt.dateTime(newest))."
     }
 
     private var note: some View {
@@ -295,18 +408,125 @@ struct LiveThroughputChart: View {
 struct RRDChart: View {
     @EnvironmentObject private var theme: ThemeManager
     let series: [RRDSeries]
+    /// What to say when there is nothing to draw. Supplied, because the chart
+    /// cannot know what other spans found.
+    var explanation: String = "Nothing recorded in this window."
 
-    private var peak: Double {
-        max(series.flatMap(\.bitsPerSecond).max() ?? 1, 1)
+    /// Only what was passed, and only series that have samples.
+    ///
+    /// A traffic file holds eight data sources — pass and block, in and out,
+    /// v4 and v6 — and drawing all eight puts six near-flat lines under the
+    /// two worth reading. Empty ones are dropped so a chart with nothing to
+    /// draw can say so rather than rendering blank.
+    private var drawable: [RRDSeries] {
+        let passing = series.filter { $0.isPassSeries && !$0.points.isEmpty }
+        return passing.isEmpty ? series.filter { !$0.points.isEmpty } : passing
     }
 
+    private var peak: Double {
+        max(drawable.flatMap(\.bitsPerSecond).max() ?? 1, 1)
+    }
+
+    /// Why the chart is empty, when the answer is knowable.
+    /// Why this span is empty.
+    ///
+    /// The chart is given the sentence rather than working it out: only the
+    /// screen above knows what the other spans found, and "nothing in the last
+    /// 8 hours" means something quite different when the week is full.
+    private var emptyExplanation: String { explanation }
+
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                ForEach(Array(series.enumerated()), id: \.element.id) { index, one in
-                    line(one.bitsPerSecond, in: geo.size,
-                         colour: index == 0 ? theme.ok : theme.info)
+        VStack(alignment: .leading, spacing: 6) {
+            // The scale, above the line.
+            //
+            // A line with no numbers on it says "there was traffic" and
+            // nothing else — not how much, not when. The peak is the only
+            // y-value worth printing at this size, and the span's ends are the
+            // x-axis.
+            if !drawable.isEmpty {
+                HStack {
+                    Text(Rate.bits(peak))
+                        .scaledFont(9, design: .monospaced)
+                        .foregroundStyle(theme.labelFaint)
+                    Spacer()
+                    legend
                 }
+            }
+
+            GeometryReader { geo in
+                ZStack {
+                    if drawable.isEmpty {
+                        Text(explanation)
+                            .scaledFont(11)
+                            .foregroundStyle(theme.labelFaint)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 12)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        gridlines(in: geo.size)
+                        ForEach(drawable) { one in
+                            line(one.bitsPerSecond, in: geo.size,
+                                 colour: one.isInbound ? theme.ok : theme.info)
+                        }
+                    }
+                }
+            }
+
+            if !drawable.isEmpty, let span = timeSpan {
+                HStack {
+                    Text(span.start)
+                    Spacer()
+                    Text(span.end)
+                }
+                .scaledFont(9, design: .monospaced)
+                .foregroundStyle(theme.labelFaint)
+            }
+        }
+    }
+
+    /// Which colour is which direction. Two words, and without them the two
+    /// lines are just two lines.
+    private var legend: some View {
+        HStack(spacing: 10) {
+            ForEach(drawable) { one in
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(one.isInbound ? theme.ok : theme.info)
+                        .frame(width: 6, height: 6)
+                    Text(one.isInbound ? "in" : "out")
+                        .scaledFont(9)
+                        .foregroundStyle(theme.labelFaint)
+                }
+            }
+        }
+    }
+
+    /// The ends of the drawn span, formatted for their length: a day wants the
+    /// hour, a year wants the month.
+    private var timeSpan: (start: String, end: String)? {
+        let stamps = drawable.flatMap(\.points).map(\.at)
+        guard let first = stamps.min(), let last = stamps.max() else { return nil }
+
+        let formatter = DateFormatter()
+        let length = last.timeIntervalSince(first)
+        if length <= 172_800 {
+            formatter.dateFormat = "HH:mm"
+        } else if length <= 5_184_000 {
+            formatter.dateFormat = "d MMM"
+        } else {
+            formatter.dateFormat = "MMM yyyy"
+        }
+        return (formatter.string(from: first), formatter.string(from: last))
+    }
+
+    /// Faint horizontal rules, so a peak can be read against something.
+    private func gridlines(in size: CGSize) -> some View {
+        VStack(spacing: 0) {
+            ForEach(0..<3, id: \.self) { _ in
+                Rectangle()
+                    .fill(theme.hairline.opacity(0.5))
+                    .frame(height: 1)
+                    .frame(maxHeight: .infinity, alignment: .top)
             }
         }
     }

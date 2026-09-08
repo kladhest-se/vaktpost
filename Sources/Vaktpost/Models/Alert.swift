@@ -39,10 +39,16 @@ enum HealthThresholds {
 /// than being scattered as red text across cards.
 struct VaktpostAlert: Identifiable {
     enum Category: String, CaseIterable {
-        case gateway, service, system, certificate, update, capacity, ha, vpn, connection
+        // Sensors is its own kind rather than part of capacity.
+        //
+        // A temperature reading is not a resource filling up, and folding it
+        // into capacity meant somebody who wanted to stop hearing about a warm
+        // chipset had to silence disk and memory warnings with it.
+        case gateway, service, system, certificate, update, capacity, sensor, ha, vpn, connection
 
         var displayName: String {
             switch self {
+            case .sensor: return "Sensors"
             case .gateway: return "Gateways"
             case .service: return "Services"
             case .system: return "System notices"
@@ -63,6 +69,7 @@ struct VaktpostAlert: Identifiable {
             case .certificate: return "lock.doc"
             case .update: return "arrow.down.circle"
             case .capacity: return "gauge.with.dots.needle.67percent"
+            case .sensor: return "thermometer.medium"
             case .ha: return "arrow.left.arrow.right"
             case .vpn: return "lock.shield"
             case .connection: return "antenna.radiowaves.left.and.right.slash"
@@ -169,7 +176,7 @@ struct VaktpostAlert: Identifiable {
             if let temp = sys.temperature, temp >= tempLimits.warn {
                 out.append(.init(
                     severity: temp >= tempLimits.bad ? .bad : .warn,
-                    category: .capacity,
+                    category: .sensor,
                     title: String(format: "%@ at %.0f °C", sys.temperatureLabel, temp),
                     detail: temp >= tempLimits.bad
                         ? "Thermal throttling territory. Check airflow and fan health."

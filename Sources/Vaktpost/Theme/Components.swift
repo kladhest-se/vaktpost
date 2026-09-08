@@ -246,6 +246,18 @@ enum Fmt {
         return f.string(from: d)
     }
 
+    /// A date with its time, for saying when a sample was taken.
+    ///
+    /// `date` alone drops the time, and "the newest sample is from 7 Sep" is
+    /// far less use than the hour when the question is how long ago the
+    /// recording stopped.
+    static func dateTime(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        return f.string(from: d)
+    }
+
     static func bytesPerSec(_ bps: Double) -> String {
         let units = ["B/s", "KiB/s", "MiB/s", "GiB/s"]
         var v = bps
@@ -301,8 +313,15 @@ struct Sparkline: View {
                         showTooltip.toggle()
                         if showTooltip {
                             let chartX = max(0, min(location.x, geo.size.width))
-                            tooltipX = chartX
-                            tooltipValue = valueAt(x: chartX, in: geo.size)
+                            // The snapped x, so the marker sits on the sample
+                            // rather than under the finger.
+                            if let sample = sampleAt(x: chartX, in: geo.size) {
+                                tooltipX = sample.x
+                                tooltipValue = (sample.in, sample.out)
+                            } else {
+                                showTooltip = false
+                                tooltipValue = nil
+                            }
                         } else {
                             tooltipValue = nil
                         }
@@ -367,29 +386,57 @@ struct Sparkline: View {
                 Circle()
                     .fill(color)
                     .frame(width: 6, height: 6)
-                    .offset(x: x, y: size.height - (CGFloat(value / peak) * size.height * 0.92) - 2 - 3)
+                    // `.position`, not `.offset`: a ZStack centres its
+                    // children, so an offset is measured from the middle of
+                    // the chart while the paths are drawn from its top-left.
+                    // The markers were displaced by half the chart in both
+                    // directions.
+                    .position(x: x, y: size.height - (CGFloat(value / peak) * size.height * 0.92) - 2)
                     .shadow(color: color.opacity(0.4), radius: 2)
             }
         }
     }
 
+    /// A label pinned near a point but kept on screen.
+    ///
+    /// `.position` centres the bubble on the x it is given, so a sample at the
+    /// left edge put half the bubble outside the chart. The x is pulled in by
+    /// half the bubble's width at each end — the marker stays on the sample,
+    /// the label slides to stay readable, which is what every chart that does
+    /// this well does.
     private func tooltipLabel(text: String, at x: CGFloat, in size: CGSize, color: Color, value: Double) -> some View {
-        let y = size.height - (CGFloat(value / peak) * size.height * 0.92) - 2 - 3
+        let y = size.height - (CGFloat(value / peak) * size.height * 0.92) - 2
+        // Estimated from the text, since the bubble is not measured until it
+        // is laid out and the position is needed to lay it out.
+        let halfWidth = CGFloat(text.count) * 3.2 + 8
+        let clampedX = min(max(x, halfWidth), max(halfWidth, size.width - halfWidth))
         return Text(text)
             .scaledFont(9, design: .monospaced)
             .foregroundStyle(.white)
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .background(color.opacity(0.8), in: Capsule())
-            .offset(x: x, y: y - 12)
+            .position(x: clampedX, y: max(8, y - 12))
     }
 
-    private func valueAt(x: CGFloat, in size: CGSize) -> (in: Double?, out: Double?) {
-        guard inSeries.count > 1, outSeries.count > 1 else { return (nil, nil) }
-        let step = size.width / CGFloat(max(inSeries.count, outSeries.count) - 1)
-        let idx = Int(x / step)
-        let clampedIdx = idx.clamped(to: 0...inSeries.count)
-        return (inSeries[clampedIdx], outSeries[clampedIdx])
+    /// The sample nearest a tap, and where it sits.
+    ///
+    /// Three things were wrong here. The index truncated rather than rounded,
+    /// so a tap two thirds of the way between two samples reported the one on
+    /// its left. The clamp allowed `count`, which is one past the end. And the
+    /// step was computed from whichever series was longer, while the line is
+    /// drawn with each series' own step — so the readout indexed a different
+    /// place than the line was drawn.
+    ///
+    /// It returns the snapped x as well, because the marker has to sit on the
+    /// data point rather than under the finger.
+    private func sampleAt(x: CGFloat, in size: CGSize) -> (x: CGFloat, in: Double?, out: Double?)? {
+        let count = min(inSeries.count, outSeries.count)
+        guard count > 1 else { return nil }
+
+        let step = size.width / CGFloat(count - 1)
+        let index = Int((x / step).rounded()).clamped(to: 0...(count - 1))
+        return (CGFloat(index) * step, inSeries[index], outSeries[index])
     }
 
     private func points(_ values: [Double], in size: CGSize) -> [CGPoint] {
@@ -739,28 +786,42 @@ struct SingleMetricSparkline: View {
                         let span = Swift.max(bounds.high - bounds.low, 0.001)
                         let y = geo.size.height
                             - (CGFloat((val - bounds.low) / span) * geo.size.height * 0.9) - 1
+                        // Positioned, not offset: a ZStack measures an offset
+                        // from its centre while these paths are drawn from the
+                        // top-left, which put the marker half a chart away
+                        // from its line.
                         Circle()
                             .fill(theme.accentColor)
                             .frame(width: 5, height: 5)
-                            .offset(x: x, y: y)
-                        
-                        Text("\(Int(val)) \(label)")
+                            .position(x: x, y: y)
+
+                        // Same clamp as the throughput chart: the bubble is
+                        // centred on its x, so at either edge half of it would
+                        // sit outside the chart.
+                        let text = "\(Int(val)) \(label)"
+                        let halfWidth = CGFloat(text.count) * 3.2 + 8
+                        let labelX = Swift.min(
+                            Swift.max(x, halfWidth),
+                            Swift.max(halfWidth, geo.size.width - halfWidth)
+                        )
+                        Text(text)
                             .scaledFont(9, design: .monospaced)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
                             .background(theme.accentColor.opacity(0.8), in: Capsule())
-                            .offset(x: x, y: y - 12)
+                            .position(x: labelX, y: max(8, y - 12))
                     }
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { location in
                     withAnimation(.easeInOut(duration: 0.15)) {
                         showTooltip.toggle()
-                        if showTooltip {
-                            tooltipX = location.x
-                            tooltipValue = valueAt(x: location.x, in: geo.size)
+                        if showTooltip, let sample = sampleAt(x: location.x, in: geo.size) {
+                            tooltipX = sample.x
+                            tooltipValue = sample.value
                         } else {
+                            showTooltip = false
                             tooltipValue = nil
                         }
                     }
@@ -799,11 +860,17 @@ struct SingleMetricSparkline: View {
         }
     }
 
-    private func valueAt(x: CGFloat, in size: CGSize) -> Double? {
+    /// The sample nearest a tap, and where it sits.
+    ///
+    /// The clamp allowed `values.count`, which is one past the end — a tap on
+    /// the right edge of the chart indexed out of bounds. And the index
+    /// truncated instead of rounding, so the marker showed the sample to the
+    /// left of the tap.
+    private func sampleAt(x: CGFloat, in size: CGSize) -> (x: CGFloat, value: Double)? {
         guard values.count > 1 else { return nil }
         let step = size.width / CGFloat(values.count - 1)
-        let idx = Int(x / step).clamped(to: 0...values.count)
-        return values[idx]
+        let index = Int((x / step).rounded()).clamped(to: 0...(values.count - 1))
+        return (CGFloat(index) * step, values[index])
     }
 }
 
@@ -1047,5 +1114,48 @@ struct PageHeader: View {
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .padding(.bottom, 12)
+    }
+}
+
+/// A search field that sits in the content, under the page header.
+///
+/// `.searchable` puts its field in the navigation bar, which is above the
+/// `PageHeader` these screens draw inside their scroll view — so the search
+/// came first and the title second, which reads backwards. This one goes where
+/// it is placed.
+struct InlineSearchField: View {
+    @EnvironmentObject private var theme: ThemeManager
+
+    @Binding var text: String
+    let prompt: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .scaledFont(14)
+                .foregroundStyle(theme.labelFaint)
+
+            TextField(prompt, text: $text)
+                .scaledFont(15)
+                .foregroundStyle(theme.label)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .scaledFont(14)
+                        .foregroundStyle(theme.labelFaint)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(theme.cardRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

@@ -581,9 +581,36 @@ struct RRDSeries: Identifiable {
     var name: String
     var points: [(at: Date, value: Double)]
 
+    /// How many values the firewall had, and how many survived the filter.
+    ///
+    /// The difference is the diagnosis: equal and zero means nothing is
+    /// recorded, a large drop means every value came back unknown, which is a
+    /// different problem with a different fix.
+    var valuesSeen: Int
+    var valuesKept: Int
+
+    /// When pfSense last wrote to this file.
+    ///
+    /// A day of unknown values has one dull explanation — the file is not
+    /// being updated — and this is the number that separates it from the
+    /// interesting ones.
+    var lastUpdate: Date?
+    var ageSeconds: Int
+
+    /// Which resolution produced this series, in seconds; 0 means rrdtool's
+    /// default was used after the five-minute request came up empty.
+    var resolution: Int
+
     init(_ d: JSONDict) {
         file = d.string("file") ?? "?"
         name = d.string("series") ?? "?"
+        lastUpdate = (d.int("last_update") ?? 0) > 0
+            ? Date(timeIntervalSince1970: TimeInterval(d.int("last_update") ?? 0))
+            : nil
+        ageSeconds = d.int("age_seconds") ?? -1
+        resolution = d.int("resolution") ?? 0
+        valuesSeen = d.int("values_seen") ?? 0
+        valuesKept = d.int("values_kept") ?? 0
         points = d.list("points").compactMap { entry in
             guard let row = JSONDict(entry),
                   let at = row.int("at"),
@@ -592,8 +619,27 @@ struct RRDSeries: Identifiable {
         }
     }
 
+    /// The most recent sample that carries a value.
+    ///
+    /// Not the same as the file's last write: a file written a minute ago can
+    /// still have nothing recorded in the last day, which is the state this
+    /// firewall is in.
+    var newestSample: Date? { points.last?.at }
+
     /// RRD stores traffic as bytes per second; the app speaks bits.
     var bitsPerSecond: [Double] { points.map { $0.value * 8 } }
+
+    /// Whether this is traffic that was passed, rather than blocked.
+    ///
+    /// A pfSense traffic file holds eight data sources — pass and block, in
+    /// and out, v4 and v6. Drawing all eight puts six near-flat lines under
+    /// the two that matter, and the app has nowhere to explain which is which.
+    var isPassSeries: Bool {
+        let lower = name.lowercased()
+        return lower.contains("pass") || lower == "in" || lower == "out"
+    }
+
+    var isInbound: Bool { name.lowercased().hasPrefix("in") }
 }
 
 /// What the firewall could tell us about its own history.
