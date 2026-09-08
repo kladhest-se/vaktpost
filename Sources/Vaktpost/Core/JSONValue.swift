@@ -8,7 +8,7 @@ import Foundation
 /// strict `Codable` struct makes the whole screen fail on one renamed key, so
 /// responses are decoded into `JSONValue` and read through the accessors below,
 /// each of which accepts a list of candidate keys and coerces types.
-indirect enum JSONValue: Decodable {
+indirect enum JSONValue: Decodable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)

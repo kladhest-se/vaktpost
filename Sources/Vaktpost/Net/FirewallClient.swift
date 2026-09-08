@@ -10,12 +10,12 @@ actor FirewallClient {
 
     private let rpc: XMLRPCClient
 
-    init(profile: ServerProfile) {
-        self.rpc = XMLRPCClient(profile: profile)
+    init(profile: ServerProfile, onPin: @escaping TrustEvaluator.PinHandler) {
+        self.rpc = XMLRPCClient(profile: profile, onPin: onPin)
     }
 
-    func update(profile: ServerProfile) async {
-        await rpc.update(profile: profile)
+    func invalidate() async {
+        await rpc.invalidate()
     }
 
     var lastSeenFingerprint: String? {

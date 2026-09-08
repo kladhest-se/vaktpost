@@ -84,7 +84,7 @@ enum RPCError: LocalizedError, Equatable {
 /// XML rather than implement the whole XML-RPC type system.
 actor XMLRPCClient {
 
-    private var profile: ServerProfile
+    private let profile: ServerProfile
     private let session: URLSession
     private let trust: TrustEvaluator
 
@@ -92,11 +92,11 @@ actor XMLRPCClient {
     /// queue on the firewall rather than overlapping. Issuing them one at a
     /// time from here keeps the timeout accounting honest and avoids piling
     /// work onto a box that is already the thing being monitored.
-    private var inFlight: Task<JSONValue, Error>?
+    private let queue = SerialRequestQueue()
 
-    init(profile: ServerProfile) {
+    init(profile: ServerProfile, onPin: @escaping TrustEvaluator.PinHandler) {
         self.profile = profile
-        let evaluator = TrustEvaluator(profile: profile)
+        let evaluator = TrustEvaluator(profile: profile, onPin: onPin)
         self.trust = evaluator
 
         let config = URLSessionConfiguration.ephemeral
@@ -114,9 +114,10 @@ actor XMLRPCClient {
         self.session = URLSession(configuration: config, delegate: evaluator, delegateQueue: nil)
     }
 
-    func update(profile: ServerProfile) {
-        self.profile = profile
-        trust.configure(with: profile)
+    func invalidate() async {
+        trust.invalidate()
+        session.invalidateAndCancel()
+        await queue.invalidate()
     }
 
     var lastSeenFingerprint: String? { trust.lastSeenFingerprint }
@@ -131,20 +132,19 @@ actor XMLRPCClient {
     /// a transport failure would be wrong twice: it did not fail, and the
     /// person would try again and wait the same amount of time.
     func run(_ snippet: PHPSnippet, timeout: TimeInterval? = nil) async throws -> JSONValue {
-        // Serialise: pfSense holds a mutex for the duration of each call.
-        if let previous = inFlight { _ = try? await previous.value }
-        let task = Task { () throws -> JSONValue in
-            do {
-                return try await self.perform(snippet, timeout: timeout)
-            } catch let error as RPCError where error.isRetryable {
-                // One retry, once, for a transient transport failure.
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                return try await self.perform(snippet, timeout: timeout)
+        do {
+            return try await queue.run {
+                do {
+                    return try await self.perform(snippet, timeout: timeout)
+                } catch let error as RPCError where error.isRetryable {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                    try Task.checkCancellation()
+                    return try await self.perform(snippet, timeout: timeout)
+                }
             }
+        } catch is CancellationError {
+            throw RPCError.cancelled
         }
-        inFlight = task
-        defer { inFlight = nil }
-        return try await task.value
     }
 
     func runObject(_ snippet: PHPSnippet, timeout: TimeInterval? = nil) async throws -> JSONDict {
@@ -211,6 +211,7 @@ actor XMLRPCClient {
     }
 
     private func perform(_ snippet: PHPSnippet, timeout: TimeInterval? = nil) async throws -> JSONValue {
+        try Task.checkCancellation()
         guard profile.isConfigured else { throw RPCError.notConfigured }
         guard let password = Keychain.password(for: profile.id), !password.isEmpty else {
             throw RPCError.noCredentials
@@ -260,6 +261,8 @@ actor XMLRPCClient {
             default:
                 throw RPCError.transport(error.localizedDescription)
             }
+        } catch is CancellationError {
+            throw RPCError.cancelled
         } catch {
             throw RPCError.transport(error.localizedDescription)
         }

@@ -146,8 +146,7 @@ struct OnboardingView: View {
 
         var p = profile
         p.normalize()
-        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch Keychain.setPassword(trimmedPassword, for: p.id) {
+        switch Keychain.setPassword(password, for: p.id) {
         case .success:
             break
         case .failure(let error):
@@ -157,6 +156,10 @@ struct OnboardingView: View {
         }
         await store.saved(p)
         await store.switchTo(p)
+        if let saved = store.registry.servers.first(where: { $0.id == p.id }) {
+            p = saved
+            profile = saved
+        }
 
         do {
             let version = try await store.client.ping()

@@ -72,6 +72,38 @@ final class DashboardStore: ObservableObject {
     // MARK: Dependencies
 
     let registry: ServerRegistry
+    private let defaults: UserDefaults
+    private let generation = BindingGeneration()
+    var bindingID: UUID { generation.id }
+
+    private func isCurrent(_ binding: UUID) -> Bool {
+        generation.id == binding && !Task.isCancelled
+    }
+
+    /// Check on both sides of every suspension, before returning a value that
+    /// the caller can assign to published state.
+    func checked<Value>(_ binding: UUID,
+                                _ operation: () async throws -> Value) async throws -> Value {
+        guard isCurrent(binding) else { throw RPCError.cancelled }
+        do {
+            let value = try await operation()
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            return value
+        } catch {
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            throw error
+        }
+    }
+
+    private static func makeClient(profile: ServerProfile, registry: ServerRegistry,
+                                   generation: BindingGeneration) -> FirewallClient {
+        let binding = generation.id
+        return FirewallClient(profile: profile) { [weak registry] expected, fingerprint in
+            guard generation.id == binding else { return false }
+            return registry?.pinCertificate(fingerprint, for: expected) ?? false
+        }
+    }
+
     /// Four hours at the default refresh, rather than half an hour.
     ///
     /// pfSense keeps months in RRD and this app cannot read it, so the history
@@ -236,8 +268,8 @@ final class DashboardStore: ObservableObject {
     private var lastCPUTicks: (total: Int, idle: Int)?
     private var refreshCount = 0
 
-    init(registry: ServerRegistry) {
-        let defaults = UserDefaults.standard
+    init(registry: ServerRegistry, defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         mutedAlertCategories = Set(defaults.stringArray(forKey: "alerts.hidden.v2") ?? [])
         defaults.removeObject(forKey: "alerts.muted")   // superseded; see above
         alertsSilenced = defaults.bool(forKey: "alerts.silenced")
@@ -250,32 +282,15 @@ final class DashboardStore: ObservableObject {
         self.registry = registry
         let profile = registry.active ?? ServerProfile()
         self.activeProfile = registry.active
-        self.client = FirewallClient(profile: profile)
+        self.client = Self.makeClient(profile: profile, registry: registry, generation: generation)
     }
 
     var isConfigured: Bool { activeProfile?.isUsable ?? false }
-    var profile: ServerProfile { activeProfile ?? ServerProfile() }
+    var profile: ServerProfile { registry.active ?? activeProfile ?? ServerProfile() }
 
     func logout() async {
-        let currentID = registry.active?.id
-        let nextServer = registry.servers.first { $0.id != currentID }
-        registry.reset()
-        if let nextServer {
-            await switchTo(nextServer)
-        } else {
-            stopAutoRefresh()
-            clearData()
-            throughput.reset()
-            lastCPUTicks = nil
-            vpnThroughput.reset()
-            systemMetrics.reset()
-            gatewayMetrics.reset()
-            missingEndpoints.removeAll()
-            faultCounts.removeAll()
-            activeProfile = nil
-            await client.update(profile: ServerProfile())
-            await refresh()
-        }
+        if let current = registry.active { registry.remove(current) }
+        await rebind()
     }
 
     // MARK: Server switching
@@ -299,20 +314,28 @@ final class DashboardStore: ObservableObject {
     /// clears everything that belonged to the previous firewall.
     func rebind() async {
         stopAutoRefresh()
+        generation.advance()
+        let binding = bindingID
+        let previousClient = client
+        activeProfile = registry.active
+        client = Self.makeClient(profile: registry.active ?? ServerProfile(),
+                                 registry: registry, generation: generation)
         clearData()
         throughput.reset()
+        liveThroughput.reset()
+        stateHistory.reset()
         lastCPUTicks = nil
         vpnThroughput.reset()
         systemMetrics.reset()
         gatewayMetrics.reset()
+        resetRRD()
         missingEndpoints.removeAll()
         faultCounts.removeAll()
-        activeProfile = registry.active
-        await client.update(profile: registry.active ?? ServerProfile())
-        guard isConfigured else {
-            return
-        }
+        refreshCount = 0
+        await previousClient.invalidate()
+        guard isCurrent(binding), isConfigured else { return }
         await refresh()
+        guard isCurrent(binding) else { return }
         startAutoRefresh()
     }
 
@@ -342,6 +365,20 @@ final class DashboardStore: ObservableObject {
     private func clearData() {
         Self.resetData(self)
         firewallLogIndex.removeAll()
+        blockedHosts = []
+        haproxyStatsAccessors = []
+        haproxyInstalled = false
+        acmeInstalled = false
+        isRefreshing = false
+        isCheckingPackages = false
+        packageCheckResult = nil
+        lastPackageCheck = nil
+        isCheckingFirmware = false
+        firmwareCheckResult = nil
+        liveInterfaceKey = nil
+        liveError = nil
+        prevFirewallCounts = FirewallCounts()
+        wantsSecondaryLogs = false
     }
 
     // MARK: Refresh
@@ -355,9 +392,11 @@ final class DashboardStore: ObservableObject {
     }
 
     func refresh() async {
-        guard isConfigured else { return }
+        let binding = bindingID
+        let client = client
+        guard isConfigured, !isRefreshing else { return }
         isRefreshing = true
-        defer { isRefreshing = false }
+        defer { if bindingID == binding { isRefreshing = false } }
         refreshCount += 1
 
         var freshErrors: [Section: String] = [:]
@@ -380,16 +419,18 @@ final class DashboardStore: ObservableObject {
         /// Runs one section and records whether it worked.
         @discardableResult
         func run(_ section: Section, optional: Bool = false) async -> Bool {
-            guard !networkDown else { return false }
+            guard isCurrent(binding), !networkDown else { return false }
             // Retry a known-missing optional endpoint every 20th cycle only.
             guard !optional || !missingEndpoints.contains(section) || refreshCount % 20 == 0 else { return false }
             do {
                 try await fetchOne(section)
+                guard isCurrent(binding) else { return false }
                 missingEndpoints.remove(section)
                 succeeded += 1
                 succeededSections.insert(section)
                 return true
             } catch let err as RPCError {
+                guard isCurrent(binding) else { return false }
                 switch err {
                 case .cancelled:
                     break
@@ -426,10 +467,12 @@ final class DashboardStore: ObservableObject {
                     freshErrors[section] = err.localizedDescription
                 }
             } catch {
+                guard isCurrent(binding) else { return false }
                 freshErrors[section] = error.localizedDescription
             }
             return false
         }
+        guard isCurrent(binding) else { return }
 
         /// Runs one grouped call and hands the sections to a decoder.
         ///
@@ -451,18 +494,19 @@ final class DashboardStore: ObservableObject {
         ) async -> Bool {
             // Skipped only when every section in it has been abandoned. One
             // bad section should not stop the other four from loading.
-            guard !networkDown else { return false }
+            guard isCurrent(binding), !networkDown else { return false }
             let live = sections.filter { !missingEndpoints.contains($0) }
             guard !live.isEmpty || refreshCount % 20 == 0 else { return false }
 
             do {
                 let batch: FirewallClient.Batch
                 switch group {
-                case .core: batch = try await client.batchCore()
-                case .clients: batch = try await client.batchClients()
-                case .vpn: batch = try await client.batchVPN()
-                case .system: batch = try await client.batchSystem()
+                case .core: batch = try await checked(binding) { try await client.batchCore() }
+                case .clients: batch = try await checked(binding) { try await client.batchClients() }
+                case .vpn: batch = try await checked(binding) { try await client.batchVPN() }
+                case .system: batch = try await checked(binding) { try await client.batchSystem() }
                 }
+                guard isCurrent(binding) else { return false }
                 let result = decode(batch)
                 for section in sections {
                     missingEndpoints.remove(section)
@@ -471,6 +515,7 @@ final class DashboardStore: ObservableObject {
                 succeeded += 1
                 return result
             } catch let err as RPCError {
+                guard isCurrent(binding) else { return false }
                 switch err {
                 case .cancelled:
                     break
@@ -504,10 +549,12 @@ final class DashboardStore: ObservableObject {
                     for section in sections { freshErrors[section] = err.localizedDescription }
                 }
             } catch {
+                guard isCurrent(binding) else { return false }
                 for section in sections { freshErrors[section] = error.localizedDescription }
             }
             return false
         }
+        guard isCurrent(binding) else { return }
 
         // Core status, in one call.
         //
@@ -533,6 +580,7 @@ final class DashboardStore: ObservableObject {
             self.services = batch.rows("services").map(ServiceStatus.init)
             return !self.interfaces.isEmpty
         }
+        guard isCurrent(binding) else { return }
 
         deriveCPUUsage()
         seedFavouritesIfNeeded()
@@ -554,7 +602,7 @@ final class DashboardStore: ObservableObject {
             if let disk = sys.diskUsage { systemMetrics.ingest(key: "disk", value: disk) }
             if let swap = sys.swapUsage { systemMetrics.ingest(key: "swap", value: swap) }
         }
-        guard !Task.isCancelled else { isRefreshing = false; return }
+        guard isCurrent(binding) else { return }
 
         // Clients, in one call.
         //
@@ -573,7 +621,7 @@ final class DashboardStore: ObservableObject {
             self.aliases = batch.rows("firewall_aliases").map(FirewallAliasEntry.init)
             return true
         }
-        guard !Task.isCancelled else { isRefreshing = false; return }
+        guard isCurrent(binding) else { return }
 
         // Logs — save previous counts before refreshing.
         let savedCounts = FirewallCounts(
@@ -582,6 +630,7 @@ final class DashboardStore: ObservableObject {
             passed: self.firewallLog.count - self.blockedRecently - self.rejectedRecently
         )
         await run(.firewallLog)
+        guard isCurrent(binding) else { return }
         prevFirewallCounts = savedCounts
         // Only the filter log is fetched on the timer, because the Overview
         // shows its counts. The other four are loaded when the Logs tab is
@@ -591,6 +640,7 @@ final class DashboardStore: ObservableObject {
         // serialises XML-RPC — so four of them added seconds to every refresh
         // for a screen that is usually not on the display.
         await loadSecondaryLogsIfNeeded()
+        guard isCurrent(binding) else { return }
 
         buildFirewallLogIndex()
 
@@ -609,6 +659,7 @@ final class DashboardStore: ObservableObject {
                 .map(WireGuardPeer.init)
             return true
         }
+        guard isCurrent(binding) else { return }
 
         // Track VPN throughput from cumulative byte counters.
         for srv in openvpnServers {
@@ -630,8 +681,7 @@ final class DashboardStore: ObservableObject {
                 vpnThroughput.ingest(key: "wg:\(peer.publicKey)", inBytes: rx, outBytes: tx)
             }
         }
-
-        guard !Task.isCancelled else { isRefreshing = false; return }
+        guard isCurrent(binding) else { return }
 
         // System detail
         _ = await runBatch(
@@ -647,6 +697,7 @@ final class DashboardStore: ObservableObject {
             self.dyndns = batch.rows("dyndns").map(DyndnsEntry.init)
             return true
         }
+        guard isCurrent(binding) else { return }
 
         // Ask the repository at most every six hours, in the background.
         //
@@ -654,9 +705,12 @@ final class DashboardStore: ObservableObject {
         // not wait behind it. Without this there would be no package alert
         // unless somebody remembered to press a button, which is not an alert.
         if shouldCheckPackages {
-            Task { await self.checkPackageUpdates() }
+            Task {
+                guard self.isCurrent(binding) else { return }
+                await self.checkPackageUpdates()
+            }
         }
-        guard !Task.isCancelled else { isRefreshing = false; return }
+        guard isCurrent(binding) else { return }
 
         errors = freshErrors
 
@@ -684,11 +738,15 @@ final class DashboardStore: ObservableObject {
     /// the refresh timer: the payload is dominated by `bogons`, which is large,
     /// static, and of no interest to anybody looking at this app.
     func loadTables() async {
+        let binding = bindingID
+        let client = client
         guard isConfigured, !isLoadingTables else { return }
         isLoadingTables = true
-        defer { isLoadingTables = false }
+        defer { if bindingID == binding { isLoadingTables = false } }
         do {
-            if let fetched = try await client.pfTables() {
+            let fetched = try await checked(binding, { try await client.pfTables() })
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            if let fetched {
                 tables = fetched
                 blockedHosts = fetched.filter { $0.isNotable && $0.entryCount > 0 }
                 errors[.tables] = nil
@@ -702,14 +760,17 @@ final class DashboardStore: ObservableObject {
                 errors[.tables] = "This pfSense exposes no way to read pf tables without a shell, so blocked hosts cannot be listed. Check Diagnostics → Tables in the webConfigurator."
             }
         } catch {
+            guard isCurrent(binding) else { return }
             errors[.tables] = error.localizedDescription
         }
     }
 
     /// Retries a single failed section. Used by the per-section retry button.
     func retrySection(_ section: Section) async {
+        let binding = bindingID
         guard isConfigured else { return }
         await fetch(section)
+        guard isCurrent(binding) else { return }
         alerts = VaktpostAlert.build(from: self)
         pruneAcknowledgements()
     }
@@ -717,10 +778,13 @@ final class DashboardStore: ObservableObject {
     /// Fetches a single section from the API and updates the store.
     /// Called by `retrySection` and can be called directly for on-demand refresh.
     func fetch(_ section: Section) async {
+        let binding = bindingID
         errors[section] = nil
         do {
             try await fetchOne(section)
+            guard isCurrent(binding) else { return }
         } catch {
+            guard isCurrent(binding) else { return }
             errors[section] = error.localizedDescription
         }
     }
@@ -728,65 +792,120 @@ final class DashboardStore: ObservableObject {
     /// Core fetch logic for one section. Called by both `refresh()` and `fetch(section:)`.
     /// Throws the underlying API error so refresh() can classify it properly.
     private func fetchOne(_ section: Section) async throws {
+        let binding = bindingID
+        let client = client
         switch section {
         case .system:
-            system = try await client.systemStatus()
+            let value = try await checked(binding) { try await client.systemStatus() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            system = value
         case .version:
-            version = try await client.systemVersion()
+            let value = try await checked(binding) { try await client.systemVersion() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            version = value
         case .states:
-            states = try await client.stateTableSize()
+            let value = try await checked(binding) { try await client.stateTableSize() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            states = value
         case .interfaces:
-            interfaces = try await client.interfaces()
+            let value = try await checked(binding) { try await client.interfaces() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            interfaces = value
         case .gateways:
-            gateways = try await client.gateways()
+            let value = try await checked(binding) { try await client.gateways() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            gateways = value
         case .services:
-            services = try await client.services()
+            let value = try await checked(binding) { try await client.services() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            services = value
         case .leases:
-            leases = try await client.leases()
+            let value = try await checked(binding) { try await client.leases() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            leases = value
         case .arp:
-            arp = try await client.arpTable()
+            let value = try await checked(binding) { try await client.arpTable() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            arp = value
         case .statics:
-            staticMappings = try await client.staticMappings()
+            let value = try await checked(binding) { try await client.staticMappings() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            staticMappings = value
         case .hostOverrides:
-            hostOverrides = try await client.hostOverrides()
+            let value = try await checked(binding) { try await client.hostOverrides() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            hostOverrides = value
         case .firewallLog:
-            firewallLog = try await client.firewallLog(limit: profile.logLimit)
+            let value = try await checked(binding) { try await client.firewallLog(limit: profile.logLimit) }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            firewallLog = value
         case .systemLog:
-            systemLog = try await client.systemLog(limit: profile.logLimit)
+            let value = try await checked(binding) { try await client.systemLog(limit: profile.logLimit) }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            systemLog = value
         case .authLog:
-            authLog = try await client.authLog(limit: profile.logLimit)
+            let value = try await checked(binding) { try await client.authLog(limit: profile.logLimit) }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            authLog = value
         case .dhcpLog:
-            dhcpLog = try await client.dhcpLog(limit: profile.logLimit)
+            let value = try await checked(binding) { try await client.dhcpLog(limit: profile.logLimit) }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            dhcpLog = value
         case .openvpnLog:
-            openvpnLog = try await client.openvpnLog(limit: profile.logLimit)
+            let value = try await checked(binding) { try await client.openvpnLog(limit: profile.logLimit) }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            openvpnLog = value
         case .openvpn:
-            openvpnServers = try await client.openvpnServers()
+            let value = try await checked(binding) { try await client.openvpnServers() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            openvpnServers = value
         case .openvpnClients:
-            openvpnClients = try await client.openvpnClients()
+            let value = try await checked(binding) { try await client.openvpnClients() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            openvpnClients = value
         case .ipsec:
-            ipsecSAs = try await client.ipsecSAs()
+            let value = try await checked(binding) { try await client.ipsecSAs() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            ipsecSAs = value
         case .wireguard:
-            let wg = try await client.wireguard()
+            let wg = try await checked(binding) { try await client.wireguard() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
             wireguardTunnels = wg.tunnels
             wireguardPeers = wg.peers
         case .firewall:
             await loadFirewallObjects()
+            guard isCurrent(binding) else { throw RPCError.cancelled }
         case .aliases:
-            aliases = try await client.firewallAliases()
+            let value = try await checked(binding) { try await client.firewallAliases() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            aliases = value
         case .portForwards:
             await loadFirewallObjects()
+            guard isCurrent(binding) else { throw RPCError.cancelled }
         case .carp:
-            carp = try await client.carp()
+            let value = try await checked(binding) { try await client.carp() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            carp = value
         case .certificates:
-            certificates = try await client.certificates()
+            let value = try await checked(binding) { try await client.certificates() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            certificates = value
         case .packages:
-            packages = try await client.packages()
+            let value = try await checked(binding) { try await client.packages() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            packages = value
         case .filesystems:
-            filesystems = try await client.filesystems()
+            let value = try await checked(binding) { try await client.filesystems() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            filesystems = value
         case .notices:
-            notices = try await client.notices()
+            let value = try await checked(binding) { try await client.notices() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            notices = value
         case .dyndns:
-            dyndns = try await client.dyndns()
+            let value = try await checked(binding) { try await client.dyndns() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            dyndns = value
 
         // Sections the refresh timer does not drive.
         //
@@ -818,29 +937,41 @@ final class DashboardStore: ObservableObject {
     }
 
     private func loadSecondaryLogsIfNeeded() async {
+        let binding = bindingID
         guard wantsSecondaryLogs else { return }
         await runSection(.systemLog)
+        guard isCurrent(binding) else { return }
         await runSection(.authLog)
+        guard isCurrent(binding) else { return }
         await runSection(.dhcpLog)
+        guard isCurrent(binding) else { return }
         await runSection(.openvpnLog)
+        guard isCurrent(binding) else { return }
     }
 
     /// Runs one section outside the main refresh's bookkeeping.
     private func runSection(_ section: Section) async {
+        let binding = bindingID
         guard isConfigured else { return }
         do {
             try await fetchOne(section)
+            guard isCurrent(binding) else { return }
             errors[section] = nil
         } catch {
+            guard isCurrent(binding) else { return }
             errors[section] = error.localizedDescription
         }
     }
 
     func loadHAProxy() async {
+        let binding = bindingID
+        let client = client
         guard isConfigured, !hasLoadedHAProxy else { return }
         hasLoadedHAProxy = true
         do {
-            if let result = try await client.haproxy() {
+            let result = try await checked(binding, { try await client.haproxy() })
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            if let result {
                 haproxyInstalled = true
                 haproxyFrontends = result.frontends
                 haproxyBackends = result.backends
@@ -850,16 +981,21 @@ final class DashboardStore: ObservableObject {
             }
             errors[.haproxy] = nil
         } catch {
+            guard isCurrent(binding) else { return }
             hasLoadedHAProxy = false   // let a pull-to-refresh try again
             errors[.haproxy] = error.localizedDescription
         }
     }
 
     func loadACME() async {
+        let binding = bindingID
+        let client = client
         guard isConfigured, !hasLoadedACME else { return }
         hasLoadedACME = true
         do {
-            if let result = try await client.acme() {
+            let result = try await checked(binding, { try await client.acme() })
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            if let result {
                 acmeInstalled = true
                 acmeCertificates = result.certificates
                 acmeAccounts = result.accounts
@@ -868,6 +1004,7 @@ final class DashboardStore: ObservableObject {
             }
             errors[.acme] = nil
         } catch {
+            guard isCurrent(binding) else { return }
             hasLoadedACME = false
             errors[.acme] = error.localizedDescription
         }
@@ -885,24 +1022,30 @@ final class DashboardStore: ObservableObject {
     /// transfer start and stop, and slow enough that the firewall is not doing
     /// nothing but answering this app.
     func monitorInterface(_ key: String, interval: Duration = .seconds(2)) async {
+        let binding = bindingID
+        let client = client
         liveInterfaceKey = key
         liveThroughput.reset()
         liveError = nil
         defer {
-            liveInterfaceKey = nil
-            liveError = nil
+            if bindingID == binding {
+                liveInterfaceKey = nil
+                liveError = nil
+            }
         }
 
-        while !Task.isCancelled {
+        while isCurrent(binding) {
             do {
-                let counters = try await client.interfaceCounters()
-                guard !Task.isCancelled else { return }
+                let counters = try await checked(binding) { try await client.interfaceCounters() }
+                guard isCurrent(binding) else { return }
                 liveThroughput.ingest(counters)
                 liveError = nil
             } catch let error as RPCError {
+                guard isCurrent(binding) else { return }
                 if case .cancelled = error { return }
                 liveError = error.localizedDescription
             } catch {
+                guard isCurrent(binding) else { return }
                 liveError = error.localizedDescription
             }
             try? await Task.sleep(for: interval)
@@ -938,22 +1081,30 @@ final class DashboardStore: ObservableObject {
     }
 
     func loadFirewallObjects() async {
+        let binding = bindingID
+        let client = client
         guard isConfigured, !isLoadingFirewallObjects, !hasLoadedFirewallObjects else { return }
         isLoadingFirewallObjects = true
         hasLoadedFirewallObjects = true
-        defer { isLoadingFirewallObjects = false }
+        defer { if bindingID == binding { isLoadingFirewallObjects = false } }
         do {
-            rules = try await client.firewallRules()
+            let value = try await checked(binding) { try await client.firewallRules() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            rules = value
             errors[.firewall] = nil
         } catch {
+            guard isCurrent(binding) else { return }
             errors[.firewall] = error.localizedDescription
         }
         // Aliases are not fetched here: the standard refresh already has them,
         // because they name clients.
         do {
-            portForwards = try await client.portForwards()
+            let value = try await checked(binding) { try await client.portForwards() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            portForwards = value
             errors[.portForwards] = nil
         } catch {
+            guard isCurrent(binding) else { return }
             errors[.portForwards] = error.localizedDescription
         }
     }
@@ -972,7 +1123,7 @@ final class DashboardStore: ObservableObject {
     /// claim as "no updates" from this morning.
     @Published private(set) var lastPackageCheck: Date? {
         didSet {
-            UserDefaults.standard.set(lastPackageCheck?.timeIntervalSince1970 ?? 0,
+            defaults.set(lastPackageCheck?.timeIntervalSince1970 ?? 0,
                                       forKey: "packages.lastCheck")
         }
     }
@@ -1006,13 +1157,17 @@ final class DashboardStore: ObservableObject {
     /// would make the firewall fetch a package index all day to answer a
     /// question that changes weekly.
     func checkPackageUpdates() async {
+        let binding = bindingID
+        let client = client
         guard isConfigured, !isCheckingPackages else { return }
         isCheckingPackages = true
         packageCheckResult = nil
-        defer { isCheckingPackages = false }
+        defer { if bindingID == binding { isCheckingPackages = false } }
 
         do {
-            if let checked = try await client.packageUpdates() {
+            let checked = try await checked(binding, { try await client.packageUpdates() })
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            if let checked {
                 // Merge rather than replace: the repository knows versions, the
                 // configuration knows what is installed, and a package the
                 // repository has dropped should not vanish from the list.
@@ -1031,6 +1186,7 @@ final class DashboardStore: ObservableObject {
             }
             errors[.packages] = nil
         } catch {
+            guard isCurrent(binding) else { return }
             packageCheckResult = nil
             errors[.packages] = error.localizedDescription
         }
@@ -1073,6 +1229,8 @@ final class DashboardStore: ObservableObject {
     /// Only when the person has not chosen: an explicit tap on "8 hours" is
     /// answered with 8 hours and the sentence explaining why it is empty.
     func loadRRD(_ window: PHPSnippet.RRDWindow? = nil, widenIfEmpty: Bool = false) async {
+        let binding = bindingID
+        let client = client
         let wanted = window ?? rrdWindow
         guard isConfigured else { return }
 
@@ -1084,9 +1242,10 @@ final class DashboardStore: ObservableObject {
         guard !isLoadingRRD else { return }
 
         isLoadingRRD = true
-        defer { isLoadingRRD = false }
+        defer { if bindingID == binding { isLoadingRRD = false } }
         do {
-            let history = try await client.rrdTraffic(wanted)
+            let history = try await checked(binding) { try await client.rrdTraffic(wanted) }
+            guard isCurrent(binding) else { return }
             rrdCache[wanted] = history
             rrdHistory = history
             errors[.rrd] = nil
@@ -1100,6 +1259,7 @@ final class DashboardStore: ObservableObject {
                 widenedFromEmpty = widenedFromEmpty && window == nil
             }
         } catch {
+            guard isCurrent(binding) else { return }
             errors[.rrd] = error.localizedDescription
         }
     }
@@ -1123,6 +1283,9 @@ final class DashboardStore: ObservableObject {
     func resetRRD() {
         rrdCache.removeAll()
         rrdHistory = nil
+        rrdWindow = .week
+        widenedFromEmpty = false
+        isLoadingRRD = false
     }
 
     // MARK: Temperature threshold
@@ -1153,16 +1316,21 @@ final class DashboardStore: ObservableObject {
     /// the same one the last refresh already fetched unless something changed
     /// on the firewall.
     func checkFirmware() async {
+        let binding = bindingID
+        let client = client
         guard isConfigured, !isCheckingFirmware else { return }
         isCheckingFirmware = true
-        defer { isCheckingFirmware = false }
+        defer { if bindingID == binding { isCheckingFirmware = false } }
         do {
-            version = try await client.systemVersion()
+            let value = try await checked(binding) { try await client.systemVersion() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            version = value
             errors[.version] = nil
             firmwareCheckResult = version?.updateAvailable == true
                 ? "An update is available."
                 : "Checked just now — up to date."
         } catch {
+            guard isCurrent(binding) else { return }
             firmwareCheckResult = nil
             errors[.version] = error.localizedDescription
         }

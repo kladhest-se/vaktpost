@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import Security
 import os.log
 
@@ -114,6 +115,20 @@ final class ServerRegistry: ObservableObject {
         persist()
     }
 
+    /// Do not let a trust decision from an obsolete connection overwrite an
+    /// edited endpoint or an explicitly changed pin.
+    @discardableResult
+    func pinCertificate(_ fingerprint: String, for expected: ServerProfile) -> Bool {
+        guard let index = servers.firstIndex(where: { $0.id == expected.id }),
+              servers[index].baseURL == expected.baseURL,
+              servers[index].username == expected.username,
+              servers[index].pinnedFingerprint == expected.pinnedFingerprint else { return false }
+        servers[index].pinnedFingerprint = fingerprint
+        servers[index].allowUntrustedTLS = false
+        persist()
+        return true
+    }
+
     func remove(_ profile: ServerProfile) {
         Keychain.delete(for: profile.id)
         servers.removeAll { $0.id == profile.id }
@@ -188,7 +203,7 @@ enum KeychainError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .emptyKey:
-            return "API key cannot be empty."
+            return "Password cannot be empty."
         case .keychainError(let status):
             switch status {
             case -25293: // errSecUnlockedDeviceRequired
@@ -226,8 +241,11 @@ enum Keychain {
     private static let legacyService = "se.kladhest.vaktpost.apikey"
     private static let legacyAccount = "default"
 
-    static func setPassword(_ key: String, for id: UUID) -> Result<Void, KeychainError> {
-        delete(for: id)
+    static func setPassword(
+        _ key: String, for id: UUID,
+        update: (CFDictionary, CFDictionary) -> OSStatus = { SecItemUpdate($0, $1) },
+        add: (CFDictionary) -> OSStatus = { SecItemAdd($0, nil) }
+    ) -> Result<Void, KeychainError> {
         guard !key.isEmpty, let data = key.data(using: .utf8) else {
             return .failure(.emptyKey)
         }
@@ -235,14 +253,21 @@ enum Keychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: id.uuidString,
+        ]
+        let attributes: [String: Any] = [
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
         ]
-        let status = SecItemAdd(query as CFDictionary, nil)
-        if status == errSecSuccess || status == errSecDuplicateItem {
-            return .success(())
+        var status = update(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            status = add(query.merging(attributes) { _, new in new } as CFDictionary)
+            // Another save may have inserted the item in the meantime.
+            if status == errSecDuplicateItem {
+                status = update(query as CFDictionary, attributes as CFDictionary)
+            }
         }
-        os_log(.error, log: keychainLog, "SecItemAdd failed: %{public}d", status)
+        if status == errSecSuccess { return .success(()) }
+        os_log(.error, log: keychainLog, "Password save failed: %{public}d", status)
         return .failure(.keychainError(status))
     }
 

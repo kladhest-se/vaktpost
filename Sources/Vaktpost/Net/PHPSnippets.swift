@@ -27,7 +27,7 @@ import Foundation
 /// Parameters are the sharp edge. Where a snippet needs one — a log file, a
 /// line count — it is drawn from a closed enum here, never from user input.
 /// String interpolation into PHP is how a read-only snippet becomes a shell.
-struct PHPSnippet {
+struct PHPSnippet: Sendable {
 
     /// Named so failures can be reported against something a person recognises.
     let name: String

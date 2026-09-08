@@ -567,17 +567,17 @@ extension FilterAddressTests {
 /// Searching the client list.
 final class ClientSearchTests: XCTestCase {
 
-    private func client(_ raw: [String: Any]) -> NetworkClient {
+    private func client(_ raw: [String: Any]) throws -> NetworkClient {
         let data = try! JSONSerialization.data(withJSONObject: raw)
         let dict = JSONDict(try! JSONDecoder().decode(JSONValue.self, from: data))!
-        return NetworkClient(lease: DHCPLease(dict))
+        return try XCTUnwrap(NetworkClient.merge(leases: [DHCPLease(dict)], arp: [], statics: []).first)
     }
 
-    func testEveryKnownNameIsSearchable() {
+    func testEveryKnownNameIsSearchable() throws {
         // A device titled by its DNS override is still findable by the
         // description on its static mapping — the title is a ranking, not the
         // only name the firewall has for it.
-        var device = client(["ip": "172.16.1.31", "mac": "00:11:32:c1:73:88"])
+        var device = try client(["ip": "172.16.1.31", "mac": "00:11:32:c1:73:88"])
         device.overrideName = "nas001.example.se"
         device.descr = "Backup target"
 
@@ -586,9 +586,9 @@ final class ClientSearchTests: XCTestCase {
         XCTAssertTrue(names.contains { $0.contains("nas001") })
     }
 
-    func testAnEmptyNameIsNotOffered() {
+    func testAnEmptyNameIsNotOffered() throws {
         // An empty description would match every query as a substring.
-        var device = client(["ip": "172.16.1.31", "mac": "aa:bb:cc:dd:ee:ff"])
+        var device = try client(["ip": "172.16.1.31", "mac": "aa:bb:cc:dd:ee:ff"])
         device.descr = ""
         XCTAssertFalse(device.knownNames.contains { $0.value.isEmpty })
     }

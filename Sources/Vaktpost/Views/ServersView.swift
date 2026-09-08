@@ -358,8 +358,7 @@ struct ServerEditView: View {
         isTesting = true
         defer { isTesting = false }
 
-        let trimmedPassword = password.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch Keychain.setPassword(trimmedPassword, for: profile.id) {
+        switch Keychain.setPassword(password, for: profile.id) {
         case .success:
             break
         case .failure(let error):
@@ -371,6 +370,8 @@ struct ServerEditView: View {
         p.normalize()
         profile = p
         await store.saved(p)
+        // The trust delegate may have saved a pin during the refresh.
+        if let saved = registry.servers.first(where: { $0.id == p.id }) { profile = saved }
 
         guard registry.active?.id == p.id else {
             // Not the active firewall, so there is nothing to test against.
