@@ -271,6 +271,26 @@ stops answering is a much worse one. A monitoring app should be the last thing
 to disturb what it watches, and for two builds this one was the worst thing on
 the network.
 
+### The disconnected screen never appeared
+
+Two faults, both mine, and together they meant the state I had just built could
+not be reached.
+
+`isUnreachable` also required `system == nil`. The store keeps the last good
+data, so an app that had ever connected never satisfied that — it sat on its
+tabs behind a small banner, showing numbers from an hour ago. A monitor
+quietly displaying stale readings is the failure this whole app exists to
+avoid, and I built one.
+
+And `.transport` — the error a phone with no network produces on every request
+— was in the default branch, recorded against each section and nowhere else. So
+thirty section errors, no connection error, and the tabs stayed up. That is
+precisely the case the screen was for.
+
+`connectionError` was already the careful signal: it is set only when every
+section failed and the failure was fatal, so a single unlucky request does not
+trip it. Trusting it was enough; the extra condition only broke it.
+
 ### The tabs go away when the firewall does not answer
 
 Five tabs of empty cards is a worse answer than one sentence. Each screen
@@ -370,6 +390,18 @@ An empty span says why. The 8-hour and day windows come back empty on this
 firewall while the week is full, because the recording stopped a day ago:
 whichever span did find data knows when it ended, and the empty one borrows
 that sentence rather than leaving somebody to work it out from the picker.
+
+### The clients list has a search field
+
+It had a `query` and a filter that used it, and nothing anywhere to type into
+— the field had been lost in an edit and the filtering code sat there unused.
+
+It searches the names the firewall knows the device by, not only the one that
+won the title: a device shown as its DNS name is findable by the description on
+its static mapping. The interface too, so "vlan_100" narrows to one segment.
+
+Below the header, like Logs, Network and Firewall — `.searchable` puts its
+field above the title and jumps on focus.
 
 ### The client list marks this phone
 
@@ -1102,6 +1134,25 @@ Removing it takes the App Group with it, which removes the one thing that made
 a first install fail: an App Group must be registered on the developer account
 before Xcode will sign against it. The entitlements file is now deliberately
 empty, and the layout check warns if anything reappears in it.
+
+### Icon switching uses the async call
+
+A working project on the same device does this and nothing else:
+
+    try await UIApplication.shared.setAlternateIconName(icon.alternateName)
+
+This app had the completion-handler variant wrapped in
+`DispatchQueue.main.async`, an `applicationState` check, an eight-step retry
+loop, a pending icon kept until the scene became active, and a `scenePhase`
+observer to apply it. Every piece of that was built to work around `EAGAIN`,
+and every piece was a guess at what iOS wanted. The async variant does not
+produce that error.
+
+All of it is gone. The build settings and the asset catalogue turned out to
+match the working project exactly — the call was the only difference, and it
+was the one thing I never compared.
+
+It was not the widget, which was removed several rounds ago.
 
 ### Icons: the simulator was never going to work
 
@@ -2971,6 +3022,25 @@ Removing it takes the App Group with it, which removes the one thing that made
 a first install fail: an App Group must be registered on the developer account
 before Xcode will sign against it. The entitlements file is now deliberately
 empty, and the layout check warns if anything reappears in it.
+
+### Icon switching uses the async call
+
+A working project on the same device does this and nothing else:
+
+    try await UIApplication.shared.setAlternateIconName(icon.alternateName)
+
+This app had the completion-handler variant wrapped in
+`DispatchQueue.main.async`, an `applicationState` check, an eight-step retry
+loop, a pending icon kept until the scene became active, and a `scenePhase`
+observer to apply it. Every piece of that was built to work around `EAGAIN`,
+and every piece was a guess at what iOS wanted. The async variant does not
+produce that error.
+
+All of it is gone. The build settings and the asset catalogue turned out to
+match the working project exactly — the call was the only difference, and it
+was the one thing I never compared.
+
+It was not the widget, which was removed several rounds ago.
 
 ### Icons: the simulator was never going to work
 

@@ -21,10 +21,18 @@ struct ClientsView: View {
         }
         guard !query.isEmpty else { return list }
         let q = query.lowercased()
-        return list.filter {
-            $0.ip.contains(q) || $0.mac.contains(q)
-                || $0.name.lowercased().contains(q)
-                || ($0.hostname ?? "").lowercased().contains(q)
+        return list.filter { client in
+            client.ip.contains(q)
+                || client.mac.lowercased().contains(q)
+                || client.name.lowercased().contains(q)
+                || (client.hostname ?? "").lowercased().contains(q)
+                // Every other name the firewall knows it by, not only the one
+                // that won the title: a device shown as its DNS override is
+                // still findable by the description on its static mapping.
+                || client.knownNames.contains { $0.value.lowercased().contains(q) }
+                // And the interface, so "vlan_100" narrows to one segment.
+                || (store.interfaceLabel(for: client.interfaceName ?? "") ?? "")
+                    .lowercased().contains(q)
         }
     }
 
@@ -61,6 +69,13 @@ struct ClientsView: View {
         ScrollView {
             PageHeader(title: "Clients", subtitle: store.clients.count > 0 ? "\(store.clients.count) devices" : nil)
             VStack(spacing: 0) {
+                // Below the header, in the content — `.searchable` would put
+                // it in the navigation bar above the title and jump on focus,
+                // which is what it did on the Firewall screen.
+                InlineSearchField(text: $query, prompt: "Name, IP or MAC")
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
                 Picker("", selection: $filter) {
                     ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
                 }

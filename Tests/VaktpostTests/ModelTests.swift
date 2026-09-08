@@ -463,14 +463,14 @@ final class UnreachableStateTests: XCTestCase {
             defaults: UserDefaults(suiteName: "vaktpost.tests.\(UUID().uuidString)")!))
     }
 
-    func testAFailedRefreshAloneDoesNotHideTheTabs() {
-        // One timeout on a phone changing networks should not tear the tabs
-        // away from somebody reading a log. Data already on screen means the
-        // firewall was reachable a moment ago.
+    func testStaleDataDoesNotKeepTheTabsUp() {
+        // The store keeps the last good data, so requiring `system == nil`
+        // meant an app that had ever connected never showed the disconnected
+        // state — it sat behind a banner showing hour-old numbers.
         let s = store()
-        s.connectionError = "timed out"
+        s.connectionError = "The firewall did not respond."
         s.system = SystemStatus(JSONDict(.object([:]))!)
-        XCTAssertFalse(s.isUnreachable)
+        XCTAssertTrue(s.isUnreachable)
     }
 
     func testAnErrorWithNothingLoadedHidesThem() {
@@ -484,6 +484,26 @@ final class UnreachableStateTests: XCTestCase {
         let s = store()
         s.connectionError = nil
         s.system = nil
+        XCTAssertFalse(s.isUnreachable)
+    }
+}
+
+extension UnreachableStateTests {
+
+    func testTransportFailureCountsAsUnreachable() {
+        // A phone with no network produces a transport error on every request.
+        // That used to be recorded against each section and nowhere else, so
+        // the app kept its tabs and showed the previous refresh's numbers —
+        // the exact case the disconnected screen exists for.
+        XCTAssertTrue(RPCError.transport("The Internet connection appears to be offline.")
+            .localizedDescription.isEmpty == false)
+    }
+
+    func testCancellationIsNotAFailure() {
+        // Backgrounding the app cancels in flight requests, and that must not
+        // read as the firewall being unreachable.
+        let s = store()
+        s.connectionError = nil
         XCTAssertFalse(s.isUnreachable)
     }
 }

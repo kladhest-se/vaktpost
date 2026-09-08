@@ -179,15 +179,20 @@ final class DashboardStore: ObservableObject {
     /// Fatal connection error — shown full-screen rather than per card.
     @Published var connectionError: String?
 
-    /// Whether the firewall is not answering at all.
+    /// Whether the firewall is not answering.
     ///
-    /// A failed refresh alone is not enough: one timeout on a phone changing
-    /// networks should not tear the tabs away from somebody reading a log.
-    /// This is the state where nothing has come back — an error, and no
-    /// system status to show from an earlier attempt.
-    var isUnreachable: Bool {
-        connectionError != nil && system == nil
-    }
+    /// `connectionError` is already the careful signal: it is set only when
+    /// *every* section failed and the failure was fatal — a rejected password,
+    /// a refused certificate, an unreachable host. A single unlucky request
+    /// does not set it.
+    ///
+    /// It once also required `system == nil`, which never happened: the store
+    /// keeps the last good data, so an app that had connected once never
+    /// showed the disconnected state again. It sat behind a banner showing
+    /// numbers from an hour ago, which is worse than saying nothing — a
+    /// monitor that quietly shows stale readings is the failure this whole app
+    /// exists to avoid.
+    var isUnreachable: Bool { connectionError != nil }
 
     /// The theme the person chose, kept so a relaunch restores it.
     var themeName: String = "auto"
@@ -375,7 +380,16 @@ final class DashboardStore: ObservableObject {
                 switch err {
                 case .cancelled:
                     break
-                case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
+                case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL,
+                     .forbidden, .transport:
+                    // `.transport` belongs here.
+                    //
+                    // It was in the default branch, recorded against the
+                    // section and nothing else — so a phone with no network at
+                    // all produced thirty section errors and no connection
+                    // error, and the app stayed on its tabs showing whatever it
+                    // had fetched last time. That is the one case the
+                    // disconnected screen exists for.
                     fatal = err.localizedDescription
                 case .fault:
                     // A PHP error in a snippet: the function is missing on this
@@ -440,7 +454,16 @@ final class DashboardStore: ObservableObject {
                 switch err {
                 case .cancelled:
                     break
-                case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
+                case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL,
+                     .forbidden, .transport:
+                    // `.transport` belongs here.
+                    //
+                    // It was in the default branch, recorded against the
+                    // section and nothing else — so a phone with no network at
+                    // all produced thirty section errors and no connection
+                    // error, and the app stayed on its tabs showing whatever it
+                    // had fetched last time. That is the one case the
+                    // disconnected screen exists for.
                     fatal = err.localizedDescription
                 case .fault:
                     for section in sections {

@@ -37,9 +37,6 @@ struct AppIconPicker: View {
     @State private var failure: String?
     @State private var isChanging = false
 
-    /// An icon iOS refused, kept until it will accept it.
-    @State private var pending: AppIcon?
-    @Environment(\.scenePhase) private var scenePhase
 
     private let columns = [GridItem(.adaptive(minimum: 62), spacing: 12)]
 
@@ -75,14 +72,6 @@ struct AppIconPicker: View {
                     Text("The simulator cannot change app icons — the choice will apply on a device.")
                         .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
-                } else if let pending {
-                    HStack(spacing: 6) {
-                        Image(systemName: "clock.arrow.circlepath")
-                            .scaledFont(11)
-                        Text("\(pending.displayName) will be applied when the app next becomes active.")
-                            .scaledFont(11)
-                    }
-                    .foregroundStyle(theme.labelMuted)
                 } else if isChanging {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
@@ -109,14 +98,6 @@ struct AppIconPicker: View {
                         .textSelection(.enabled)
                 }
             }
-        }
-        // The moment iOS said it was not ready for. Coming back to the app is
-        // reliably `.foregroundActive`, which a tap inside a pushed screen
-        // apparently is not always.
-        .onChange(of: scenePhase) { _, phase in
-            guard phase == .active, let icon = pending else { return }
-            pending = nil
-            apply(icon)
         }
     }
 
@@ -152,6 +133,17 @@ struct AppIconPicker: View {
         return alternates.keys.sorted()
     }
 
+    /// Sets the icon.
+    ///
+    /// The async throwing call, awaited directly — not the completion-handler
+    /// variant wrapped in `DispatchQueue.main.async`, an application-state
+    /// check and a retry loop, which is what this was and which never once
+    /// worked on a device.
+    ///
+    /// A working project doing the same thing does exactly this and nothing
+    /// else. The state machine was built to work around `EAGAIN`, and every
+    /// piece of it was a guess at what iOS wanted; the async variant does not
+    /// produce that error in the first place.
     private func choose(_ icon: AppIcon) {
         guard icon != selected, !isChanging else { return }
 
@@ -160,107 +152,29 @@ struct AppIconPicker: View {
             return
         }
 
-        if let name = icon.alternateName, !registeredNames.contains(name) {
-            // The build is missing the icon, which is a packaging problem and
-            // not something tapping again will fix.
-            failure = registeredNames.isEmpty
-                ? "This build contains no alternate icons."
-                : "This build has \(registeredNames.joined(separator: ", ")) but not \(name)."
+        // Already set: iOS treats a redundant change as an error, and there is
+        // nothing to report about doing nothing.
+        guard icon.alternateName != UIApplication.shared.alternateIconName else {
+            selected = icon
             return
         }
 
         isChanging = true
         failure = nil
-        apply(icon)
-    }
 
-    /// Sets the icon, retrying once if iOS says it is busy.
-    ///
-    /// `setAlternateIconName` returns `EAGAIN` — "resource temporarily
-    /// unavailable" — when it is called while the app is not fully in the
-    /// foreground or while another change is still settling. That is a
-    /// transient condition rather than a refusal, and one retry after a moment
-    /// usually clears it. Deferring to the next runloop turn matters too: the
-    /// call is made from inside a SwiftUI update otherwise, which is one of
-    /// the states it declines from.
-    /// Sets the icon once the app is genuinely able to accept it.
-    ///
-    /// `EAGAIN` from `setAlternateIconName` means iOS declined at that moment,
-    /// and the moment that matters is the scene's state. The call is refused
-    /// unless the app is `.foregroundActive` — which it is not during a
-    /// navigation push, a sheet presentation, or while Settings is still
-    /// animating in. A tap that lands in one of those windows fails, and
-    /// retrying 0.6s later fails again if the animation is still running.
-    ///
-    /// So this waits for the app to actually be active rather than guessing at
-    /// a delay, and only then calls. If it is already active the wait is a
-    /// single runloop turn.
-    /// Sets the icon, and remembers the request if iOS refuses.
-    ///
-    /// `setAlternateIconName` returns `EAGAIN` when it will not act now. The
-    /// documented reason is that the app is not `.foregroundActive`, but that
-    /// has not been the whole story here: it kept refusing on a device where
-    /// the app was plainly in front, with all five alternates registered.
-    ///
-    /// Rather than keep guessing at delays, an unhappy attempt is *stored* and
-    /// retried when the app next becomes active. Leaving Settings and coming
-    /// back applies it. That turns a failure the person cannot do anything
-    /// about into one they can, and it costs nothing when the call works
-    /// first time.
-    private func apply(_ icon: AppIcon, attempt: Int = 0) {
-        DispatchQueue.main.async {
-            guard UIApplication.shared.applicationState == .active else {
-                guard attempt < 6 else {
-                    pending = icon
-                    failure = "Waiting until the app is active — leave Settings and come back."
-                    isChanging = false
-                    return
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    apply(icon, attempt: attempt + 1)
-                }
-                return
+        Task {
+            do {
+                try await UIApplication.shared.setAlternateIconName(icon.alternateName)
+                selected = icon
+                failure = nil
+            } catch {
+                let ns = error as NSError
+                failure = isSimulator
+                    ? "The simulator cannot change app icons. This works on a device."
+                    : "\(ns.localizedDescription) (\(ns.domain) \(ns.code))"
+                selected = .current
             }
-
-            UIApplication.shared.setAlternateIconName(icon.alternateName) { error in
-                Task { @MainActor in
-                    guard let error else {
-                        pending = nil
-                        failure = nil
-                        selected = icon
-                        isChanging = false
-                        return
-                    }
-
-                    let ns = error as NSError
-                    if ns.code == Int(EAGAIN), attempt < 6 {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                            apply(icon, attempt: attempt + 1)
-                        }
-                        return
-                    }
-
-                    if isSimulator {
-                        // Not worth retrying and not the person's problem.
-                        // Saying "try again in a moment" here would be a
-                        // suggestion that can never work.
-                        pending = nil
-                        failure = "The simulator cannot change app icons. This works on a device."
-                    } else if ns.code == Int(EAGAIN) {
-                        pending = icon
-                        failure = "iOS would not change it just now. Leave Settings and come back and it will be applied."
-                    } else {
-                        // Domain and code as well as the message: "the
-                        // operation couldn't be completed" is the same
-                        // sentence for a dozen different problems, and
-                        // knowing which one is the whole difficulty here.
-                        failure = "\(ns.localizedDescription) (\(ns.domain) \(ns.code))"
-                        pending = nil
-                    }
-                    selected = .current
-                    isChanging = false
-                }
-            }
+            isChanging = false
         }
     }
 }
