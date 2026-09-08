@@ -112,6 +112,10 @@ struct FirewallRule: Identifiable {
     }
 
     var protoLabel: String { (proto ?? "any").uppercased() }
+
+    var isFloating: Bool {
+        interfaceName.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.count > 1
+    }
 }
 
 struct FirewallAliasEntry: Identifiable {

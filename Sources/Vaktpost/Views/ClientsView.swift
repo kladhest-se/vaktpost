@@ -58,15 +58,16 @@ struct ClientsView: View {
     }
 
     private var listColumn: some View {
-        VStack(spacing: 0) {
-            Picker("", selection: $filter) {
-                ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+        ScrollView {
+            PageHeader(title: "Clients", subtitle: store.clients.count > 0 ? "\(store.clients.count) devices" : nil)
+            VStack(spacing: 0) {
+                Picker("", selection: $filter) {
+                    ForEach(Filter.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
 
-            ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     // A failed fetch first, because it looks identical to an
                     // empty network otherwise. "No clients seen" is a
@@ -111,8 +112,6 @@ struct ClientsView: View {
             .refreshable { await store.refreshManually() }
         }
         .background(theme.bg.ignoresSafeArea())
-        .searchable(text: $query, prompt: "Name, IP or MAC")
-        .navigationTitle("Clients")
     }
 }
 

@@ -8,46 +8,68 @@ struct ServersView: View {
 
     @State private var editing: ServerProfile?
     @State private var addingNew = false
+    @State private var confirmLogout = false
+    @State private var selectedServerID: UUID?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+        List {
+            Section("Firewalls") {
                 ForEach(registry.servers) { server in
                     ServerCard(
                         server: server,
-                        isActive: registry.active?.id == server.id,
-                        onSelect: { Task { await store.switchTo(server) } },
-                        onEdit: { editing = server }
+                        isActive: server.id == registry.active?.id,
+                        onSelect: {
+                            Task { await store.switchTo(server) }
+                        },
+                        onEdit: {
+                            editing = server
+                        }
                     )
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
                 }
+                .onDelete(perform: deleteServers)
+            }
 
-                Button {
-                    addingNew = true
-                } label: {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                        Text("Add firewall")
-                            .scaledFont(14, weight: .semibold)
-                        Spacer()
+            if !registry.servers.isEmpty {
+                Section {
+                    Button {
+                        addingNew = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                            Text("Add firewall")
+                                .scaledFont(14, weight: .semibold)
+                            Spacer()
+                        }
+                        .padding(14)
+                        .frame(maxWidth: .infinity)
+                        .background(theme.card)
+                        .foregroundStyle(theme.accentColor)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .padding(14)
-                    .frame(maxWidth: .infinity)
-                    .background(theme.card)
-                    .foregroundStyle(theme.accentColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-                .buttonStyle(.plain)
-
-                Slab(rail: .idle, title: "Switching") {
-                    Text("Throughput history is per-firewall and is cleared on switch — byte counters from a different box would otherwise chart as one enormous spike.")
-                        .scaledFont(12)
-                        .foregroundStyle(theme.labelFaint)
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 28)
+
+            if store.isConfigured {
+                Section {
+                    Button(role: .destructive) {
+                        confirmLogout = true
+                    } label: {
+                        Text("Log out")
+                            .scaledFont(14, weight: .semibold)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(theme.card)
+                            .foregroundStyle(theme.bad)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
+        .listStyle(.plain)
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle("Firewalls")
         .sheet(item: $editing) { server in
@@ -55,6 +77,21 @@ struct ServersView: View {
         }
         .sheet(isPresented: $addingNew) {
             NavigationStack { ServerEditView(profile: ServerProfile()) }
+        }
+        .confirmationDialog("Log out?", isPresented: $confirmLogout, titleVisibility: .visible) {
+            Button("Log out", role: .destructive) {
+                Task { await store.logout() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("All metrics, logs, and cached data will be cleared.")
+        }
+    }
+
+    private func deleteServers(at offsets: IndexSet) {
+        for index in offsets {
+            let server = registry.servers[index]
+            Task { await store.removed(server) }
         }
     }
 }
@@ -92,15 +129,17 @@ struct ServerCard: View {
                     }
                 }
                 Spacer()
-                Button(action: onEdit) {
-                    Image(systemName: "slider.horizontal.3")
-                        .foregroundStyle(theme.labelMuted)
-                        .padding(8)
-                }
-                .buttonStyle(.plain)
             }
             .contentShape(Rectangle())
             .onTapGesture { if !isActive { onSelect() } }
+        }
+        .swipeActions(edge: .trailing) {
+            Button {
+                onEdit()
+            } label: {
+                Label("Edit", systemImage: "pencil")
+            }
+            .tint(theme.accentColor)
         }
     }
 }

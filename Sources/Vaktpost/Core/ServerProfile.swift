@@ -26,6 +26,7 @@ struct ServerProfile: Codable, Identifiable, Equatable {
     var username: String = ""
     var refreshSeconds: Int = 30
     var logLimit: Int = 100
+    var overviewVisibleSections: [String] = ["status", "interfaces", "system", "gateways", "services", "firewall"]
 
     var isConfigured: Bool { URL(string: baseURL)?.host != nil }
     var host: String { URL(string: baseURL)?.host ?? baseURL }
@@ -122,6 +123,31 @@ final class ServerRegistry: ObservableObject {
 
     func setActive(_ profile: ServerProfile) {
         activeID = profile.id
+        persist()
+    }
+
+    func clearActive() {
+        activeID = nil
+        persist()
+    }
+
+    func reset() {
+        servers.removeAll()
+        activeID = nil
+        persist()
+    }
+
+    func setOverviewSectionVisibility(_ server: ServerProfile, _ section: OverviewSection, visible: Bool) {
+        guard let idx = servers.firstIndex(where: { $0.id == server.id }) else { return }
+        var profile = servers[idx]
+        if visible {
+            if !profile.overviewVisibleSections.contains(section.rawValue) {
+                profile.overviewVisibleSections.append(section.rawValue)
+            }
+        } else {
+            profile.overviewVisibleSections.removeAll { $0 == section.rawValue }
+        }
+        servers[idx] = profile
         persist()
     }
 

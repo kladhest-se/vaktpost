@@ -270,29 +270,39 @@ struct Sparkline: View {
     }
 
     @State private var showTooltip = false
-    @State private var tooltipPoint: CGPoint?
+    @State private var tooltipX: CGFloat?
     @State private var tooltipValue: (in: Double?, out: Double?)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
+            yAxisLabels
+            
             GeometryReader { geo in
                 ZStack {
                     gridlines(in: geo.size)
                     area(outSeries, in: geo.size, color: theme.info)
                     area(inSeries, in: geo.size, color: theme.ok)
-                     if showTooltip, let pt = tooltipPoint, let vals = tooltipValue {
-                         tooltipLine(at: pt, in: geo.size)
-                         tooltipMarker(at: pt, in: geo.size, color: theme.ok, value: vals.in)
-                         tooltipMarker(at: pt, in: geo.size, color: theme.info, value: vals.out)
-                     }
+                    if showTooltip, let x = tooltipX, let vals = tooltipValue {
+                        tooltipLine(at: x, in: geo.size)
+                        tooltipMarker(at: x, in: geo.size, color: theme.ok, value: vals.in)
+                        tooltipMarker(at: x, in: geo.size, color: theme.info, value: vals.out)
+                        
+                        if let inVal = vals.in {
+                            tooltipLabel(text: "\(Fmt.bytesPerSec(inVal)) IN", at: x, in: geo.size, color: theme.ok, value: inVal)
+                        }
+                        if let outVal = vals.out {
+                            tooltipLabel(text: "\(Fmt.bytesPerSec(outVal)) OUT", at: x, in: geo.size, color: theme.info, value: outVal)
+                        }
+                    }
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { location in
                     withAnimation(.easeInOut(duration: 0.15)) {
                         showTooltip.toggle()
                         if showTooltip {
-                            tooltipPoint = location
-                            tooltipValue = valueAt(x: location.x, in: geo.size)
+                            let chartX = max(0, min(location.x, geo.size.width))
+                            tooltipX = chartX
+                            tooltipValue = valueAt(x: chartX, in: geo.size)
                         } else {
                             tooltipValue = nil
                         }
@@ -302,23 +312,19 @@ struct Sparkline: View {
             .frame(height: height)
             .background(theme.hairline.opacity(0.22))
             .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            HStack {
-                Text("last 30 min")
-                    .scaledFont(9, design: .monospaced)
-                    .foregroundStyle(theme.labelFaint.opacity(0.6))
-                Spacer()
-                if let latestIn = inSeries.last, let latestOut = outSeries.last {
-                    Text(Fmt.bytesPerSec(latestIn))
-                        .scaledFont(9, design: .monospaced)
-                        .foregroundStyle(theme.ok)
-                    Text(Fmt.bytesPerSec(latestOut))
-                        .scaledFont(9, design: .monospaced)
-                        .foregroundStyle(theme.info)
-                }
-            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Throughput sparkline showing network traffic rates")
+    }
+
+    private var yAxisLabels: some View {
+        HStack(spacing: 0) {
+            Text(Fmt.bytesPerSec(peak))
+                .scaledFont(8, design: .monospaced)
+                .foregroundStyle(theme.labelFaint.opacity(0.6))
+                .lineLimit(1)
+            Spacer()
+        }
     }
 
     private func gridlines(in size: CGSize) -> some View {
@@ -333,24 +339,49 @@ struct Sparkline: View {
         }
     }
 
-    private func tooltipLine(at point: CGPoint, in size: CGSize) -> some View {
-        Path { p in
-            p.move(to: CGPoint(x: point.x, y: 0))
-            p.addLine(to: CGPoint(x: point.x, y: size.height))
+    private func yAxisLabels(in size: CGSize) -> some View {
+        VStack(spacing: 0) {
+            Text(Fmt.bytesPerSec(peak))
+                .scaledFont(8, design: .monospaced)
+                .foregroundStyle(theme.labelFaint.opacity(0.6))
+                .padding(.leading, 2)
+            Spacer()
+            Text("0")
+                .scaledFont(8, design: .monospaced)
+                .foregroundStyle(theme.labelFaint.opacity(0.6))
+                .padding(.leading, 2)
         }
-.stroke(theme.label.opacity(0.3), style: StrokeStyle(lineWidth: 1))
     }
 
-    private func tooltipMarker(at point: CGPoint, in size: CGSize, color: Color, value: Double?) -> some View {
+    private func tooltipLine(at x: CGFloat, in size: CGSize) -> some View {
+        Path { p in
+            p.move(to: CGPoint(x: x, y: 0))
+            p.addLine(to: CGPoint(x: x, y: size.height))
+        }
+        .stroke(theme.label.opacity(0.3), style: StrokeStyle(lineWidth: 1))
+    }
+
+    private func tooltipMarker(at x: CGFloat, in size: CGSize, color: Color, value: Double?) -> some View {
         Group {
             if let value {
                 Circle()
                     .fill(color)
                     .frame(width: 6, height: 6)
-                    .offset(x: point.x, y: size.height - (CGFloat(value / peak) * size.height * 0.92) - 2 - 3)
+                    .offset(x: x, y: size.height - (CGFloat(value / peak) * size.height * 0.92) - 2 - 3)
                     .shadow(color: color.opacity(0.4), radius: 2)
             }
         }
+    }
+
+    private func tooltipLabel(text: String, at x: CGFloat, in size: CGSize, color: Color, value: Double) -> some View {
+        let y = size.height - (CGFloat(value / peak) * size.height * 0.92) - 2 - 3
+        return Text(text)
+            .scaledFont(9, design: .monospaced)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.8), in: Capsule())
+            .offset(x: x, y: y - 12)
     }
 
     private func valueAt(x: CGFloat, in size: CGSize) -> (in: Double?, out: Double?) {
@@ -409,23 +440,22 @@ struct RateLegend: View {
     let outBps: Double?
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             item("IN", inBps, theme.ok)
             item("OUT", outBps, theme.info)
-            Spacer()
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Inbound \(inBps.map(Rate.bits) ?? "no data") per second, outbound \(outBps.map(Rate.bits) ?? "no data") per second")
     }
 
     private func item(_ label: String, _ value: Double?, _ color: Color) -> some View {
-        HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 6, height: 6)
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 5, height: 5)
             Text(label)
-                .scaledFont(10, weight: .bold, design: .rounded)
+                .scaledFont(9, weight: .medium)
                 .foregroundStyle(theme.labelFaint)
             Text(value.map(Rate.bits) ?? "—")
-                .scaledFont(12, weight: .semibold, design: .monospaced)
+                .scaledFont(10, weight: .semibold, design: .monospaced)
                 .foregroundStyle(theme.label)
         }
     }
@@ -705,7 +735,7 @@ struct SingleMetricSparkline: View {
                             p.move(to: CGPoint(x: x, y: 0))
                             p.addLine(to: CGPoint(x: x, y: geo.size.height))
                         }
-.stroke(theme.label.opacity(0.3), style: StrokeStyle(lineWidth: 1))
+                        .stroke(theme.label.opacity(0.3), style: StrokeStyle(lineWidth: 1))
                         let span = Swift.max(bounds.high - bounds.low, 0.001)
                         let y = geo.size.height
                             - (CGFloat((val - bounds.low) / span) * geo.size.height * 0.9) - 1
@@ -713,6 +743,14 @@ struct SingleMetricSparkline: View {
                             .fill(theme.accentColor)
                             .frame(width: 5, height: 5)
                             .offset(x: x, y: y)
+                        
+                        Text("\(Int(val)) \(label)")
+                            .scaledFont(9, design: .monospaced)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(theme.accentColor.opacity(0.8), in: Capsule())
+                            .offset(x: x, y: y - 12)
                     }
                 }
                 .contentShape(Rectangle())
@@ -985,5 +1023,29 @@ struct NoticeText: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+}
+
+// MARK: - Page Header
+
+struct PageHeader: View {
+    @EnvironmentObject private var theme: ThemeManager
+    let title: String
+    let subtitle: String?
+
+    var body: some View {
+        VStack(alignment: .center, spacing: 4) {
+            Text(title)
+                .scaledFont(22, weight: .semibold)
+                .foregroundStyle(theme.label)
+            if let subtitle {
+                Text(subtitle)
+                    .scaledFont(13)
+                    .foregroundStyle(theme.labelMuted)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
     }
 }

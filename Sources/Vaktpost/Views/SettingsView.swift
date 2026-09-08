@@ -6,6 +6,7 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
+            PageHeader(title: "Settings", subtitle: nil)
             VStack(alignment: .leading, spacing: 14) {
                 GroupHeading(text: "Appearance")
                 themeSlab
@@ -28,7 +29,6 @@ struct SettingsView: View {
             .padding(.bottom, 32)
         }
         .background(theme.bg.ignoresSafeArea())
-        .navigationTitle("Settings")
     }
 
 
@@ -92,47 +92,30 @@ struct SettingsView: View {
         }
     }
 
-    /// Where the temperature alert fires.
-    ///
-    /// The default follows the sensor — a chipset runs far hotter than a CPU
-    /// die — but those numbers are a guess about hardware the app cannot see.
+    /// Temperature alert settings.
     private var temperatureSlab: some View {
         Slab(rail: .info) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Warn above")
-                        .scaledFont(14)
-                        .foregroundStyle(theme.label)
-                    Spacer()
-                    Text(store.temperatureWarnOverride
-                            .map { String(format: "%.0f °C", $0) } ?? "automatic")
-                        .scaledFont(14, design: .monospaced)
-                        .foregroundStyle(theme.labelMuted)
+            if let sys = store.system, !sys.temperatureLabel.isEmpty {
+                Toggle(isOn: Binding(
+                    get: { store.temperatureWarnOverride == nil },
+                    set: { store.temperatureWarnOverride = $0 ? nil : 80 }
+                )) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Temperature warnings")
+                            .scaledFont(14)
+                            .foregroundStyle(theme.label)
+                        Text("Warn at \(Int(sys.temperatureThresholds.warn)) °C (automatic)")
+                            .scaledFont(12)
+                            .foregroundStyle(theme.labelMuted)
+                    }
                 }
-
-                Slider(
-                    value: Binding(
-                        get: { store.temperatureWarnOverride ?? 0 },
-                        set: { store.temperatureWarnOverride = $0 < 50 ? nil : $0 }
-                    ),
-                    in: 40...110,
-                    step: 1
-                )
                 .tint(theme.accentColor)
-
-                Text(store.temperatureWarnOverride == nil
-                     ? "Following the sensor: \(sensorDescription). Slide up to set your own."
-                     : "Critical at \(Int((store.temperatureWarnOverride ?? 0) + 10)) °C. Slide below 50 to go back to automatic.")
-                    .scaledFont(11)
+            } else {
+                Text("No temperature sensors available")
+                    .scaledFont(13)
                     .foregroundStyle(theme.labelFaint)
             }
         }
-    }
-
-    private var sensorDescription: String {
-        guard let sys = store.system else { return "no reading yet" }
-        let limits = sys.temperatureThresholds
-        return "\(sys.temperatureLabel.lowercased()), warn at \(Int(limits.warn)) °C"
     }
 
     private var themeSlab: some View {

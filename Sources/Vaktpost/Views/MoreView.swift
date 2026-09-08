@@ -9,9 +9,8 @@ struct MoreView: View {
 
     var body: some View {
         ScrollView {
+            PageHeader(title: "More", subtitle: nil)
             VStack(alignment: .leading, spacing: 10) {
-                activeServerCard
-
                 GroupHeading(text: "Sections")
                 link("Alerts", "bell.badge", badge: store.criticalAlertCount) { AlertsView() }
                 link("VPN", "lock.shield", badge: 0) { VPNView() }
@@ -24,7 +23,6 @@ struct MoreView: View {
                 link("System", "server.rack", badge: 0) { SystemView() }
 
                 GroupHeading(text: "Setup")
-                link("Firewalls", "externaldrive.connected.to.line.below", badge: 0) { ServersView() }
                 link("Diagnostics", "stethoscope", badge: store.errors.count) { DiagnosticsView() }
                 link("Settings", "slider.horizontal.3", badge: 0) { SettingsView() }
             }
@@ -33,29 +31,6 @@ struct MoreView: View {
             .padding(.bottom, 28)
         }
         .background(theme.bg.ignoresSafeArea())
-        .navigationTitle("More")
-    }
-
-    private var activeServerCard: some View {
-        Slab(rail: store.overallHealth, title: "Active firewall") {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(store.profile.displayName)
-                    .scaledFont(16, weight: .semibold)
-                    .foregroundStyle(theme.label)
-                Text(store.profile.baseURL)
-                    .scaledFont(11, design: .monospaced)
-                    .foregroundStyle(theme.labelFaint)
-                if registry.servers.count > 1 {
-                    Hairline()
-                    ServerSwitcher(
-                        servers: registry.servers,
-                        activeID: registry.active?.id
-                    ) { server in
-                        Task { await store.switchTo(server) }
-                    }
-                }
-            }
-        }
     }
 
     private func link<Destination: View>(

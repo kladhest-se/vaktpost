@@ -1,5 +1,52 @@
 import SwiftUI
 
+struct ServerMenu: View {
+    @EnvironmentObject private var registry: ServerRegistry
+    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmLogout = false
+
+    var body: some View {
+        Menu {
+            ForEach(registry.servers) { server in
+                Button(server.displayName) {
+                    Task { await store.switchTo(server) }
+                }
+            }
+            if !registry.servers.isEmpty {
+                Divider()
+            }
+            Button("Log out", role: .destructive) {
+                confirmLogout = true
+            }
+        } label: {
+            Image(systemName: "server.rack")
+                .scaledFont(16)
+        }
+        .confirmationDialog("Log out?", isPresented: $confirmLogout, titleVisibility: .visible) {
+            Button("Log out", role: .destructive) {
+                Task { await store.logout() }
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("All metrics, logs, and cached data will be cleared.")
+        }
+    }
+}
+
+struct AlertButton: View {
+    @EnvironmentObject private var store: DashboardStore
+    @EnvironmentObject private var theme: ThemeManager
+
+    var body: some View {
+        NavigationLink { AlertsView() } label: {
+            Image(systemName: store.criticalAlertCount > 0 ? "bell.badge.fill" : "bell")
+                .foregroundStyle(store.criticalAlertCount > 0 ? theme.warn : theme.labelMuted)
+        }
+    }
+}
+
 @main
 struct VaktpostApp: App {
     @StateObject private var theme = ThemeManager()
@@ -33,25 +80,56 @@ struct RootView: View {
             if store.isConfigured {
                 ZStack(alignment: .top) {
                     TabView {
-                        NavigationStack { OverviewView() }
-                            .tabItem { Label("Overview", systemImage: "square.grid.2x2") }
+                        NavigationStack {
+                            OverviewView()
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarLeading) { ServerMenu() }
+                                    ToolbarItem(placement: .topBarTrailing) { AlertButton() }
+                                    ToolbarItem(placement: .confirmationAction) { DoneButton() }
+                                }
+                        }
+                        .tabItem { Label("Overview", systemImage: "square.grid.2x2") }
 
                         // Wrapped like every other tab. MasterDetail no
                         // longer creates a stack of its own — it cannot, since
                         // the same container is used by Firewall, which is
                         // pushed from More and must not nest one.
-                        NavigationStack { ClientsView() }
-                            .tabItem { Label("Clients", systemImage: "person.2") }
+                        NavigationStack {
+                            ClientsView()
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarLeading) { ServerMenu() }
+                                    ToolbarItem(placement: .topBarTrailing) { AlertButton() }
+                                }
+                        }
+                        .tabItem { Label("Clients", systemImage: "person.2") }
 
-                        NavigationStack { NetworkView() }
-                            .tabItem { Label("Network", systemImage: "network") }
+                        NavigationStack {
+                            NetworkView()
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarLeading) { ServerMenu() }
+                                    ToolbarItem(placement: .topBarTrailing) { AlertButton() }
+                                }
+                        }
+                        .tabItem { Label("Network", systemImage: "network") }
 
-                        NavigationStack { LogsView() }
-                            .tabItem { Label("Logs", systemImage: "text.alignleft") }
+                        NavigationStack {
+                            LogsView()
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarLeading) { ServerMenu() }
+                                    ToolbarItem(placement: .topBarTrailing) { AlertButton() }
+                                }
+                        }
+                        .tabItem { Label("Logs", systemImage: "text.alignleft") }
 
-                        NavigationStack { MoreView() }
-                            .tabItem { Label("More", systemImage: "ellipsis.circle") }
-                            .badge(store.criticalAlertCount)
+                        NavigationStack {
+                            MoreView()
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarLeading) { ServerMenu() }
+                                    ToolbarItem(placement: .topBarTrailing) { AlertButton() }
+                                }
+                        }
+                        .tabItem { Label("More", systemImage: "ellipsis.circle") }
+                        .badge(store.criticalAlertCount)
                     }
 
                     // No refresh indicator here at all.
@@ -60,7 +138,7 @@ struct RootView: View {
                     // draws its own spinner when a refresh is running. A second
                     // one floating above the tab content was both redundant and
                     // in the way — it sat over the title while scrolling.
-                }
+                    }
             } else {
                 OnboardingView()
             }
@@ -98,6 +176,21 @@ struct RootView: View {
             @unknown default:
                 break
             }
+        }
+    }
+}
+
+private struct DoneButton: View {
+    @EnvironmentObject private var store: DashboardStore
+    @EnvironmentObject private var theme: ThemeManager
+    
+    var body: some View {
+        if store.isOverviewEditing {
+            Button("Done") {
+                store.toggleOverviewEditing()
+            }
+            .bold()
+            .foregroundStyle(theme.accentColor)
         }
     }
 }

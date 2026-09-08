@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import SwiftUI
 
 /// Holds mutable state for `TrustEvaluator` under a lock so the outer
 /// class can be provably `Sendable`.
@@ -105,7 +106,82 @@ final class TrustEvaluator: NSObject, URLSessionDelegate, Sendable {
             return
         }
 
-        completionHandler(.performDefaultHandling, nil)
+        // No pin set and untrusted TLS is not allowed.
+        //
+        // Offer to pin the certificate on first connection. The user sees the
+        // fingerprint, chooses whether to trust it, and whether to pin it for
+        // future connections. A synchronous alert is shown because the URL
+        // session will hang otherwise.
+        if let leafFingerprint {
+            showPinningAlert(leafFingerprint: leafFingerprint, trust: trust) { [self] decision in
+                switch decision {
+                case .pin:
+                    var p = profile
+                    p.pinnedFingerprint = leafFingerprint
+                    self.state.updateProfile(p)
+                    completionHandler(.useCredential, URLCredential(trust: trust))
+                case .trust:
+                    completionHandler(.useCredential, URLCredential(trust: trust))
+                case .cancel:
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                }
+            }
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+
+    /// Shows a synchronous alert asking whether to trust and pin a new certificate.
+    private func showPinningAlert(
+        leafFingerprint: String,
+        trust: SecTrust,
+        completion: @escaping (PinningDecision) -> Void
+    ) {
+        // Try to get the certificate subject for a nicer label.
+        let subject = Self.subjectName(of: trust) ?? "Unknown certificate"
+        let readableFingerprint = leafFingerprint.prefix(16) + "…"
+
+        let alert = UIAlertController(
+            title: "New certificate",
+            message: "This is the first time connecting to \(subject). Fingerprint: \(readableFingerprint)\n\nDo you want to trust and pin this certificate for future connections?",
+            preferredStyle: .alert
+        )
+
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
+            completion(.cancel)
+        })
+        alert.addAction(UIAlertAction(title: "Trust Only", style: .default) { _ in
+            completion(.trust)
+        })
+        alert.addAction(UIAlertAction(title: "Pin & Trust", style: .default) { _ in
+            completion(.pin)
+        })
+
+        // Present on the main thread's current view controller, or fall back
+        // to the key window's root view controller.
+        if let windowScene = UIApplication.shared.connectedScenes
+            .first(where: { $0 is UIWindowScene }) as? UIWindowScene,
+           let keyWindow = windowScene.windows.first(where: { $0.isKeyWindow }),
+           let vc = keyWindow.rootViewController?.presentedViewController {
+            vc.present(alert, animated: true)
+        } else if let windowScene = UIApplication.shared.connectedScenes
+            .first(where: { $0 is UIWindowScene }) as? UIWindowScene,
+           let keyWindow = windowScene.windows.first(where: { $0.isKeyWindow }),
+           let vc = keyWindow.rootViewController {
+            vc.present(alert, animated: true)
+        }
+
+        // If the alert is not presented within 2 seconds, cancel the challenge
+        // to avoid hanging the connection.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            if alert.presentingViewController != nil {
+                completion(.cancel)
+            }
+        }
+    }
+
+    enum PinningDecision {
+        case pin, trust, cancel
     }
 
     /// Lowercase hex SHA-256 over the leaf certificate's DER encoding.
@@ -119,5 +195,19 @@ final class TrustEvaluator: NSObject, URLSessionDelegate, Sendable {
         guard let leaf else { return nil }
         let der = SecCertificateCopyData(leaf) as Data
         return SHA256.hash(data: der).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Human-friendly subject name from the leaf certificate.
+    static func subjectName(of trust: SecTrust) -> String? {
+        let leaf: SecCertificate?
+        if #available(iOS 15.0, *) {
+            leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first
+        } else {
+            leaf = SecTrustGetCertificateAtIndex(trust, 0)
+        }
+        guard let leaf else { return nil }
+        let cf = leaf as SecCertificate
+        let cert = SecCertificateCopySubjectSummary(cf) as String?
+        return cert
     }
 }

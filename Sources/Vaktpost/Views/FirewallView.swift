@@ -9,7 +9,13 @@ struct FirewallView: View {
         var id: String { rawValue }
     }
 
+    enum RuleCategory: String, CaseIterable, Identifiable {
+        case all = "All", floating = "Floating"
+        var id: String { rawValue }
+    }
+
     @State private var pane: Pane = .rules
+    @State private var ruleCategory: RuleCategory = .all
     @State private var query = ""
     @State private var interfaceFilter: String?
 
@@ -45,20 +51,29 @@ struct FirewallView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
 
-            if pane == .rules, !interfaceOptions.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        chip("All", selected: interfaceFilter == nil) { interfaceFilter = nil }
-                        ForEach(interfaceOptions, id: \.self) { iface in
-                            chip(store.interfaceLabel(for: iface) ?? iface,
-                                 selected: interfaceFilter == iface) {
-                                interfaceFilter = interfaceFilter == iface ? nil : iface
+            if pane == .rules {
+                Picker("Category", selection: $ruleCategory) {
+                    ForEach(RuleCategory.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+
+                if ruleCategory == .all && !interfaceOptions.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            chip("All", selected: interfaceFilter == nil) { interfaceFilter = nil }
+                            ForEach(interfaceOptions, id: \.self) { iface in
+                                chip(store.interfaceLabel(for: iface) ?? iface,
+                                     selected: interfaceFilter == iface) {
+                                    interfaceFilter = interfaceFilter == iface ? nil : iface
+                                }
                             }
                         }
+                        .padding(.horizontal, 16)
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
                 }
-                .padding(.bottom, 8)
             }
 
             ScrollView {
@@ -107,10 +122,10 @@ struct FirewallView: View {
     }
 
     private var filteredRules: [FirewallRule] {
-        var list = store.rules
+        var list = ruleCategory == .floating
+            ? store.rules.filter { $0.isFloating }
+            : store.rules.filter { !$0.isFloating }
         if let iface = interfaceFilter {
-            // Contains, not equals: a floating rule applying to thirteen
-            // interfaces belongs under each of them.
             list = list.filter { rule in
                 rule.interfaceName.split(separator: ",")
                     .contains { $0.trimmingCharacters(in: .whitespaces) == iface }
@@ -131,9 +146,10 @@ struct FirewallView: View {
         if let err = store.errors[.firewall] {
             Notice(symbol: "exclamationmark.triangle", title: "Rules unavailable", detail: err, health: .warn)
         } else if filteredRules.isEmpty {
-            Notice(symbol: "shield.slash", title: query.isEmpty ? "No rules returned" : "No matches")
+            let title = ruleCategory == .floating ? "No floating rules" : "No rules returned"
+            Notice(symbol: "shield.slash", title: query.isEmpty ? title : "No matches")
         } else {
-            countLine("\(filteredRules.count) of \(store.rules.count) rules")
+            countLine("\(filteredRules.count) rules")
             ForEach(filteredRules) { rule in
                 Button { selection = rule.id } label: { RuleRow(rule: rule) }
                     .buttonStyle(.plain)

@@ -7,20 +7,17 @@ struct NetworkView: View {
     @State private var query = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    interfacesPane
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 28)
+        ScrollView {
+            PageHeader(title: "Network", subtitle: store.interfaces.count > 0 ? "\(store.interfaces.count) interfaces" : nil)
+            VStack(alignment: .leading, spacing: 12) {
+                interfacesPane
             }
-            .refreshable { await store.refreshManually() }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 28)
         }
         .background(theme.bg.ignoresSafeArea())
+        .refreshable { await store.refreshManually() }
         .searchable(text: $query, prompt: "Filter interfaces")
-        .navigationTitle("Network")
     }
 
     // MARK: Interfaces
@@ -44,39 +41,39 @@ struct NetworkView: View {
             Notice(symbol: "point.3.connected.trianglepath.dotted",
                    title: query.isEmpty ? "No interfaces reported" : "No matches")
         } else {
-            HStack {
-                Text("\(store.interfacesUp) of \(store.interfaces.count) up")
-                    .scaledFont(12, design: .monospaced)
-                    .foregroundStyle(theme.labelFaint)
-                Spacer()
-            }
-            ForEach(filteredInterfaces) { iface in
-                // Tappable: the card is a summary, the detail screen watches
-                // the same interface at two-second resolution.
-                NavigationLink {
-                    InterfaceDetailView(iface: iface)
-                } label: {
-                    InterfaceCard(iface: iface)
+            VStack(spacing: 12) {
+                HStack {
+                    Text("\(store.interfacesUp) of \(store.interfaces.count) up")
+                        .scaledFont(12, design: .monospaced)
+                        .foregroundStyle(theme.labelFaint)
+                    Spacer()
                 }
-                .buttonStyle(.plain)
-                // `swipeActions` would do nothing here — it only works inside a
-                // List, and this is a LazyVStack. A long press works, and the
-                // card carries a visible star as well, since a gesture with no
-                // affordance is a feature nobody finds.
-                .contextMenu {
-                    Button {
-                        store.toggleFavourite(iface)
+
+                ForEach(filteredInterfaces) { iface in
+                    // Tappable: the card is a summary, the detail screen watches
+                    // the same interface at two-second resolution.
+                    NavigationLink {
+                        InterfaceDetailView(iface: iface)
                     } label: {
-                        Label(store.isFavourite(iface) ? "Remove from Overview" : "Show on Overview",
-                              systemImage: store.isFavourite(iface) ? "star.slash" : "star")
+                        InterfaceCard(iface: iface)
+                    }
+                    .buttonStyle(.plain)
+                    // `swipeActions` would do nothing here — it only works inside a
+                    // List, and this is a LazyVStack. A long press works, and the
+                    // card carries a visible star as well, since a gesture with no
+                    // affordance is a feature nobody finds.
+                    .contextMenu {
+                        Button {
+                            store.toggleFavourite(iface)
+                        } label: {
+                            Label(store.isFavourite(iface) ? "Remove from Overview" : "Show on Overview",
+                                  systemImage: store.isFavourite(iface) ? "star.slash" : "star")
+                        }
                     }
                 }
             }
         }
     }
-
-
-}
 
 /// One interface, as a card.
 ///
@@ -156,4 +153,5 @@ struct InterfaceCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
+}
 }

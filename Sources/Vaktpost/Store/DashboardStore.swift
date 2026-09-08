@@ -182,6 +182,12 @@ final class DashboardStore: ObservableObject {
     /// The theme the person chose, kept so a relaunch restores it.
     var themeName: String = "auto"
 
+    @Published var isOverviewEditing = false
+
+    func toggleOverviewEditing() {
+        isOverviewEditing.toggle()
+    }
+
     private var timer: Task<Void, Never>?
     /// Endpoints backed by optional packages are retried rarely once they 404,
     /// so a firewall without WireGuard doesn't pay for four dead calls a minute.
@@ -234,6 +240,28 @@ final class DashboardStore: ObservableObject {
 
     var isConfigured: Bool { activeProfile?.isUsable ?? false }
     var profile: ServerProfile { activeProfile ?? ServerProfile() }
+
+    func logout() async {
+        let currentID = registry.active?.id
+        let nextServer = registry.servers.first { $0.id != currentID }
+        registry.reset()
+        if let nextServer {
+            await switchTo(nextServer)
+        } else {
+            stopAutoRefresh()
+            clearData()
+            throughput.reset()
+            lastCPUTicks = nil
+            vpnThroughput.reset()
+            systemMetrics.reset()
+            gatewayMetrics.reset()
+            missingEndpoints.removeAll()
+            faultCounts.removeAll()
+            activeProfile = nil
+            await client.update(profile: ServerProfile())
+            await refresh()
+        }
+    }
 
     // MARK: Server switching
 

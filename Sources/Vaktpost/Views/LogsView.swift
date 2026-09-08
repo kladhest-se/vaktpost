@@ -55,7 +55,8 @@ struct LogsView: View {
     private var showsActionFilter: Bool { source == .firewall }
 
     var body: some View {
-        VStack(spacing: 0) {
+        ScrollView {
+            PageHeader(title: "Logs", subtitle: nil)
             VStack(spacing: 8) {
                 Picker("", selection: $source) {
                     ForEach(Source.allCases) { Text($0.rawValue).tag($0) }
@@ -72,43 +73,40 @@ struct LogsView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    if let err = store.errors[errorKey] {
-                        Notice(symbol: "exclamationmark.triangle",
-                               title: "Log unavailable", detail: err, health: .warn)
-                    } else if lines.isEmpty {
-                        Notice(
-                            symbol: "doc.text.magnifyingglass",
-                            title: query.isEmpty ? "No log lines" : "No matches",
-                            detail: query.isEmpty && (source == .dhcp || source == .openvpn)
-                                ? "This log is empty when the service isn't running."
-                                : nil
-                        )
-                    } else {
-                        ForEach(lines) { line in
-                            // Every line opens. A filter line becomes fields;
-                            // anything else gets its syslog prefix split off
-                            // and its message given room to wrap, which is all
-                            // a long DHCP or OpenVPN line needs.
-                            NavigationLink {
-                                LogDetailView(line: line)
-                            } label: {
-                                LogRow(line: line)
-                            }
-                            .buttonStyle(.plain)
+            LazyVStack(alignment: .leading, spacing: 8) {
+                if let err = store.errors[errorKey] {
+                    Notice(symbol: "exclamationmark.triangle",
+                           title: "Log unavailable", detail: err, health: .warn)
+                } else if lines.isEmpty {
+                    Notice(
+                        symbol: "doc.text.magnifyingglass",
+                        title: query.isEmpty ? "No log lines" : "No matches",
+                        detail: query.isEmpty && (source == .dhcp || source == .openvpn)
+                            ? "This log is empty when the service isn't running."
+                            : nil
+                    )
+                } else {
+                    ForEach(lines) { line in
+                        // Every line opens. A filter line becomes fields;
+                        // anything else gets its syslog prefix split off
+                        // and its message given room to wrap, which is all
+                        // a long DHCP or OpenVPN line needs.
+                        NavigationLink {
+                            LogDetailView(line: line)
+                        } label: {
+                            LogRow(line: line)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 28)
             }
-            .refreshable { await store.refreshManually() }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 28)
         }
         .background(theme.bg.ignoresSafeArea())
+        .refreshable { await store.refreshManually() }
         .searchable(text: $query, prompt: "Search log text")
         .task { await store.beginSecondaryLogs() }
-        .navigationTitle("Logs")
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 // One document, not one item per line.
