@@ -507,3 +507,29 @@ extension UnreachableStateTests {
         XCTAssertFalse(s.isUnreachable)
     }
 }
+
+extension UnreachableStateTests {
+
+    func testOfflineIsNotRetried() {
+        // The system already knows there is no route. A retry waits the full
+        // timeout again to be told the same thing, and a refresh makes five
+        // calls — which is how the app sat on stale readings for minutes.
+        XCTAssertFalse(RPCError.offline("offline").isRetryable)
+        XCTAssertTrue(RPCError.transport("timed out").isRetryable)
+    }
+
+    func testBothCountAsAConnectionFailure() {
+        XCTAssertTrue(RPCError.offline("offline").isConnectionFailure)
+        XCTAssertTrue(RPCError.transport("timed out").isConnectionFailure)
+        XCTAssertFalse(RPCError.unauthorized.isConnectionFailure)
+        XCTAssertFalse(RPCError.fault(0, "boom").isConnectionFailure)
+    }
+
+    func testOfflineCarriesTheSystemsWording() {
+        // "The Internet connection appears to be offline" is the system's own
+        // sentence, and it says more than any paraphrase would.
+        let error = RPCError.offline("The Internet connection appears to be offline.")
+        XCTAssertEqual(error.localizedDescription,
+                       "The Internet connection appears to be offline.")
+    }
+}

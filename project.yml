@@ -37,10 +37,9 @@ targets:
         # NOT XcodeGen's `info:` and `entitlements:` keys. Those *generate* the
         # files they point at, so a hand-written one is silently overwritten on
         # every `xcodegen` run — the plist loses UILaunchScreen and the ATS
-        # exception, and the entitlements become an empty dict, taking the App
-        # Group with them. The symptom is not a build error: the app builds,
-        # then the simulator refuses to install it because the widget's
-        # NSExtension dictionary is gone.
+        # exception. The symptom is not a build error: the app builds and then
+        # behaves oddly at runtime, which is a long way to travel to find a
+        # generated file.
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Vaktpost.entitlements

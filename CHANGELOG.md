@@ -271,6 +271,27 @@ stops answering is a much worse one. A monitoring app should be the last thing
 to disturb what it watches, and for two builds this one was the worst thing on
 the network.
 
+### It took minutes to notice the network was gone
+
+Turning off Wi-Fi left the tabs up and the old readings on screen. The state
+was correct; it just arrived far too late to be any use.
+
+Each request waited 30 seconds and retried once, and a refresh makes five in
+sequence — so the app could sit on stale data for minutes before concluding
+anything. Three things now:
+
+- The first transport failure sets the error immediately and ends the cycle.
+  There is nothing to learn from four more timeouts: if the firewall cannot be
+  reached, it cannot be reached.
+- No route is distinct from a timeout. `notConnectedToInternet` and its
+  siblings are not retried — the system already knows there is no path, and a
+  second attempt waits the full timeout to be told the same thing.
+- The request timeout is 15 seconds. This is a firewall on the local network:
+  it answers in milliseconds or it is not reachable.
+
+The end-of-cycle assignment no longer clears an error already reported, which
+it would have done on the next pass.
+
 ### The disconnected screen never appeared
 
 Two faults, both mine, and together they meant the state I had just built could
@@ -1134,6 +1155,27 @@ Removing it takes the App Group with it, which removes the one thing that made
 a first install fail: an App Group must be registered on the developer account
 before Xcode will sign against it. The entitlements file is now deliberately
 empty, and the layout check warns if anything reappears in it.
+
+### Every icon set had the same filename
+
+Comparing against a project where switching works, key by key: the build
+settings match, the Info.plists are equivalent, the catalogue structure is the
+same, the images are 1024, RGB, no alpha. One difference left — six
+`appiconset` directories in one catalogue each containing a file called
+`icon.png`, where the working project names each after its colour.
+
+`INCLUDE_ALL_APPICON_ASSETS` copies these into the bundle, and six sources
+sharing one name is the kind of thing that survives a build and fails at
+runtime. Renamed, previews too.
+
+Whether that is the cause I do not know. It is the only difference left between
+a build that switches icons and one that does not, which is a better reason to
+change it than any of the theories that came before.
+
+The picker also reports whether `CFBundlePrimaryIcon` is declared. iOS refuses
+to switch in an app with alternates and no primary to switch back to, and gives
+the same unhelpful `EAGAIN` for it. The alternates have been confirmed present
+twice; that half has never been looked at.
 
 ### Icon switching uses the async call
 
@@ -3022,6 +3064,27 @@ Removing it takes the App Group with it, which removes the one thing that made
 a first install fail: an App Group must be registered on the developer account
 before Xcode will sign against it. The entitlements file is now deliberately
 empty, and the layout check warns if anything reappears in it.
+
+### Every icon set had the same filename
+
+Comparing against a project where switching works, key by key: the build
+settings match, the Info.plists are equivalent, the catalogue structure is the
+same, the images are 1024, RGB, no alpha. One difference left — six
+`appiconset` directories in one catalogue each containing a file called
+`icon.png`, where the working project names each after its colour.
+
+`INCLUDE_ALL_APPICON_ASSETS` copies these into the bundle, and six sources
+sharing one name is the kind of thing that survives a build and fails at
+runtime. Renamed, previews too.
+
+Whether that is the cause I do not know. It is the only difference left between
+a build that switches icons and one that does not, which is a better reason to
+change it than any of the theories that came before.
+
+The picker also reports whether `CFBundlePrimaryIcon` is declared. iOS refuses
+to switch in an app with alternates and no primary to switch back to, and gives
+the same unhelpful `EAGAIN` for it. The alternates have been confirmed present
+twice; that half has never been looked at.
 
 ### Icon switching uses the async call
 

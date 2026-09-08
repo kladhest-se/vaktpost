@@ -362,12 +362,25 @@ final class DashboardStore: ObservableObject {
 
         var freshErrors: [Section: String] = [:]
         var fatal: String?
+
+        /// Set the moment a request fails at the transport level.
+        ///
+        /// Each request waits 30 seconds and retries once, and a refresh makes
+        /// five of them in sequence — so with the network gone, the app sat on
+        /// stale data for minutes before it concluded anything. There is
+        /// nothing to learn from the other four: if the firewall cannot be
+        /// reached, it cannot be reached.
+        ///
+        /// So the first transport failure ends the cycle and says so straight
+        /// away, rather than at the end of a queue of timeouts.
+        var networkDown = false
         var succeeded = 0
         var succeededSections: Set<Section> = []
 
         /// Runs one section and records whether it worked.
         @discardableResult
         func run(_ section: Section, optional: Bool = false) async -> Bool {
+            guard !networkDown else { return false }
             // Retry a known-missing optional endpoint every 20th cycle only.
             guard !optional || !missingEndpoints.contains(section) || refreshCount % 20 == 0 else { return false }
             do {
@@ -380,8 +393,14 @@ final class DashboardStore: ObservableObject {
                 switch err {
                 case .cancelled:
                     break
+                case .transport, .offline:
+                    // Straight to the screen. Waiting for four more timeouts
+                    // to agree would take minutes.
+                    fatal = err.localizedDescription
+                    networkDown = true
+                    connectionError = fatal
                 case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL,
-                     .forbidden, .transport:
+                     .forbidden:
                     // `.transport` belongs here.
                     //
                     // It was in the default branch, recorded against the
@@ -432,6 +451,7 @@ final class DashboardStore: ObservableObject {
         ) async -> Bool {
             // Skipped only when every section in it has been abandoned. One
             // bad section should not stop the other four from loading.
+            guard !networkDown else { return false }
             let live = sections.filter { !missingEndpoints.contains($0) }
             guard !live.isEmpty || refreshCount % 20 == 0 else { return false }
 
@@ -454,8 +474,14 @@ final class DashboardStore: ObservableObject {
                 switch err {
                 case .cancelled:
                     break
+                case .transport, .offline:
+                    // Straight to the screen. Waiting for four more timeouts
+                    // to agree would take minutes.
+                    fatal = err.localizedDescription
+                    networkDown = true
+                    connectionError = fatal
                 case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL,
-                     .forbidden, .transport:
+                     .forbidden:
                     // `.transport` belongs here.
                     //
                     // It was in the default branch, recorded against the
@@ -640,7 +666,15 @@ final class DashboardStore: ObservableObject {
         // screen full of data fetched seconds ago. A real problem — a rejected
         // key, a failed pin, an unreachable host — fails every section, so this
         // still catches it while a transient blip stays invisible.
-        connectionError = succeeded == 0 ? fatal : nil
+        // Already set for a transport failure, and set here for the rest.
+        //
+        // `succeeded == 0` still guards the others: one unlucky request among
+        // twenty should not put "cannot reach firewall" over a screen of fresh
+        // data. A transport failure is different — it means no request can
+        // succeed — and it has already been reported above.
+        if !networkDown {
+            connectionError = succeeded == 0 ? fatal : nil
+        }
         lastRefresh = Date()
         alerts = VaktpostAlert.build(from: self)
         pruneAcknowledgements()

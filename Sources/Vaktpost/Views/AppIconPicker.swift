@@ -92,7 +92,9 @@ struct AppIconPicker: View {
                 if failure != nil {
                     Text(registeredNames.isEmpty
                          ? "No alternate icons are registered in this build."
-                         : "Registered: \(registeredNames.joined(separator: ", "))")
+                         : "Registered: \(registeredNames.joined(separator: ", "))"
+                           + (hasPrimaryIcon ? "\nPrimary icon: declared."
+                                             : "\nPrimary icon: MISSING — iOS will not switch without one."))
                         .scaledFont(10, design: .monospaced)
                         .foregroundStyle(theme.labelFaint)
                         .textSelection(.enabled)
@@ -131,6 +133,19 @@ struct AppIconPicker: View {
             return []
         }
         return alternates.keys.sorted()
+    }
+
+    /// Whether the build declares a primary icon.
+    ///
+    /// iOS refuses to switch icons in an app that has alternates but no
+    /// `CFBundlePrimaryIcon` to switch back to, and the failure it gives for
+    /// that is the same unhelpful `EAGAIN` as everything else. The alternates
+    /// have been confirmed present twice; this is the half nobody has looked
+    /// at.
+    private var hasPrimaryIcon: Bool {
+        guard let icons = Bundle.main.infoDictionary?["CFBundleIcons"] as? [String: Any]
+        else { return false }
+        return icons["CFBundlePrimaryIcon"] != nil
     }
 
     /// Sets the icon.

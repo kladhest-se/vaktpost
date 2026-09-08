@@ -10,6 +10,9 @@ enum RPCError: LocalizedError, Equatable {
     case forbidden
     case tls
     case transport(String)
+    /// No route to the firewall, as distinct from a request that timed out.
+    /// Not worth retrying: nothing about the second attempt is different.
+    case offline(String)
     case fault(Int, String)
     /// The response was not XML-RPC, with whatever it actually was.
     ///
@@ -30,8 +33,18 @@ enum RPCError: LocalizedError, Equatable {
         return false
     }
 
+    /// Whether this means the firewall cannot be reached at all, as opposed to
+    /// one request going wrong.
+    var isConnectionFailure: Bool {
+        switch self {
+        case .transport, .offline: return true
+        default: return false
+        }
+    }
+
     var errorDescription: String? {
         switch self {
+        case let .offline(detail): return detail
         case .notConfigured: return "No firewall configured yet."
         case .badURL: return "That base URL isn't valid."
         case .noCredentials: return "No password stored."
@@ -89,7 +102,13 @@ actor XMLRPCClient {
         let config = URLSessionConfiguration.ephemeral
         // exec_php can take a while; the firmware-version snippet in
         // particular shells out to the package system.
-        config.timeoutIntervalForRequest = 30
+        // Fifteen seconds, not thirty.
+        //
+        // This is a firewall on the local network: it answers in milliseconds
+        // or it is not reachable. Thirty seconds — doubled by the retry, and
+        // multiplied by the calls in a refresh — is how the app came to sit on
+        // stale data for minutes after the Wi-Fi went off.
+        config.timeoutIntervalForRequest = 15
         config.waitsForConnectivity = false
         config.httpAdditionalHeaders = ["Content-Type": "text/xml; charset=utf-8"]
         self.session = URLSession(configuration: config, delegate: evaluator, delegateQueue: nil)
@@ -228,6 +247,16 @@ actor XMLRPCClient {
                 throw RPCError.tls
             case .cancelled:
                 throw RPCError.cancelled
+            case .notConnectedToInternet,
+                 .networkConnectionLost,
+                 .cannotConnectToHost,
+                 .cannotFindHost,
+                 .dnsLookupFailed:
+                // The system already knows there is no route. Retrying waits
+                // another fifteen seconds to be told the same thing, and a
+                // refresh makes five of these — which is how the app sat on
+                // stale readings for minutes after the Wi-Fi went off.
+                throw RPCError.offline(error.localizedDescription)
             default:
                 throw RPCError.transport(error.localizedDescription)
             }
