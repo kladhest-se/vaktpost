@@ -126,7 +126,8 @@ struct DiagnosticsView: View {
                         }
                     }
                 }
-            }
+                }
+
                 GroupHeading(text: "Historical traffic")
                 Slab(rail: rrdRail) {
                     VStack(alignment: .leading, spacing: 4) {

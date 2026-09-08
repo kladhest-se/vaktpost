@@ -72,6 +72,10 @@ struct AppIconPicker: View {
                     Text("The simulator cannot change app icons — the choice will apply on a device.")
                         .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
+                } else if let betaHint = iOSBetaHint {
+                    Text(betaHint)
+                        .scaledFont(11)
+                        .foregroundStyle(theme.labelFaint)
                 } else if isChanging {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
@@ -118,6 +122,21 @@ struct AppIconPicker: View {
         #else
         return false
         #endif
+    }
+
+    /// Detects iOS 26.1+ and shows a known-issue hint.
+    ///
+    /// iOS 26.1 introduced a regression in `setAlternateIconName` that causes
+    /// `LSIconAlertManager` to return `EAGAIN` (NSPOSIXErrorDomain 35). This
+    /// affects all apps, not just this one. Workarounds that have been reported:
+    /// restart the device, toggle Airplane mode, or try on iOS 26.0.
+    private var iOSBetaHint: String? {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        if version.majorVersion >= 26, version.minorVersion >= 1 {
+            return "Icon switching is broken on iOS 26.1+. This is an Apple bug. "
+                + "Restarting the device sometimes helps. Apple bug report: FB15457636"
+        }
+        return nil
     }
 
     /// Alternate icon names this build actually registered.
@@ -177,16 +196,29 @@ struct AppIconPicker: View {
         isChanging = true
         failure = nil
 
-        Task {
+        Task { @MainActor in
             do {
                 try await UIApplication.shared.setAlternateIconName(icon.alternateName)
                 selected = icon
                 failure = nil
             } catch {
                 let ns = error as NSError
-                failure = isSimulator
+                if ns.code == 35, !isSimulator {
+                    do {
+                        try await Task.sleep(nanoseconds: 500_000_000)
+                        try await UIApplication.shared.setAlternateIconName(icon.alternateName)
+                        selected = icon
+                        failure = nil
+                        isChanging = false
+                        return
+                    } catch {
+                        // Fall through
+                    }
+                }
+                let msg = isSimulator
                     ? "The simulator cannot change app icons. This works on a device."
                     : "\(ns.localizedDescription) (\(ns.domain) \(ns.code))"
+                failure = msg
                 selected = .current
             }
             isChanging = false

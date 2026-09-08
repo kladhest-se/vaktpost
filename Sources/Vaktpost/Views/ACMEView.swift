@@ -51,8 +51,7 @@ struct ACMEView: View {
                             Slab(rail: account.isStaging ? .warn : .ok) {
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
-                                        Text(account.descr?.isEmpty == false
-                                             ? account.descr! : account.name)
+                                        Text(account.descr ?? account.name)
                                             .scaledFont(14, weight: .semibold)
                                             .foregroundStyle(theme.label)
                                         Spacer()
@@ -116,7 +115,7 @@ struct ACMERow: View {
         Slab(rail: worstHealth, trailing: cert.account) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(cert.descr?.isEmpty == false ? cert.descr! : cert.name)
+                    Text(cert.descr ?? cert.name)
                         .scaledFont(14, weight: .semibold)
                         .foregroundStyle(theme.label)
                     Spacer(minLength: 8)

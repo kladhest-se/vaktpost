@@ -90,7 +90,7 @@ struct NetworkClient: Identifiable {
             guard alias.type.isEmpty || alias.type.lowercased().hasPrefix("host")
                     || alias.type.lowercased() == "network" else { continue }
 
-            let label = alias.descr?.isEmpty == false ? alias.descr! : alias.name
+            let label = alias.descr ?? alias.name
             guard !label.isEmpty else { continue }
 
             for address in alias.addresses where isSingleAddress(address) {

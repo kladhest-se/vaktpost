@@ -329,7 +329,7 @@ struct WireGuardDetailView: View {
                         Slab(rail: peer.health) {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
-                                    Text(peer.descr?.isEmpty == false ? peer.descr! : peer.shortKey)
+                                    Text(peer.descr ?? peer.shortKey)
                                         .scaledFont(14, weight: .semibold)
                                         .foregroundStyle(theme.label)
                                     Spacer()
@@ -367,7 +367,7 @@ struct WireGuardDetailView: View {
             .padding(.bottom, 28)
         }
         .background(theme.bg.ignoresSafeArea())
-        .navigationTitle(tunnel.descr?.isEmpty == false ? tunnel.descr! : tunnel.name)
+        .navigationTitle(tunnel.descr ?? tunnel.name)
         .navigationBarTitleDisplayMode(.inline)
     }
 }

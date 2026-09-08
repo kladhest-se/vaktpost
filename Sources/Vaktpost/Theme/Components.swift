@@ -488,8 +488,8 @@ struct RateLegend: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            item("IN", inBps, theme.ok)
-            item("OUT", outBps, theme.info)
+            item("Inbound", inBps, theme.ok)
+            item("Outbound", outBps, theme.info)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Inbound \(inBps.map(Rate.bits) ?? "no data") per second, outbound \(outBps.map(Rate.bits) ?? "no data") per second")

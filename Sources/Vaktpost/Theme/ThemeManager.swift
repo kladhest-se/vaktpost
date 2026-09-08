@@ -116,4 +116,10 @@ final class ThemeManager: ObservableObject {
     var bad: Color { palette.red }
     var info: Color { palette.sky }
     var idle: Color { palette.overlay0 }
+    var teal: Color { palette.teal }
+    var blue: Color { palette.blue }
+    var mauve: Color { palette.mauve }
+    var lavender: Color { palette.lavender }
+    var maroon: Color { palette.maroon }
+    var peach: Color { palette.peach }
 }

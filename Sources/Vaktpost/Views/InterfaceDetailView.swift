@@ -466,7 +466,7 @@ struct RRDChart: View {
                         gridlines(in: geo.size)
                         ForEach(drawable) { one in
                             line(one.bitsPerSecond, in: geo.size,
-                                 colour: one.isInbound ? theme.ok : theme.info)
+                                 colour: color(for: one))
                         }
                     }
                 }
@@ -491,13 +491,57 @@ struct RRDChart: View {
             ForEach(drawable) { one in
                 HStack(spacing: 4) {
                     Circle()
-                        .fill(one.isInbound ? theme.ok : theme.info)
+                        .fill(color(for: one))
                         .frame(width: 6, height: 6)
-                    Text(one.isInbound ? "in" : "out")
+                    Text(label(for: one))
                         .scaledFont(9)
                         .foregroundStyle(theme.labelFaint)
                 }
             }
+        }
+    }
+
+    private func label(for series: RRDSeries) -> String {
+        let name = series.name.lowercased()
+        let direction = series.isInbound ? "in" : "out"
+        if name.contains("pass") && name.contains("block") {
+            return "Mixed \(direction.capitalized)"
+        } else if name.contains("pass") {
+            if name.contains("6") {
+                return "Passed \(direction.capitalized) (v6)"
+            } else if name.contains("total") {
+                return "Passed \(direction.capitalized) (total)"
+            }
+            return "Passed \(direction.capitalized)"
+        } else if name.contains("block") {
+            if name.contains("6") {
+                return "Blocked \(direction.capitalized) (v6)"
+            }
+            return "Blocked \(direction.capitalized)"
+        } else {
+            return direction.capitalized
+        }
+    }
+
+    private func color(for series: RRDSeries) -> Color {
+        let name = series.name.lowercased()
+        let direction = series.isInbound ? "in" : "out"
+        if name.contains("pass") && name.contains("total") && direction == "in" {
+            return theme.mauve
+        } else if name.contains("pass") && name.contains("total") && direction == "out" {
+            return theme.lavender
+        } else if name.contains("pass") {
+            if direction == "in" {
+                return name.contains("6") ? theme.teal : theme.ok
+            }
+            return name.contains("6") ? theme.blue : theme.info
+        } else if name.contains("block") {
+            if direction == "in" {
+                return name.contains("6") ? theme.maroon : theme.warn
+            }
+            return name.contains("6") ? theme.peach : theme.bad
+        } else {
+            return direction == "in" ? theme.ok : theme.info
         }
     }
 

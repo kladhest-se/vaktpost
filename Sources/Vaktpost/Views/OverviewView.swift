@@ -228,6 +228,34 @@ struct OverviewView: View {
                         .scaledFont(14, weight: .medium)
                         .foregroundStyle(theme.label)
                 }
+
+                Divider()
+                    .frame(height: 30)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Updates")
+                        .scaledFont(11, weight: .semibold)
+                        .foregroundStyle(theme.labelFaint)
+                    if let version = store.version, version.updateAvailable == true {
+                        if let latest = version.latest {
+                            Text("v\(latest)")
+                                .scaledFont(14, weight: .medium)
+                                .foregroundStyle(theme.warn)
+                        }
+                    } else if store.packagesNeedingUpdate.isEmpty && (store.version?.updateAvailable != true) {
+                        Text("up to date")
+                            .scaledFont(14, weight: .medium)
+                            .foregroundStyle(theme.ok)
+                    } else if !store.packagesNeedingUpdate.isEmpty {
+                        Text("\(store.packagesNeedingUpdate.count) pkg\(store.packagesNeedingUpdate.count > 1 ? "s" : "")")
+                            .scaledFont(14, weight: .medium)
+                            .foregroundStyle(theme.warn)
+                    } else {
+                        Text(store.packageCheckAge.map { "checked \($0)" } ?? "—")
+                            .scaledFont(14, weight: .medium)
+                            .foregroundStyle(theme.labelMuted)
+                    }
+                }
             }
         }
     }
