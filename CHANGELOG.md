@@ -1156,6 +1156,26 @@ a first install fail: an App Group must be registered on the developer account
 before Xcode will sign against it. The entitlements file is now deliberately
 empty, and the layout check warns if anything reappears in it.
 
+### GENERATE_INFOPLIST_FILE was off
+
+Comparing the two projects once more, this time the target settings rather than
+the catalogue: a project where icon switching works sets `INFOPLIST_FILE` and
+leaves `GENERATE_INFOPLIST_FILE` alone. This one set it to NO.
+
+That setting controls whether the build merges the partial plists other steps
+produce — including the one the asset catalogue compiler writes with
+`CFBundleIcons`, which is exactly what `setAlternateIconName` reads to find the
+alternates. With it off, the alternates can be compiled into the bundle and
+still be invisible to the runtime.
+
+It is removed. The layout check now asserts the hand-written plist keeps the
+keys only it carries, since the opposite failure — a generated plist replacing
+it — is what that setting was there to prevent.
+
+The earlier "Registered: AppIcon-amber, …" reading came from a build where I
+had declared the alternates in the plist by hand. That block came out two
+rounds later, and nothing has confirmed the keys were present since.
+
 ### Every icon set had the same filename
 
 Comparing against a project where switching works, key by key: the build
@@ -3064,6 +3084,26 @@ Removing it takes the App Group with it, which removes the one thing that made
 a first install fail: an App Group must be registered on the developer account
 before Xcode will sign against it. The entitlements file is now deliberately
 empty, and the layout check warns if anything reappears in it.
+
+### GENERATE_INFOPLIST_FILE was off
+
+Comparing the two projects once more, this time the target settings rather than
+the catalogue: a project where icon switching works sets `INFOPLIST_FILE` and
+leaves `GENERATE_INFOPLIST_FILE` alone. This one set it to NO.
+
+That setting controls whether the build merges the partial plists other steps
+produce — including the one the asset catalogue compiler writes with
+`CFBundleIcons`, which is exactly what `setAlternateIconName` reads to find the
+alternates. With it off, the alternates can be compiled into the bundle and
+still be invisible to the runtime.
+
+It is removed. The layout check now asserts the hand-written plist keeps the
+keys only it carries, since the opposite failure — a generated plist replacing
+it — is what that setting was there to prevent.
+
+The earlier "Registered: AppIcon-amber, …" reading came from a build where I
+had declared the alternates in the plist by hand. That block came out two
+rounds later, and nothing has confirmed the keys were present since.
 
 ### Every icon set had the same filename
 

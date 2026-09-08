@@ -40,7 +40,14 @@ targets:
         # exception. The symptom is not a build error: the app builds and then
         # behaves oddly at runtime, which is a long way to travel to find a
         # generated file.
-        GENERATE_INFOPLIST_FILE: NO
+        # GENERATE_INFOPLIST_FILE is deliberately not set.
+        #
+        # Setting it to NO stops the build merging the partial plists other
+        # steps produce — including the one the asset catalogue compiler writes
+        # with `CFBundleIcons`, which is what `setAlternateIconName` reads to
+        # find the alternates. A project where icon switching works sets
+        # INFOPLIST_FILE and leaves this alone, and that is the only difference
+        # left between the two builds.
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Resources/Entitlements/Vaktpost.entitlements
 
