@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct SystemView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     var body: some View {
         ScrollView {

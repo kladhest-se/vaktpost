@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct LogsView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     enum Source: String, CaseIterable, Identifiable {
         case firewall = "Filter", system = "System", auth = "Auth"
@@ -149,7 +149,7 @@ struct LogsView: View {
 }
 
 struct LogRow: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let line: LogLine
     var compact: Bool = false
 
@@ -203,8 +203,8 @@ struct LogRow: View {
 /// The raw line stays at the bottom. Parsing is lenient and the tail varies by
 /// protocol, so anything not recognised is still there to read.
 struct LogDetailView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
     let line: LogLine
 
     var body: some View {

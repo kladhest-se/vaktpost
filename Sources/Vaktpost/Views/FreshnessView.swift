@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Shows the age of the data, never the time another section last succeeded.
 struct FreshnessView: View {
-    @EnvironmentObject private var store: DashboardStore
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
     let sections: [DashboardStore.Section]
     var showNames = false
 
@@ -50,8 +50,8 @@ extension View {
 }
 
 struct DataFreshnessView: View {
-    @EnvironmentObject private var store: DashboardStore
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
 
     var body: some View {
         ScrollView {

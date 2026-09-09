@@ -11,9 +11,9 @@ import SwiftUI
 /// is still one tap away — those are the two things worth doing from here, and
 /// both live up there.
 struct UnreachableView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
-    @EnvironmentObject private var registry: ServerRegistry
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.serverRegistry) private var registry: ServerRegistry
 
     var body: some View {
         ScrollView {

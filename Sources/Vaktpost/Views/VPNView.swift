@@ -8,8 +8,8 @@ import SwiftUI
 /// own page and shows only the technologies this firewall actually runs — a
 /// tab for something you do not use is a tab you learn to skip.
 struct VPNView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     @State private var pane: Pane?
 
@@ -107,7 +107,7 @@ struct VPNView: View {
 /// question it is usually opened to answer — is everything up, how many are on
 /// — was buried inside it. The count is the summary; the detail is a tap away.
 struct OpenVPNCard: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let server: OpenVPNServerStatus
     @ObservedObject var vpnThroughput: ThroughputTracker
 
@@ -146,7 +146,7 @@ struct OpenVPNCard: View {
 
 /// The peers of one OpenVPN instance.
 struct OpenVPNDetailView: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let server: OpenVPNServerStatus
     @ObservedObject var vpnThroughput: ThroughputTracker
 
@@ -214,7 +214,7 @@ struct OpenVPNDetailView: View {
 }
 
 struct IPsecCard: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let sa: IPsecSA
 
     var body: some View {
@@ -241,7 +241,7 @@ struct IPsecCard: View {
 
 /// One WireGuard tunnel, as a row. Peers are on the detail screen.
 struct WireGuardCard: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let tunnel: WireGuardTunnel
     let peers: [WireGuardPeer]
     @ObservedObject var vpnThroughput: ThroughputTracker
@@ -298,7 +298,7 @@ struct WireGuardCard: View {
 
 /// The peers of one WireGuard tunnel.
 struct WireGuardDetailView: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let tunnel: WireGuardTunnel
     let peers: [WireGuardPeer]
 

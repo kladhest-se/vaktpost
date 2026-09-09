@@ -8,8 +8,8 @@ import SwiftUI
 /// side by side so the shapes are directly comparable.
 
 struct InterfaceComparisonView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     @State private var leftKey: String?
     @State private var rightKey: String?

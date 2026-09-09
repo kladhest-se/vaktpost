@@ -11,9 +11,9 @@ import SwiftUI
 /// Nothing here is fetched. It is the state the refresh already produced,
 /// gathered and named.
 struct DiagnosticsView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
-    @EnvironmentObject private var registry: ServerRegistry
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.serverRegistry) private var registry: ServerRegistry
 
     private var _failing: [(section: DashboardStore.Section, message: String)] {
         store.errors

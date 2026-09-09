@@ -3,9 +3,9 @@ import SwiftUI
 /// Five tabs is the practical ceiling before iOS collapses the bar into its own
 /// "More" list, so the less-frequent destinations live behind one here instead.
 struct MoreView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
-    @EnvironmentObject private var registry: ServerRegistry
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.serverRegistry) private var registry: ServerRegistry
 
     var body: some View {
         ScrollView {

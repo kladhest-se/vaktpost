@@ -516,11 +516,11 @@ struct ThroughputChart: View {
     ///
     /// Observing the tracker rather than the store also narrows the
     /// invalidation to the thing being drawn.
-    @ObservedObject var tracker: ThroughputTracker
+    let tracker: ThroughputTracker
     /// Observed for the same reason: the caption reads whether the firewall
     /// reports counters at all, and a stale answer there is the difference
     /// between "waiting" and "will never arrive".
-    @ObservedObject var store: DashboardStore
+    let store: DashboardStore
     let device: String
     let height: CGFloat
     var showExplanatoryText: Bool = false

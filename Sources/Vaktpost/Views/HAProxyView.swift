@@ -16,8 +16,8 @@ import SwiftUI
 /// so the read-only guarantee would become a promise instead of a property.
 /// See SECURITY.md.
 struct HAProxyView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     @State private var query = ""
     @State private var pane: Pane = .backends
@@ -164,7 +164,7 @@ struct HAProxyView: View {
 }
 
 struct BackendCard: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let backend: HAProxyBackend
 
     var body: some View {

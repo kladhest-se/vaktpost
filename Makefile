@@ -8,7 +8,7 @@
 # xcodebuild invocations, which is why `build` must stay the target that
 # compiles without booting anything.
 
-.PHONY: help project open build test run install archive clean oui \
+.PHONY: help project open build lint test run install archive clean oui \
 	destinations devices teams web
 
 PROJECT := Vaktpost.xcodeproj
@@ -16,6 +16,7 @@ SCHEME  := Vaktpost
 
 help:
 	@echo "  make build           does the app compile"
+	@echo "  make lint            SwiftLint checks"
 	@echo "  make test            the app's tests, on a simulator"
 	@echo "  make run             build and launch on a simulator, logs here"
 	@echo "  make install         build signed and install on the device in DEVICE"
@@ -111,6 +112,11 @@ build: project
 		-sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
 		CURRENT_PROJECT_VERSION=$$build -quiet; \
 	echo "  built Vaktpost $$version ($$build)"
+
+# Runs SwiftLint on the source tree. Fails on violation so CI can gate on it.
+lint:
+	@command -v swiftlint >/dev/null || { echo "SwiftLint missing — brew install swiftlint"; exit 1; }
+	@swiftlint lint --strict --config swiftlint.yml
 
 # The slow one. `xcodebuild test` installs the test host on a simulator and
 # runs it, which means booting a device and waiting. Worth doing deliberately;

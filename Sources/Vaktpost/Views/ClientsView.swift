@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct ClientsView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     enum Filter: String, CaseIterable, Identifiable {
         case all = "All", online = "Seen", staticOnly = "Static"
@@ -142,8 +142,8 @@ struct ClientsView: View {
 /// so this struct carried a whole master-detail container and its real card
 /// was left below under another name.
 struct ClientRow: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
     let client: NetworkClient
 
     /// Whether this row is the phone running the app.
@@ -199,8 +199,8 @@ struct ClientRow: View {
 }
 
 struct ClientDetailView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
     let client: NetworkClient
     @State private var action = "All"
     @State private var query = ""

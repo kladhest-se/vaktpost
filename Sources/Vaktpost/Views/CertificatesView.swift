@@ -10,8 +10,8 @@ import SwiftUI
 /// Sorted by expiry rather than by name, because the only question anybody
 /// opens this screen to answer is which one runs out next.
 struct CertificatesView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     @State private var query = ""
     @State private var filter: Filter = .certificates
@@ -111,7 +111,7 @@ struct CertificatesView: View {
 }
 
 struct CertificateRow: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let cert: CertificateInfo
 
     var body: some View {

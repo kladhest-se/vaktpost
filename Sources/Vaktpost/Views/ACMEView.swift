@@ -11,8 +11,8 @@ import SwiftUI
 /// So each entry is joined against the certificate store by name, and shows
 /// both: the automation and what it produced.
 struct ACMEView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     @State private var query = ""
 
@@ -107,7 +107,7 @@ struct ACMEView: View {
 }
 
 struct ACMERow: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let cert: ACMECertificate
     /// The certificate this entry produced, if one can be matched by name.
     let issued: CertificateInfo?

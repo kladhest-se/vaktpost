@@ -1,9 +1,9 @@
 import SwiftUI
 
 struct OverviewView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
-    @EnvironmentObject private var registry: ServerRegistry
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.serverRegistry) private var registry: ServerRegistry
 
     @State private var visibleSections: [OverviewSection] = []
     @State private var draggedSection: OverviewSection?
@@ -532,7 +532,7 @@ struct OverviewView: View {
 }
 
 struct GatewayRow: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let gateway: GatewayStatus
     @ObservedObject var gatewayMetrics: GatewayMetricTracker
 
@@ -580,7 +580,7 @@ private struct SectionView: View {
     @Binding var visibleSections: [OverviewSection]
     let registry: ServerRegistry
     let content: () -> AnyView
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     
     @Binding var draggedSection: OverviewSection?
     @Binding var sectionHeights: [OverviewSection: CGFloat]

@@ -8,8 +8,8 @@ import SwiftUI
 /// address, or remove one they no longer run. Removing a firewall still clears
 /// its credentials, so nothing is lost by dropping the word.
 struct ServerMenu: View {
-    @EnvironmentObject private var registry: ServerRegistry
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.serverRegistry) private var registry: ServerRegistry
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     @State private var managing = false
     @State private var showingAllFirewalls = false
@@ -65,7 +65,7 @@ struct ServerMenu: View {
 
 /// Settings.
 struct SettingsButton: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
 
     var body: some View {
         NavigationLink { SettingsView() } label: {
@@ -99,8 +99,8 @@ extension View {
 }
 
 struct AlertButton: View {
-    @EnvironmentObject private var store: DashboardStore
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
 
     var body: some View {
         NavigationLink { AlertsView() } label: {
@@ -112,29 +112,29 @@ struct AlertButton: View {
 
 @main
 struct VaktpostApp: App {
-    @StateObject private var theme = ThemeManager()
-    @StateObject private var registry: ServerRegistry
-    @StateObject private var store: DashboardStore
+    @State private var theme = ThemeManager()
+    @State private var registry: ServerRegistry
+    @State private var store: DashboardStore
 
     init() {
         let reg = ServerRegistry()
-        _registry = StateObject(wrappedValue: reg)
-        _store = StateObject(wrappedValue: DashboardStore(registry: reg))
+        _registry = State(wrappedValue: reg)
+        _store = State(wrappedValue: DashboardStore(registry: reg))
     }
 
     var body: some Scene {
         WindowGroup {
             RootView()
-                .environmentObject(theme)
-                .environmentObject(registry)
-                .environmentObject(store)
+                .environment(theme)
+                .environment(registry)
+                .environment(store)
         }
     }
 }
 
 struct RootView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.scenePhase) private var scenePhase
 
@@ -244,8 +244,8 @@ struct RootView: View {
 }
 
 private struct DoneButton: View {
-    @EnvironmentObject private var store: DashboardStore
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
     
     var body: some View {
         if store.isOverviewEditing {

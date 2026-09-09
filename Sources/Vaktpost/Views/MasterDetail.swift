@@ -15,7 +15,7 @@ import SwiftUI
 /// is looked up again each time, so the detail follows the data.
 struct MasterDetail<ListContent: View, DetailContent: View>: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
 
     @Binding var selection: String?
     let emptyMessage: String

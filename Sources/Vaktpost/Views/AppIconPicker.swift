@@ -31,7 +31,7 @@ enum AppIcon: String, CaseIterable, Identifiable {
 }
 
 struct AppIconPicker: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
 
     @State private var selected: AppIcon = .current
     @State private var failure: String?

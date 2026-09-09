@@ -1,12 +1,12 @@
 import Foundation
 import SwiftUI
-import Combine
+import Observation
 
 /// Holds every dashboard section independently so one failing endpoint (an
 /// uninstalled package, a privilege the key lacks) degrades that card rather
 /// than the whole screen.
 @MainActor
-final class DashboardStore: ObservableObject {
+final class DashboardStore: Observable {
 
     enum Section: String, CaseIterable {
         case system, version, interfaces, gateways, services, leases, arp, statics
@@ -94,7 +94,7 @@ final class DashboardStore: ObservableObject {
     }
 
     /// Success dates belong to individual sections, including on-demand loads.
-    @Published private(set) var freshness: [Section: SectionFreshness] = [:]
+    private(set) var freshness: [Section: SectionFreshness] = [:]
 
     private func beginFetch(_ sections: [Section]) -> UUID {
         let id = UUID()
@@ -150,8 +150,8 @@ final class DashboardStore: ObservableObject {
     /// spent watching one interface does not flush the half-hour of history
     /// every other screen is drawing from.
     let liveThroughput = ThroughputTracker(capacity: 180)
-    @Published var liveInterfaceKey: String?
-    @Published var liveError: String?
+    var liveInterfaceKey: String?
+    var liveError: String?
     let vpnThroughput = ThroughputTracker(bitsMultiplier: 1)
     let systemMetrics = MetricTracker<String, Double>()
     let gatewayMetrics = GatewayMetricTracker()
@@ -164,81 +164,81 @@ final class DashboardStore: ObservableObject {
         var passed: Int = 0
     }
 
-    @Published private(set) var client: FirewallClient
-    @Published private(set) var activeProfile: ServerProfile?
+    private(set) var client: FirewallClient
+    private(set) var activeProfile: ServerProfile?
 
     // MARK: Data
 
-    @Published var system: SystemStatus?
-    @Published var version: SystemVersion?
-    @Published var states: StateTableSize?
-    @Published var interfaces: [InterfaceStat] = []
-    @Published var gateways: [GatewayStatus] = []
-    @Published var services: [ServiceStatus] = []
-    @Published var leases: [DHCPLease] = []
-    @Published var arp: [ARPEntry] = []
-    @Published var staticMappings: [StaticMapping] = []
-    @Published var hostOverrides: [HostOverride] = []
-    @Published var firewallLog: [LogLine] = []
-    @Published var systemLog: [LogLine] = []
-    @Published var authLog: [LogLine] = []
-    @Published var dhcpLog: [LogLine] = []
-    @Published var openvpnLog: [LogLine] = []
+    var system: SystemStatus?
+    var version: SystemVersion?
+    var states: StateTableSize?
+    var interfaces: [InterfaceStat] = []
+    var gateways: [GatewayStatus] = []
+    var services: [ServiceStatus] = []
+    var leases: [DHCPLease] = []
+    var arp: [ARPEntry] = []
+    var staticMappings: [StaticMapping] = []
+    var hostOverrides: [HostOverride] = []
+    var firewallLog: [LogLine] = []
+    var systemLog: [LogLine] = []
+    var authLog: [LogLine] = []
+    var dhcpLog: [LogLine] = []
+    var openvpnLog: [LogLine] = []
 
 
-    @Published var openvpnServers: [OpenVPNServerStatus] = []
-    @Published var openvpnClients: [OpenVPNServerStatus] = []
-    @Published var ipsecSAs: [IPsecSA] = []
-    @Published var wireguardTunnels: [WireGuardTunnel] = []
-    @Published var wireguardPeers: [WireGuardPeer] = []
+    var openvpnServers: [OpenVPNServerStatus] = []
+    var openvpnClients: [OpenVPNServerStatus] = []
+    var ipsecSAs: [IPsecSA] = []
+    var wireguardTunnels: [WireGuardTunnel] = []
+    var wireguardPeers: [WireGuardPeer] = []
 
-    @Published var rules: [FirewallRule] = []
-    @Published var aliases: [FirewallAliasEntry] = []
-    @Published var portForwards: [PortForward] = []
+    var rules: [FirewallRule] = []
+    var aliases: [FirewallAliasEntry] = []
+    var portForwards: [PortForward] = []
 
-    @Published var carp: CARPStatus?
-    @Published var configHistory: [ConfigRevision] = []
-    @Published var certificates: [CertificateInfo] = []
-    @Published var packages: [PackageInfo] = []
-    @Published var notices: [SystemNotice] = []
-    @Published var filesystems: [Filesystem] = []
-    @Published var dyndns: [DyndnsEntry] = []
+    var carp: CARPStatus?
+    var configHistory: [ConfigRevision] = []
+    var certificates: [CertificateInfo] = []
+    var packages: [PackageInfo] = []
+    var notices: [SystemNotice] = []
+    var filesystems: [Filesystem] = []
+    var dyndns: [DyndnsEntry] = []
 
     // HAProxy, loaded when its screen opens rather than on the timer: a
     // firewall running it has many backends, and none of it changes minute to
     // minute.
-    @Published var haproxyFrontends: [HAProxyFrontend] = []
-    @Published var haproxyBackends: [HAProxyBackend] = []
-    @Published var haproxyStatsAccessors: [String] = []
-    @Published var haproxyInstalled = false
+    var haproxyFrontends: [HAProxyFrontend] = []
+    var haproxyBackends: [HAProxyBackend] = []
+    var haproxyStatsAccessors: [String] = []
+    var haproxyInstalled = false
     private var hasLoadedHAProxy = false
 
-    @Published var acmeCertificates: [ACMECertificate] = []
-    @Published var acmeAccounts: [ACMEAccount] = []
-    @Published var acmeInstalled = false
+    var acmeCertificates: [ACMECertificate] = []
+    var acmeAccounts: [ACMEAccount] = []
+    var acmeInstalled = false
     private var hasLoadedACME = false
 
     /// Loaded on demand rather than on the refresh timer — see `loadTables()`.
-    @Published var tables: [FirewallTable] = []
-    @Published var blockedHosts: [FirewallTable] = []
-    @Published var isLoadingTables = false
+    var tables: [FirewallTable] = []
+    var blockedHosts: [FirewallTable] = []
+    var isLoadingTables = false
 
     /// Rules, aliases and port forwards are loaded lazily when the user
     /// first navigates to the Firewall screen, then refreshed on the timer.
     /// The payloads are large and most users never look, so pulling them
     /// every thirty seconds is wasted bandwidth.
-    @Published var isLoadingFirewallObjects = false
+    var isLoadingFirewallObjects = false
     private var hasLoadedFirewallObjects = false
 
-    @Published var alerts: [VaktpostAlert] = []
+    var alerts: [VaktpostAlert] = []
 
     // MARK: Status
 
-    @Published var errors: [Section: String] = [:]
-    @Published var isRefreshing = false
-    @Published var lastRefresh: Date?
+    var errors: [Section: String] = [:]
+    var isRefreshing = false
+    var lastRefresh: Date?
     /// Fatal connection error — shown full-screen rather than per card.
-    @Published var connectionError: String?
+    var connectionError: String?
 
     /// Whether the firewall is not answering.
     ///
@@ -258,13 +258,13 @@ final class DashboardStore: ObservableObject {
     /// The theme the person chose, kept so a relaunch restores it.
     var themeName: String = "auto"
 
-    @Published var isOverviewEditing = false
+    var isOverviewEditing = false
 
     func toggleOverviewEditing() {
         isOverviewEditing.toggle()
     }
 
-    private var timer: Task<Void, Never>?
+    private var refreshScheduler: RefreshScheduler?
     /// Endpoints backed by optional packages are retried rarely once they 404,
     /// so a firewall without WireGuard doesn't pay for four dead calls a minute.
     /// Sections that have stopped being retried, for the diagnostics screen.
@@ -312,9 +312,6 @@ final class DashboardStore: ObservableObject {
         let profile = registry.active ?? ServerProfile()
         self.activeProfile = registry.active
         self.client = Self.makeClient(profile: profile, registry: registry, generation: generation)
-        historyObservation = rrdLoader.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
     }
 
     var isConfigured: Bool { activeProfile?.isUsable ?? false }
@@ -535,7 +532,7 @@ final class DashboardStore: ObservableObject {
         func runBatch(
             _ group: BatchGroup,
             sections: [Section],
-            decode: (FirewallClient.Batch) -> Bool
+            decode: @MainActor (FirewallClient.Batch) -> Bool
         ) async -> Bool {
             // Skipped only when every section in it has been abandoned. One
             // bad section should not stop the other four from loading.
@@ -618,34 +615,101 @@ final class DashboardStore: ObservableObject {
         }
         guard isCurrent(binding) else { return }
 
-        // Clients, in one call.
+        // Fetch clients, logs, VPN, and system batches in parallel.
         //
-        // Aliases are in here because they name clients, so they are needed on
-        // every refresh — not only when somebody opens the Firewall tab. Rules
-        // and port forwards stay on demand: 98 rules is a large payload for a
-        // screen most people never look at.
-        _ = await runBatch(
-            .clients,
-            sections: [.leases, .arp, .statics, .hostOverrides, .aliases]
-        ) { batch in
-            self.leases = batch.rows("dhcp_leases").map(DHCPLease.init)
-            self.arp = batch.rows("arp_table").map(ARPEntry.init)
-            self.staticMappings = batch.rows("static_mappings").map(StaticMapping.init)
-            self.hostOverrides = batch.rows("host_overrides").map(HostOverride.init)
-            self.aliases = batch.rows("firewall_aliases").map(FirewallAliasEntry.init)
-            return true
-        }
-        guard isCurrent(binding) else { return }
-
-        // Logs — save previous counts before refreshing.
+        // These four batches are independent of each other. Running them
+        // concurrently cuts the round-trip latency from ~4× to ~1× (plus the
+        // core batch time), since pfSense serialises XML-RPC calls.
+        var clientsLoaded = false
+        var vpnLoaded = false
+        var systemLoaded = false
+        
+        // Capture previous firewall counts on the main actor before the task group.
         let savedCounts = FirewallCounts(
             blocked: self.blockedRecently,
             rejected: self.rejectedRecently,
             passed: self.firewallLog.count - self.blockedRecently - self.rejectedRecently
         )
-        await run(.firewallLog)
+
+        await withTaskGroup(of: (String, Bool).self) { group in
+            // Clients
+            group.addTask {
+                let success = await runBatch(
+                    .clients,
+                    sections: [.leases, .arp, .statics, .hostOverrides, .aliases]
+                ) { batch in
+                    self.leases = batch.rows("dhcp_leases").map(DHCPLease.init)
+                    self.arp = batch.rows("arp_table").map(ARPEntry.init)
+                    self.staticMappings = batch.rows("static_mappings").map(StaticMapping.init)
+                    self.hostOverrides = batch.rows("host_overrides").map(HostOverride.init)
+                    self.aliases = batch.rows("firewall_aliases").map(FirewallAliasEntry.init)
+                    return true
+                }
+                return ("clients", success)
+            }
+
+            // Firewall log
+            group.addTask {
+                let success = await run(.firewallLog)
+                return ("firewallLog", success)
+            }
+
+            // VPN
+            group.addTask {
+                let success = await runBatch(
+                    .vpn,
+                    sections: [.openvpn, .openvpnClients, .ipsec, .wireguard]
+                ) { batch in
+                    self.openvpnServers = batch.rows("openvpn_servers").map(OpenVPNServerStatus.init)
+                    self.openvpnClients = batch.rows("openvpn_clients").map(OpenVPNServerStatus.init)
+                    self.ipsecSAs = batch.rows("ipsec_sas").map(IPsecSA.init)
+                    let wg = batch.object("wireguard")
+                    self.wireguardTunnels = wg.list("tunnels").compactMap { JSONDict($0) }
+                        .map(WireGuardTunnel.init)
+                    self.wireguardPeers = wg.list("peers").compactMap { JSONDict($0) }
+                        .map(WireGuardPeer.init)
+                    return true
+                }
+                return ("vpn", success)
+            }
+
+            // System detail
+            group.addTask {
+                let success = await runBatch(
+                    .system,
+                    sections: [.carp, .certificates, .packages, .notices, .dyndns]
+                ) { batch in
+                    self.carp = CARPStatus(batch.object("carp"))
+                    self.certificates = batch.rows("certificates").map { dict in
+                        CertificateInfo(dict, isCA: dict.bool("is_ca") ?? false)
+                    }
+                    self.packages = batch.rows("packages").map(PackageInfo.init)
+                    self.notices = batch.rows("notices").map(SystemNotice.init)
+                    self.dyndns = batch.rows("dyndns").map(DyndnsEntry.init)
+                    return true
+                }
+                return ("system", success)
+            }
+
+            for await (label, success) in group {
+                guard isCurrent(binding) else { return }
+                switch label {
+                case "clients":
+                    clientsLoaded = success
+                case "vpn":
+                    vpnLoaded = success
+                case "system":
+                    systemLoaded = success
+                default:
+                    break
+                }
+            }
+        }
         guard isCurrent(binding) else { return }
+        
+        // Restore previous firewall counts after the firewall log was fetched.
         prevFirewallCounts = savedCounts
+
         // Only the filter log is fetched on the timer, because the Overview
         // shows its counts. The other four are loaded when the Logs tab is
         // opened.
@@ -654,24 +718,6 @@ final class DashboardStore: ObservableObject {
         // serialises XML-RPC — so four of them added seconds to every refresh
         // for a screen that is usually not on the display.
         await loadSecondaryLogsIfNeeded()
-        guard isCurrent(binding) else { return }
-
-
-        // VPN — all optional; a firewall may have none of these configured.
-        _ = await runBatch(
-            .vpn,
-            sections: [.openvpn, .openvpnClients, .ipsec, .wireguard]
-        ) { batch in
-            self.openvpnServers = batch.rows("openvpn_servers").map(OpenVPNServerStatus.init)
-            self.openvpnClients = batch.rows("openvpn_clients").map(OpenVPNServerStatus.init)
-            self.ipsecSAs = batch.rows("ipsec_sas").map(IPsecSA.init)
-            let wg = batch.object("wireguard")
-            self.wireguardTunnels = wg.list("tunnels").compactMap { JSONDict($0) }
-                .map(WireGuardTunnel.init)
-            self.wireguardPeers = wg.list("peers").compactMap { JSONDict($0) }
-                .map(WireGuardPeer.init)
-            return true
-        }
         guard isCurrent(binding) else { return }
 
         // Track VPN throughput from cumulative byte counters.
@@ -693,22 +739,6 @@ final class DashboardStore: ObservableObject {
             if let rx = peer.bytesReceived, let tx = peer.bytesSent {
                 vpnThroughput.ingest(key: "wg:\(peer.publicKey)", inBytes: rx, outBytes: tx)
             }
-        }
-        guard isCurrent(binding) else { return }
-
-        // System detail
-        _ = await runBatch(
-            .system,
-            sections: [.carp, .certificates, .packages, .notices, .dyndns]
-        ) { batch in
-            self.carp = CARPStatus(batch.object("carp"))
-            self.certificates = batch.rows("certificates").map { dict in
-                CertificateInfo(dict, isCA: dict.bool("is_ca") ?? false)
-            }
-            self.packages = batch.rows("packages").map(PackageInfo.init)
-            self.notices = batch.rows("notices").map(SystemNotice.init)
-            self.dyndns = batch.rows("dyndns").map(DyndnsEntry.init)
-            return true
         }
         guard isCurrent(binding) else { return }
 
@@ -884,18 +914,32 @@ final class DashboardStore: ObservableObject {
         }
     }
 
-    private func assign<T>(_ binding: UUID, _ sections: [Section], fetcher: @escaping () async throws -> T, assign: (T) -> Void) async throws {
+    private func assign<T>(_ binding: UUID, _ sections: [Section], fetcher: @escaping () async throws -> T, assign: @escaping (T) -> Void) async throws {
         let value: T
         do {
-            value = try await Task.detached { [self] in
-                try await checked(binding, sections: sections) { try await fetcher() }
+            value = try await Task.detached { [checkedBinding = binding, checkedSections = sections] in
+                guard !Task.isCancelled else { throw RPCError.cancelled }
+                var fresh = SectionFreshness()
+                fresh.begin(checkedBinding, at: Date())
+                do {
+                    let result = try await fetcher()
+                    guard !Task.isCancelled else { throw RPCError.cancelled }
+                    fresh.succeed(checkedBinding, at: Date())
+                    return result
+                } catch {
+                    let cancelled = error is CancellationError || (error as? RPCError) == .cancelled
+                    fresh.fail(checkedBinding, message: cancelled ? nil : error.localizedDescription)
+                    throw error
+                }
             }.value
         } catch {
             guard isCurrent(binding) else { throw RPCError.cancelled }
             throw error
         }
-        guard isCurrent(binding) else { throw RPCError.cancelled }
-        assign(value)
+        await MainActor.run {
+            guard isCurrent(binding) else { return }
+            assign(value)
+        }
     }
 
     /// Cap log arrays to prevent unbounded memory growth on busy firewalls.
@@ -1123,15 +1167,15 @@ final class DashboardStore: ObservableObject {
 
     // MARK: Package updates
 
-    @Published var isCheckingPackages = false
-    @Published var packageCheckResult: String?
+    var isCheckingPackages = false
+    var packageCheckResult: String?
 
     /// When the repository was last asked.
     ///
     /// Persisted so a relaunch does not repeat the check, and so the screen can
     /// say how old the answer is — "no updates" from a week ago is not the same
     /// claim as "no updates" from this morning.
-    @Published private(set) var lastPackageCheck: Date? {
+    private(set) var lastPackageCheck: Date? {
         didSet {
             defaults.set(lastPackageCheck?.timeIntervalSince1970 ?? 0,
                                       forKey: "packages.lastCheck")
@@ -1205,11 +1249,10 @@ final class DashboardStore: ObservableObject {
     // MARK: RRD history
 
     let rrdLoader = HistoryLoader<PHPSnippet.RRDWindow, RRDHistory>(lifetime: 300)
-    private var historyObservation: AnyCancellable?
     var rrdHistory: RRDHistory? { rrdLoader.value }
     var isLoadingRRD: Bool { rrdLoader.isLoading }
     var rrdWindow: PHPSnippet.RRDWindow { rrdLoader.key ?? .week }
-    @Published var widenedFromEmpty = false
+    var widenedFromEmpty = false
 
     /// Cache entries expire after five minutes. Changing range cancels the
     /// old request and clears its chart before the new range is displayed.
@@ -1265,7 +1308,7 @@ final class DashboardStore: ObservableObject {
     /// wrong for somebody who knows their board runs at 80 and wants to hear
     /// about 82. Whoever owns the firewall knows what normal looks like on it,
     /// so they get to say.
-    @Published var temperatureWarnOverride: Double? {
+    var temperatureWarnOverride: Double? {
         didSet {
             UserDefaults.standard.set(temperatureWarnOverride ?? 0,
                                       forKey: UDKey.temperatureWarn.rawValue)
@@ -1274,8 +1317,8 @@ final class DashboardStore: ObservableObject {
 
     // MARK: Firmware
 
-    @Published var isCheckingFirmware = false
-    @Published var firmwareCheckResult: String?
+    var isCheckingFirmware = false
+    var firmwareCheckResult: String?
 
     /// Re-reads the firmware version comparison.
     ///
@@ -1313,7 +1356,7 @@ final class DashboardStore: ObservableObject {
     /// watching, and which three is a matter of what you run, not something
     /// the app can work out. Stored by series key so a VLAN and its parent
     /// lagg stay distinct.
-    @Published var favouriteInterfaces: Set<String> = [] {
+    var favouriteInterfaces: Set<String> = [] {
         didSet {
             UserDefaults.standard.set(Array(favouriteInterfaces), forKey: UDKey.favouriteInterfaces.rawValue)
         }
@@ -1368,7 +1411,7 @@ final class DashboardStore: ObservableObject {
     /// filters what is shown rather than what is measured — a silenced
     /// category still appears on its own screen, it just stops driving the
     /// badge and the Overview banner.
-    @Published var mutedAlertCategories: Set<String> = [] {
+    var mutedAlertCategories: Set<String> = [] {
         didSet {
             // A new key, deliberately.
             //
@@ -1382,7 +1425,7 @@ final class DashboardStore: ObservableObject {
         }
     }
 
-    @Published var alertsSilenced: Bool = false {
+    var alertsSilenced: Bool = false {
         didSet { UserDefaults.standard.set(alertsSilenced, forKey: UDKey.alertsSilenced.rawValue) }
     }
 
@@ -1395,7 +1438,7 @@ final class DashboardStore: ObservableObject {
     /// This is separate from silencing a whole category: silencing says "never
     /// tell me about certificates", acknowledging says "I have seen this one".
     /// Most things people want to stop seeing are the second kind.
-    @Published var acknowledgedAlerts: Set<String> = [] {
+    var acknowledgedAlerts: Set<String> = [] {
         didSet {
             UserDefaults.standard.set(Array(acknowledgedAlerts), forKey: UDKey.acknowledgedAlerts.rawValue)
         }
@@ -1608,25 +1651,20 @@ final class DashboardStore: ObservableObject {
         filesystems.filter { $0.health == .warn || $0.health == .bad }
     }
 
-    // MARK: Auto refresh
+     // MARK: Auto refresh
 
     func startAutoRefresh() {
-        timer?.cancel()
         let interval = max(10, profile.refreshSeconds)
-        timer = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: UInt64(interval) * 1_000_000_000)
-                guard !Task.isCancelled else { return }
-                await self?.refresh()
-            }
+        refreshScheduler = RefreshScheduler(interval: TimeInterval(interval))
+        refreshScheduler?.start { [weak self] in
+            await self?.refresh()
         }
     }
 
     func stopAutoRefresh() {
-        timer?.cancel()
-        timer = nil
+        refreshScheduler?.stop(reason: .manual)
+        refreshScheduler = nil
     }
-
 
     // MARK: Derived
 

@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct IncidentTimelineView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     enum Scope: String, CaseIterable, Identifiable {
         case incidents = "Incidents"
@@ -184,7 +184,7 @@ struct IncidentTimelineView: View {
 }
 
 private struct IncidentTimelineRow: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let event: IncidentEvent
 
     private var health: Health {

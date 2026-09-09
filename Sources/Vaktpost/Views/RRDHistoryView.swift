@@ -7,8 +7,8 @@ import SwiftUI
 /// firewall keeps.
 
 struct RRDHistoryView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     private var interfaces: [RRDSeries] {
         guard let history = store.rrdHistory, history.available else { return [] }

@@ -7,8 +7,8 @@ import SwiftUI
 /// aliases contain. This is where you come to look one up, which is a
 /// different task from reading a rule.
 struct AliasesView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     @State private var query = ""
 
@@ -62,7 +62,7 @@ struct AliasesView: View {
 }
 
 struct AliasRow: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let alias: FirewallAliasEntry
     @State private var expanded = false
 

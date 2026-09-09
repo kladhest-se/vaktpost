@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct NetworkView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     @State private var query = ""
 
@@ -82,8 +82,8 @@ struct NetworkView: View {
 /// closing brace and took this and `ARPRow` with it. The ARP row is gone on
 /// purpose — Clients covers that table — but this was collateral.
 struct InterfaceCard: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
     let iface: InterfaceStat
 
     var body: some View {

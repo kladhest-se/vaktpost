@@ -11,9 +11,9 @@ import SwiftUI
 /// What a row needs to say is the name, the address, and whether it can
 /// connect. Everything else belongs to editing it, which is one tap away.
 struct ServersView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
-    @EnvironmentObject private var registry: ServerRegistry
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.serverRegistry) private var registry: ServerRegistry
 
     @State private var editing: ServerProfile?
     @State private var addingNew = false
@@ -95,7 +95,7 @@ struct ServersView: View {
 /// saying "active" beside a name is a label for something already obvious from
 /// the tick, and it competed with the warnings that matter.
 struct ServerRow: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
 
     let server: ServerProfile
     let isActive: Bool
@@ -154,9 +154,9 @@ struct ServerRow: View {
 // MARK: - Edit
 
 struct ServerEditView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
-    @EnvironmentObject private var registry: ServerRegistry
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.serverRegistry) private var registry: ServerRegistry
     @Environment(\.dismiss) private var dismiss
     @State private var offerPinning = false
     @State private var pendingFingerprint: String?
@@ -460,7 +460,7 @@ struct ServerEditView: View {
 // MARK: - Shared field
 
 struct LabelledField: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let title: String
     @Binding var text: String
     var placeholder: String

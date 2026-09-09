@@ -11,8 +11,8 @@ import SwiftUI
 /// nothing to do — the only evidence is the cached address drifting away from
 /// the address the interface actually has, which is the comparison this makes.
 struct DyndnsView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     @State private var query = ""
     @State private var filter: Filter = .all
@@ -104,8 +104,8 @@ struct DyndnsView: View {
 }
 
 struct DyndnsRow: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
     let entry: DyndnsEntry
     let isStale: Bool
 

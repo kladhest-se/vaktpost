@@ -1,0 +1,108 @@
+# SwiftLint configuration for VaktPost
+
+# Paths to exclude
+excluded:
+  - DerivedData
+  - .build
+  - Pods
+
+# Rule configuration
+opt_in_rules:
+  - closed_hk_string_literal
+  - collection_alignment
+  - conditional_returns_on_newline
+  - contains_over_filter_is_empty
+  - contains_over_filter_count
+  - contains_over_first_not_nil
+  - contains_over_range_nil_comparison
+  - convenience_type
+  - deprecated_init
+  - direct_return
+  - dicationary_init
+  - duplicate_enum_cases
+  - dynamic_inline
+  - empty_collection_literal
+  - empty_count
+  - empty_string
+  - empty_xctest_method
+  - enum_case_associated_values_count
+  - fatal_error_message
+  - first_where
+  - flatmap_over_map_reduce
+  - for_where
+  - identical_operands
+  - implicit_return
+  - joined_default_parameter
+  - last_where
+  - legacy_random
+  - modifier_order
+  - number_of_parameters
+  - object_literal
+  - operator_usage_whitespace
+  - overridden_super_call
+  - private_action
+  - private_outlet
+  - prohibited_super_call
+  - reduce_into
+  - sorted_first_last
+  - superfluous_else
+  - switch_on_minimum_case_count
+  - test_case_access
+  - toggle_bool
+  - trailing_closure
+  - unneeded_parentheses_in_closure_argument
+  - vertical_parameter_alignment_on_call
+  - vertical_whitespace_closing_braces
+  - yoda_condition
+
+# Rules to enable
+disabled_rules:
+  - trailing_whitespace
+
+included:
+
+# Indentation
+indentation: 4
+
+# Line length
+line_length:
+  warning: 120
+  error: 150
+
+# Type body length
+type_body_length:
+  warning: 300
+  error: 500
+
+# File length
+file_length:
+  warning: 1000
+  error: 1500
+
+# Function body length
+function_body_length:
+  warning: 100
+  error: 200
+
+# Type body length
+type_body_length:
+  warning: 300
+  error: 500
+
+# Number of parameters
+function_parameter_count:
+  warning: 6
+  error: 8
+
+# Nesting
+nesting:
+  type_level: 3
+  function_level: 2
+
+# Cyclomatic complexity
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+
+# Report formats
+reporter: "xcode"

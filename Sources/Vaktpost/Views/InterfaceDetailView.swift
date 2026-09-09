@@ -13,8 +13,8 @@ import SwiftUI
 /// open. That trade is worth naming rather than hiding: this is the one place
 /// in the app that deliberately costs the firewall something.
 struct InterfaceDetailView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     let iface: InterfaceStat
     @State private var loadTask: Task<Void, Never>?
@@ -346,7 +346,7 @@ struct InterfaceDetailView: View {
 
 /// A larger throughput chart with both directions and a filled area.
 struct LiveThroughputChart: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let points: [ThroughputTracker.Point]
 
     /// Scaled to the peak of either direction so the two are comparable — an
@@ -409,7 +409,7 @@ struct LiveThroughputChart: View {
 /// comparable. Drawn from pfSense's own five-minute averages rather than the
 /// app's samples, which is the only way to see beyond the current session.
 struct RRDChart: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let series: [RRDSeries]
     /// What to say when there is nothing to draw. Supplied, because the chart
     /// cannot know what other spans found.

@@ -1,9 +1,9 @@
 import SwiftUI
 
 struct AllFirewallsView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var registry: ServerRegistry
-    @EnvironmentObject private var dashboard: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.serverRegistry) private var registry: ServerRegistry
+    @Environment(\.dashboardStore) private var dashboard: DashboardStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var fleet = FleetStore()

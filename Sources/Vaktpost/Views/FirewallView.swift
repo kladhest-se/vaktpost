@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct FirewallView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     enum Pane: String, CaseIterable, Identifiable {
         case rules = "Rules", nat = "NAT"
@@ -358,8 +358,8 @@ struct FirewallView: View {
 /// kind marker went too — with the names gone it was labelling an address as
 /// "alias", which describes where the value came from rather than what it is.
 struct RuleRow: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
     let rule: FirewallRule
 
     var body: some View {
@@ -429,8 +429,8 @@ struct RuleRow: View {
 
 /// One rule, in full.
 struct RuleDetailView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
     let rule: FirewallRule
 
     /// Every address or port behind a value, one per line.
@@ -531,8 +531,8 @@ struct RuleDetailView: View {
 
 /// One port forward, in full.
 struct PortForwardDetailView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
     let forward: PortForward
 
     @ViewBuilder

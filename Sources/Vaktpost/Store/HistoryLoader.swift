@@ -1,23 +1,22 @@
 import Foundation
-import Combine
+import Observation
 
 /// Each selection owns its result and loading state. An obsolete request may
 /// finish even after cancellation, but cannot replace the selected range.
 @MainActor
-final class HistoryLoader<Key: Hashable, Value>: ObservableObject {
+final class HistoryLoader<Key: Hashable, Value>: Observable {
     struct Entry {
         let value: Value
         let fetchedAt: Date
     }
-    @Published private(set) var key: Key?
-    @Published private(set) var value: Value?
-    @Published private(set) var fetchedAt: Date?
-    @Published private(set) var isLoading = false
-    @Published private(set) var error: String?
+    var key: Key?
+    var value: Value?
+    var fetchedAt: Date?
+    var isLoading = false
+    var error: String?
     private(set) var cache: [Key: Entry] = [:]
     private var failedKeys: Set<Key> = []
     private var requestID = UUID()
-    private var task: Task<Value, Error>?
     private let lifetime: TimeInterval
     private let now: () -> Date
 
@@ -83,4 +82,6 @@ final class HistoryLoader<Key: Hashable, Value>: ObservableObject {
         isLoading = false
         error = nil
     }
+
+    private var task: Task<Value, Error>?
 }

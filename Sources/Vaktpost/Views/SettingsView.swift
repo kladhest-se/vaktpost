@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @EnvironmentObject private var theme: ThemeManager
-    @EnvironmentObject private var store: DashboardStore
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
 
     var body: some View {
         ScrollView {
@@ -227,7 +227,7 @@ struct SettingsView: View {
 /// One card in the theme grid. Auto renders in whichever theme is currently
 /// resolved, so the card previews what you would actually get.
 struct ThemeSwatch: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let selection: ThemeManager.Selection
     let resolved: Theme
     let isSelected: Bool

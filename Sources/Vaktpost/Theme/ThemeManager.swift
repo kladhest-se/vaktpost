@@ -1,5 +1,4 @@
 import SwiftUI
-
 /// The active theme and accent, persisted to UserDefaults.
 ///
 /// Five choices, one list: Auto plus the four themes. There is no separate
@@ -14,7 +13,7 @@ import SwiftUI
 /// Note: `@AppStorage` is deliberately not used. It is a `DynamicProperty`
 /// intended for views; inside an `ObservableObject` it does not fire
 /// `objectWillChange`, so the tab tree would not repaint when the theme
-/// changed. `@Published` with a `didSet` write-through does.
+/// changed. `@Observable` with a `didSet` write-through does.
 @MainActor
 final class ThemeManager: ObservableObject {
 
@@ -56,15 +55,15 @@ final class ThemeManager: ObservableObject {
         static let legacyFixed = "theme.fixed"
     }
 
-    @Published var selection: Selection {
+    var selection: Selection {
         didSet { UserDefaults.standard.set(selection.storageValue, forKey: Key.selection) }
     }
-    @Published var accent: Accent {
+    var accent: Accent {
         didSet { UserDefaults.standard.set(accent.rawValue, forKey: Key.accent) }
     }
 
     /// Pushed in by the root view so Auto can resolve.
-    @Published var systemScheme: ColorScheme = .dark
+    var systemScheme: ColorScheme = .dark
 
     init() {
         let defaults = UserDefaults.standard
