@@ -53,6 +53,7 @@ struct DyndnsView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    FreshnessView(sections: [.dyndns], showNames: true)
                     if let err = store.errors[.dyndns] {
                         Notice(symbol: "exclamationmark.triangle",
                                title: "Dynamic DNS unavailable", detail: err, health: .warn)

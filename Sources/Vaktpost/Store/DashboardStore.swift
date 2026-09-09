@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import Combine
 
 /// Holds every dashboard section independently so one failing endpoint (an
 /// uninstalled package, a privilege the key lacks) degrades that card rather
@@ -12,7 +13,7 @@ final class DashboardStore: ObservableObject {
         case firewallLog, systemLog, authLog, dhcpLog, openvpnLog, states
         case openvpn, openvpnClients, ipsec, wireguard
         case firewall, aliases, portForwards
-        case carp, configHistory, certificates, packages, tables
+        case carp, configHistory, certificates, packages, packageUpdates, tables
         case notices, filesystems, dyndns, hostOverrides, haproxy, acme, rrd
 
         var displayName: String {
@@ -42,6 +43,7 @@ final class DashboardStore: ObservableObject {
             case .configHistory: return "Config history"
             case .certificates: return "Certificates"
             case .packages: return "Packages"
+            case .packageUpdates: return "Package update check"
             case .tables: return "Blocked hosts"
             case .notices: return "System notices"
             case .filesystems: return "Filesystems"
@@ -80,17 +82,37 @@ final class DashboardStore: ObservableObject {
         generation.id == binding && !Task.isCancelled
     }
 
-    /// Check on both sides of every suspension, before returning a value that
-    /// the caller can assign to published state.
-    func checked<Value>(_ binding: UUID,
-                                _ operation: () async throws -> Value) async throws -> Value {
+    /// Success dates belong to individual sections, including on-demand loads.
+    @Published private(set) var freshness: [Section: SectionFreshness] = [:]
+
+    @discardableResult
+    private func beginFetch(_ sections: [Section]) -> UUID {
+        let id = UUID()
+        for section in sections { freshness[section, default: SectionFreshness()].begin(id, at: Date()) }
+        return id
+    }
+
+    /// Reject obsolete bindings and record each attempted section independently.
+    func checked<Value>(_ binding: UUID, sections: [Section] = [],
+                        _ operation: () async throws -> Value) async throws -> Value {
         guard isCurrent(binding) else { throw RPCError.cancelled }
+        let request = beginFetch(sections)
+        defer {
+            if bindingID == binding {
+                for section in sections { freshness[section]?.fail(request, message: nil) }
+            }
+        }
         do {
             let value = try await operation()
             guard isCurrent(binding) else { throw RPCError.cancelled }
+            for section in sections { freshness[section]?.succeed(request, at: Date()) }
             return value
         } catch {
             guard isCurrent(binding) else { throw RPCError.cancelled }
+            let cancelled = error is CancellationError || (error as? RPCError) == .cancelled
+            for section in sections {
+                freshness[section]?.fail(request, message: cancelled ? nil : error.localizedDescription)
+            }
             throw error
         }
     }
@@ -283,6 +305,9 @@ final class DashboardStore: ObservableObject {
         let profile = registry.active ?? ServerProfile()
         self.activeProfile = registry.active
         self.client = Self.makeClient(profile: profile, registry: registry, generation: generation)
+        historyObservation = rrdLoader.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send()
+        }
     }
 
     var isConfigured: Bool { activeProfile?.isUsable ?? false }
@@ -364,6 +389,7 @@ final class DashboardStore: ObservableObject {
 
     private func clearData() {
         Self.resetData(self)
+        freshness.removeAll()
         firewallLogIndex.removeAll()
         blockedHosts = []
         haproxyStatsAccessors = []
@@ -501,10 +527,10 @@ final class DashboardStore: ObservableObject {
             do {
                 let batch: FirewallClient.Batch
                 switch group {
-                case .core: batch = try await checked(binding) { try await client.batchCore() }
-                case .clients: batch = try await checked(binding) { try await client.batchClients() }
-                case .vpn: batch = try await checked(binding) { try await client.batchVPN() }
-                case .system: batch = try await checked(binding) { try await client.batchSystem() }
+                case .core: batch = try await checked(binding, sections: sections) { try await client.batchCore() }
+                case .clients: batch = try await checked(binding, sections: sections) { try await client.batchClients() }
+                case .vpn: batch = try await checked(binding, sections: sections) { try await client.batchVPN() }
+                case .system: batch = try await checked(binding, sections: sections) { try await client.batchSystem() }
                 }
                 guard isCurrent(binding) else { return false }
                 let result = decode(batch)
@@ -582,12 +608,12 @@ final class DashboardStore: ObservableObject {
         }
         guard isCurrent(binding) else { return }
 
-        deriveCPUUsage()
+        if succeededSections.contains(.system) { deriveCPUUsage() }
         seedFavouritesIfNeeded()
-        if let current = states?.current {
+        if succeededSections.contains(.states), let current = states?.current {
             stateHistory.ingest(current: current)
         }
-        for gw in gateways {
+        for gw in gateways where succeededSections.contains(.gateways) {
             gatewayMetrics.ingest(
                 key: gw.name,
                 delayMS: gw.delayMS,
@@ -596,7 +622,7 @@ final class DashboardStore: ObservableObject {
         }
         // Only sample when this cycle actually fetched counters.
         if interfacesLoaded { throughput.ingest(interfaces) }
-        if let sys = system {
+        if succeededSections.contains(.system), let sys = system {
             if let cpu = sys.cpuUsage { systemMetrics.ingest(key: "cpu", value: cpu) }
             if let mem = sys.memUsage { systemMetrics.ingest(key: "mem", value: mem) }
             if let disk = sys.diskUsage { systemMetrics.ingest(key: "disk", value: disk) }
@@ -712,7 +738,8 @@ final class DashboardStore: ObservableObject {
         }
         guard isCurrent(binding) else { return }
 
-        errors = freshErrors
+        for section in succeededSections { errors[section] = nil }
+        for (section, message) in freshErrors { errors[section] = message }
 
         // A fatal error only counts when nothing at all got through.
         //
@@ -744,7 +771,7 @@ final class DashboardStore: ObservableObject {
         isLoadingTables = true
         defer { if bindingID == binding { isLoadingTables = false } }
         do {
-            let fetched = try await checked(binding, { try await client.pfTables() })
+            let fetched = try await checked(binding, sections: [.tables], { try await client.pfTables() })
             guard isCurrent(binding) else { throw RPCError.cancelled }
             if let fetched {
                 tables = fetched
@@ -796,79 +823,79 @@ final class DashboardStore: ObservableObject {
         let client = client
         switch section {
         case .system:
-            let value = try await checked(binding) { try await client.systemStatus() }
+            let value = try await checked(binding, sections: [section]) { try await client.systemStatus() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             system = value
         case .version:
-            let value = try await checked(binding) { try await client.systemVersion() }
+            let value = try await checked(binding, sections: [section]) { try await client.systemVersion() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             version = value
         case .states:
-            let value = try await checked(binding) { try await client.stateTableSize() }
+            let value = try await checked(binding, sections: [section]) { try await client.stateTableSize() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             states = value
         case .interfaces:
-            let value = try await checked(binding) { try await client.interfaces() }
+            let value = try await checked(binding, sections: [section]) { try await client.interfaces() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             interfaces = value
         case .gateways:
-            let value = try await checked(binding) { try await client.gateways() }
+            let value = try await checked(binding, sections: [section]) { try await client.gateways() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             gateways = value
         case .services:
-            let value = try await checked(binding) { try await client.services() }
+            let value = try await checked(binding, sections: [section]) { try await client.services() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             services = value
         case .leases:
-            let value = try await checked(binding) { try await client.leases() }
+            let value = try await checked(binding, sections: [section]) { try await client.leases() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             leases = value
         case .arp:
-            let value = try await checked(binding) { try await client.arpTable() }
+            let value = try await checked(binding, sections: [section]) { try await client.arpTable() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             arp = value
         case .statics:
-            let value = try await checked(binding) { try await client.staticMappings() }
+            let value = try await checked(binding, sections: [section]) { try await client.staticMappings() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             staticMappings = value
         case .hostOverrides:
-            let value = try await checked(binding) { try await client.hostOverrides() }
+            let value = try await checked(binding, sections: [section]) { try await client.hostOverrides() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             hostOverrides = value
         case .firewallLog:
-            let value = try await checked(binding) { try await client.firewallLog(limit: profile.logLimit) }
+            let value = try await checked(binding, sections: [section]) { try await client.firewallLog(limit: profile.logLimit) }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             firewallLog = value
         case .systemLog:
-            let value = try await checked(binding) { try await client.systemLog(limit: profile.logLimit) }
+            let value = try await checked(binding, sections: [section]) { try await client.systemLog(limit: profile.logLimit) }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             systemLog = value
         case .authLog:
-            let value = try await checked(binding) { try await client.authLog(limit: profile.logLimit) }
+            let value = try await checked(binding, sections: [section]) { try await client.authLog(limit: profile.logLimit) }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             authLog = value
         case .dhcpLog:
-            let value = try await checked(binding) { try await client.dhcpLog(limit: profile.logLimit) }
+            let value = try await checked(binding, sections: [section]) { try await client.dhcpLog(limit: profile.logLimit) }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             dhcpLog = value
         case .openvpnLog:
-            let value = try await checked(binding) { try await client.openvpnLog(limit: profile.logLimit) }
+            let value = try await checked(binding, sections: [section]) { try await client.openvpnLog(limit: profile.logLimit) }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             openvpnLog = value
         case .openvpn:
-            let value = try await checked(binding) { try await client.openvpnServers() }
+            let value = try await checked(binding, sections: [section]) { try await client.openvpnServers() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             openvpnServers = value
         case .openvpnClients:
-            let value = try await checked(binding) { try await client.openvpnClients() }
+            let value = try await checked(binding, sections: [section]) { try await client.openvpnClients() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             openvpnClients = value
         case .ipsec:
-            let value = try await checked(binding) { try await client.ipsecSAs() }
+            let value = try await checked(binding, sections: [section]) { try await client.ipsecSAs() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             ipsecSAs = value
         case .wireguard:
-            let wg = try await checked(binding) { try await client.wireguard() }
+            let wg = try await checked(binding, sections: [section]) { try await client.wireguard() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             wireguardTunnels = wg.tunnels
             wireguardPeers = wg.peers
@@ -876,34 +903,34 @@ final class DashboardStore: ObservableObject {
             await loadFirewallObjects()
             guard isCurrent(binding) else { throw RPCError.cancelled }
         case .aliases:
-            let value = try await checked(binding) { try await client.firewallAliases() }
+            let value = try await checked(binding, sections: [section]) { try await client.firewallAliases() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             aliases = value
         case .portForwards:
             await loadFirewallObjects()
             guard isCurrent(binding) else { throw RPCError.cancelled }
         case .carp:
-            let value = try await checked(binding) { try await client.carp() }
+            let value = try await checked(binding, sections: [section]) { try await client.carp() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             carp = value
         case .certificates:
-            let value = try await checked(binding) { try await client.certificates() }
+            let value = try await checked(binding, sections: [section]) { try await client.certificates() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             certificates = value
         case .packages:
-            let value = try await checked(binding) { try await client.packages() }
+            let value = try await checked(binding, sections: [section]) { try await client.packages() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             packages = value
         case .filesystems:
-            let value = try await checked(binding) { try await client.filesystems() }
+            let value = try await checked(binding, sections: [section]) { try await client.filesystems() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             filesystems = value
         case .notices:
-            let value = try await checked(binding) { try await client.notices() }
+            let value = try await checked(binding, sections: [section]) { try await client.notices() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             notices = value
         case .dyndns:
-            let value = try await checked(binding) { try await client.dyndns() }
+            let value = try await checked(binding, sections: [section]) { try await client.dyndns() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             dyndns = value
 
@@ -914,7 +941,7 @@ final class DashboardStore: ObservableObject {
         // The other three are not reachable over XML-RPC without shelling out,
         // which the snippet rules forbid; they stay as cases so the enum is
         // exhaustive and the views referencing them compile with empty data.
-        case .haproxy, .acme, .rrd, .configHistory, .tables:
+        case .haproxy, .acme, .rrd, .configHistory, .tables, .packageUpdates:
             break
         }
     }
@@ -969,7 +996,7 @@ final class DashboardStore: ObservableObject {
         guard isConfigured, !hasLoadedHAProxy else { return }
         hasLoadedHAProxy = true
         do {
-            let result = try await checked(binding, { try await client.haproxy() })
+            let result = try await checked(binding, sections: [.haproxy], { try await client.haproxy() })
             guard isCurrent(binding) else { throw RPCError.cancelled }
             if let result {
                 haproxyInstalled = true
@@ -993,7 +1020,7 @@ final class DashboardStore: ObservableObject {
         guard isConfigured, !hasLoadedACME else { return }
         hasLoadedACME = true
         do {
-            let result = try await checked(binding, { try await client.acme() })
+            let result = try await checked(binding, sections: [.acme], { try await client.acme() })
             guard isCurrent(binding) else { throw RPCError.cancelled }
             if let result {
                 acmeInstalled = true
@@ -1088,7 +1115,7 @@ final class DashboardStore: ObservableObject {
         hasLoadedFirewallObjects = true
         defer { if bindingID == binding { isLoadingFirewallObjects = false } }
         do {
-            let value = try await checked(binding) { try await client.firewallRules() }
+            let value = try await checked(binding, sections: [.firewall]) { try await client.firewallRules() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             rules = value
             errors[.firewall] = nil
@@ -1099,7 +1126,7 @@ final class DashboardStore: ObservableObject {
         // Aliases are not fetched here: the standard refresh already has them,
         // because they name clients.
         do {
-            let value = try await checked(binding) { try await client.portForwards() }
+            let value = try await checked(binding, sections: [.portForwards]) { try await client.portForwards() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             portForwards = value
             errors[.portForwards] = nil
@@ -1165,7 +1192,7 @@ final class DashboardStore: ObservableObject {
         defer { if bindingID == binding { isCheckingPackages = false } }
 
         do {
-            let checked = try await checked(binding, { try await client.packageUpdates() })
+            let checked = try await checked(binding, sections: [.packageUpdates], { try await client.packageUpdates() })
             guard isCurrent(binding) else { throw RPCError.cancelled }
             if let checked {
                 // Merge rather than replace: the repository knows versions, the
@@ -1194,98 +1221,56 @@ final class DashboardStore: ObservableObject {
 
     // MARK: RRD history
 
-    @Published var rrdHistory: RRDHistory?
-    @Published var isLoadingRRD = false
-
-    /// The span currently loaded.
-    ///
-    /// pfSense keeps years of these, and which span is interesting changes
-    /// with the question — an evening's shape, a working week, a month's
-    /// growth. The app asked for one fixed window and drew whatever came back.
-    @Published var rrdWindow: PHPSnippet.RRDWindow = .week
-
-    /// Whether the span on screen was widened past an empty one rather than
-    /// chosen. The screen says so, because a picker that moved by itself looks
-    /// like a mis-tap.
+    let rrdLoader = HistoryLoader<PHPSnippet.RRDWindow, RRDHistory>(lifetime: 300)
+    private var historyObservation: AnyCancellable?
+    var rrdHistory: RRDHistory? { rrdLoader.value }
+    var isLoadingRRD: Bool { rrdLoader.isLoading }
+    var rrdWindow: PHPSnippet.RRDWindow { rrdLoader.key ?? .week }
     @Published var widenedFromEmpty = false
 
-    /// One cache per window, so flicking between spans does not re-read the
-    /// firewall for something already fetched.
-    private var rrdCache: [PHPSnippet.RRDWindow: RRDHistory] = [:]
-
-    /// Loads a span, widening automatically when the chosen one is empty.
-    ///
-    /// The archives on this firewall are 60s covering 20 hours, 300s covering
-    /// 60, 3600s covering 77 days and a daily one covering six years — and the
-    /// newest recorded value is 26 hours old. So every window shorter than a
-    /// day lands in the gap and returns nothing, while a week finds 320
-    /// values ending where the recording stopped.
-    ///
-    /// Opening a screen on an empty chart when a longer span has data is a bad
-    /// default: it looks like the feature is broken rather than like the
-    /// firewall stopped recording. So an empty span steps up to the next one
-    /// and says which it settled on.
-    ///
-    /// Only when the person has not chosen: an explicit tap on "8 hours" is
-    /// answered with 8 hours and the sentence explaining why it is empty.
-    func loadRRD(_ window: PHPSnippet.RRDWindow? = nil, widenIfEmpty: Bool = false) async {
+    /// Cache entries expire after five minutes. Changing range cancels the
+    /// old request and clears its chart before the new range is displayed.
+    func loadRRD(_ window: PHPSnippet.RRDWindow? = nil, widenIfEmpty: Bool = false,
+                 force: Bool = false) async {
         let binding = bindingID
         let client = client
         let wanted = window ?? rrdWindow
         guard isConfigured else { return }
-
-        rrdWindow = wanted
-        if let cached = rrdCache[wanted] {
-            rrdHistory = cached
+        if window != nil && !widenIfEmpty { widenedFromEmpty = false }
+        if rrdLoader.key != wanted {
+            freshness[.rrd] = SectionFreshness(lastSuccess: rrdLoader.cache[wanted]?.fetchedAt)
+        }
+        let request = beginFetch([.rrd])
+        let accepted = await rrdLoader.load(wanted, force: force) {
+            try await client.rrdTraffic(wanted)
+        }
+        guard isCurrent(binding) else { return }
+        guard rrdLoader.key == wanted, freshness[.rrd]?.requestID == request else { return }
+        guard accepted else {
+            freshness[.rrd]?.fail(request, message: nil)
             return
         }
-        guard !isLoadingRRD else { return }
-
-        isLoadingRRD = true
-        defer { if bindingID == binding { isLoadingRRD = false } }
-        do {
-            let history = try await checked(binding) { try await client.rrdTraffic(wanted) }
-            guard isCurrent(binding) else { return }
-            rrdCache[wanted] = history
-            rrdHistory = history
-            errors[.rrd] = nil
-
-            let hasData = history.series.contains { !$0.points.isEmpty }
-            if !hasData, widenIfEmpty, let next = wanted.next {
-                isLoadingRRD = false
-                widenedFromEmpty = true
-                await loadRRD(next, widenIfEmpty: true)
-            } else if hasData {
-                widenedFromEmpty = widenedFromEmpty && window == nil
-            }
-        } catch {
-            guard isCurrent(binding) else { return }
-            errors[.rrd] = error.localizedDescription
+        errors[.rrd] = rrdLoader.error
+        if let error = rrdLoader.error {
+            freshness[.rrd]?.fail(request, message: error)
+            return
+        }
+        if let date = rrdLoader.fetchedAt { freshness[.rrd]?.succeed(request, at: date) }
+        let hasData = rrdHistory?.series.contains { !$0.points.isEmpty } ?? false
+        if rrdHistory?.available == true, !hasData, widenIfEmpty, let next = wanted.next {
+            widenedFromEmpty = true
+            await loadRRD(next, widenIfEmpty: true, force: force)
         }
     }
 
-    /// The newest sample seen in any span fetched this session.
-    ///
-    /// A window shorter than the gap comes back empty and cannot say why on
-    /// its own — the 8-hour and day windows on this firewall return nothing
-    /// while the week returns plenty, because the recording stopped a day ago.
-    /// Whichever span did find data knows when it ended, and that is the
-    /// sentence the empty one needs.
     var newestRRDSample: Date? {
-        rrdCache.values
-            .flatMap(\.series)
-            .compactMap(\.newestSample)
-            .max()
+        rrdLoader.cache.values.flatMap { $0.value.series }.compactMap(\.newestSample).max()
     }
 
-    /// Clears the cached spans — used when switching firewalls, since another
-    /// box's history under this one's interface names would be nonsense.
     func resetRRD() {
-        rrdCache.removeAll()
-        rrdHistory = nil
-        rrdWindow = .week
+        rrdLoader.reset()
         widenedFromEmpty = false
-        isLoadingRRD = false
+        freshness[.rrd] = nil
     }
 
     // MARK: Temperature threshold
@@ -1322,7 +1307,7 @@ final class DashboardStore: ObservableObject {
         isCheckingFirmware = true
         defer { if bindingID == binding { isCheckingFirmware = false } }
         do {
-            let value = try await checked(binding) { try await client.systemVersion() }
+            let value = try await checked(binding, sections: [.version]) { try await client.systemVersion() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             version = value
             errors[.version] = nil

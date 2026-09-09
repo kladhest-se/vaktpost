@@ -17,6 +17,7 @@ struct MoreView: View {
             // to the toolbar and the server menu. A heading that names
             // everything below it names nothing.
             VStack(alignment: .leading, spacing: 10) {
+                link("Data freshness", "clock", badge: 0) { DataFreshnessView() }
                 link("Alerts", "bell.badge", badge: store.criticalAlertCount) { AlertsView() }
                 link("VPN", "lock.shield", badge: 0) { VPNView() }
                 link("Firewall", "shield.lefthalf.filled", badge: 0) { FirewallView() }

@@ -94,9 +94,9 @@ actor XMLRPCClient {
     /// work onto a box that is already the thing being monitored.
     private let queue = SerialRequestQueue()
 
-    init(profile: ServerProfile, onPin: @escaping TrustEvaluator.PinHandler) {
+    init(profile: ServerProfile, allowsTrustPrompt: Bool = true, onPin: @escaping TrustEvaluator.PinHandler) {
         self.profile = profile
-        let evaluator = TrustEvaluator(profile: profile, onPin: onPin)
+        let evaluator = TrustEvaluator(profile: profile, allowsTrustPrompt: allowsTrustPrompt, onPin: onPin)
         self.trust = evaluator
 
         let config = URLSessionConfiguration.ephemeral

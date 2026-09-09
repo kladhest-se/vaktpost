@@ -11,6 +11,7 @@ struct NetworkView: View {
             PageHeader(title: "Network", subtitle: store.interfaces.count > 0 ? "\(store.interfaces.count) interfaces" : nil)
             VStack(alignment: .leading, spacing: 12) {
                 InlineSearchField(text: $query, prompt: "Filter interfaces")
+                FreshnessView(sections: [.interfaces])
                 interfacesPane
             }
             .padding(.horizontal, 16)

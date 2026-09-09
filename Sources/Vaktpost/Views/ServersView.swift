@@ -86,7 +86,7 @@ struct ServersView: View {
     }
 
     private func delete(_ server: ServerProfile) {
-        registry.remove(server)
+        Task { await store.removed(server) }
     }
 }
 

@@ -9,10 +9,8 @@ final class DashboardBindingTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let registry = ServerRegistry(defaults: defaults)
         let store = DashboardStore(registry: registry, defaults: defaults)
-        store.rrdHistory = RRDHistory(JSONDict(["available": .bool(true)]))
-        store.rrdWindow = .eightHours
+        await store.rrdLoader.load(.eightHours) { RRDHistory(JSONDict(["available": .bool(true)])) }
         store.widenedFromEmpty = true
-        store.isLoadingRRD = true
         store.stateHistory.ingest(current: 100)
         store.liveInterfaceKey = "old-interface"
         store.liveError = "old error"

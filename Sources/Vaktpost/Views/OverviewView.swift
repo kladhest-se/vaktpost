@@ -143,17 +143,17 @@ struct OverviewView: View {
     private func sectionContentView(_ section: OverviewSection) -> AnyView {
         switch section {
         case .status:
-            return AnyView(statusSlab)
+            return AnyView(statusSlab.sectionFreshness([.system]))
         case .interfaces:
-            return AnyView(interfacesSlab)
+            return AnyView(interfacesSlab.sectionFreshness([.interfaces]))
         case .system:
-            return AnyView(systemSlab)
+            return AnyView(systemSlab.sectionFreshness([.system]))
         case .gateways:
-            return AnyView(gatewaysSlab)
+            return AnyView(gatewaysSlab.sectionFreshness([.gateways]))
         case .services:
-            return AnyView(servicesSlab)
+            return AnyView(servicesSlab.sectionFreshness([.services]))
         case .firewall:
-            return AnyView(firewallSlab)
+            return AnyView(firewallSlab.sectionFreshness([.firewallLog]))
         }
     }
 

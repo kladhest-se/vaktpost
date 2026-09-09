@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// Generic metric tracker that stores time-series readings.
 /// Used for system metrics history and gateway delay/loss trends.
@@ -11,28 +12,16 @@ final class MetricTracker<Key: Hashable, Value: Numeric & Comparable>: Observabl
         var value: Value
     }
 
-    private struct Reading {
-        var at: Date
-        var value: Value
-    }
-
-    /// Max points per key (roughly 30 minutes at default 30s refresh).
     private let capacity = 60
-    private var last: [Key: Reading] = [:]
     @Published private(set) var series: [Key: [Point]] = [:]
 
-    /// Feed in a new reading. Counters that decrease are treated as resets.
+    /// Gauges are independent samples, not cumulative counters. Falling CPU,
+    /// memory, disk, and swap readings are valid history, including the first.
     func ingest(key: Key, value: Value, at now: Date = Date()) {
-        defer { last[key] = Reading(at: now, value: value) }
-        guard let previous = last[key] else { return }
-        let elapsed = now.timeIntervalSince(previous.at)
-        guard elapsed > 0.5, elapsed < 86400 * 7 else { return }
-        let delta = value - previous.value
-        guard delta >= Value.zero else {
-            series[key] = []
-            return
-        }
         var points = series[key] ?? []
+        if let previous = points.last {
+            guard now.timeIntervalSince(previous.at) > 0.5 else { return }
+        }
         points.append(Point(at: now, value: value))
         if points.count > capacity { points.removeFirst(points.count - capacity) }
         series[key] = points
@@ -43,7 +32,6 @@ final class MetricTracker<Key: Hashable, Value: Numeric & Comparable>: Observabl
     func latest(for key: Key) -> Point? { series[key]?.last }
 
     func reset() {
-        last.removeAll()
         series.removeAll()
     }
 }

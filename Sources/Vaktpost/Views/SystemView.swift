@@ -8,26 +8,26 @@ struct SystemView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 GroupHeading(text: "High availability")
-                carpSlab
+                carpSlab.sectionFreshness([.carp])
 
                 GroupHeading(text: "Notices")
-                noticesSlab
+                noticesSlab.sectionFreshness([.notices])
 
                 GroupHeading(text: "Filesystems")
-                filesystemsSlab
+                filesystemsSlab.sectionFreshness([.filesystems])
 
                 GroupHeading(text: "Blocked hosts")
-                blockedSlab
+                blockedSlab.sectionFreshness([.tables])
 
                 GroupHeading(text: "Firmware")
-                firmwareSlab
+                firmwareSlab.sectionFreshness([.version])
 
                 GroupHeading(text: "Packages")
-                packageCheckSlab
-                packagesSlab
+                packageCheckSlab.sectionFreshness([.packageUpdates])
+                packagesSlab.sectionFreshness([.packages])
 
                 GroupHeading(text: "Config history")
-                configHistorySlab
+                configHistorySlab.sectionFreshness([.configHistory])
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)

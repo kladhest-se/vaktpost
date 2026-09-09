@@ -12,9 +12,14 @@ struct ServerMenu: View {
     @EnvironmentObject private var store: DashboardStore
 
     @State private var managing = false
+    @State private var showingAllFirewalls = false
 
     var body: some View {
         Menu {
+            Button { showingAllFirewalls = true } label: {
+                Label("All firewalls", systemImage: "square.grid.2x2")
+            }
+            Divider()
             ForEach(registry.servers) { server in
                 Button {
                     Task { await store.switchTo(server) }
@@ -41,6 +46,9 @@ struct ServerMenu: View {
         } label: {
             Image(systemName: "server.rack")
                 .scaledFont(16)
+        }
+        .sheet(isPresented: $showingAllFirewalls) {
+            NavigationStack { AllFirewallsView() }
         }
         .sheet(isPresented: $managing) {
             NavigationStack {
@@ -195,7 +203,7 @@ struct RootView: View {
                     // in the way — it sat over the title while scrolling.
                     }
             } else {
-                OnboardingView()
+                NavigationStack { OnboardingView().appToolbar() }
             }
         }
         .tint(theme.accentColor)

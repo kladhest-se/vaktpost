@@ -33,6 +33,16 @@ struct RRDHistoryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
+                FreshnessView(sections: [.rrd])
+                Picker("Time range", selection: Binding(
+                    get: { store.rrdWindow },
+                    set: { window in Task { await store.loadRRD(window) } }
+                )) {
+                    ForEach(PHPSnippet.RRDWindow.allCases) { window in
+                        Text(window.displayName).tag(window)
+                    }
+                }
+                .pickerStyle(.segmented)
 
                 if !interfaces.isEmpty {
                     picker
@@ -45,8 +55,12 @@ struct RRDHistoryView: View {
         }
         .background(theme.bg.ignoresSafeArea())
         .task { await store.loadRRD(widenIfEmpty: true) }
+        .refreshable { await store.loadRRD(force: true) }
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: interfaceNames.map(\.file)) { _, files in
+            if selectedFile == nil || !files.contains(selectedFile ?? "") { selectedFile = files.first }
+        }
     }
 
     // MARK: Pieces
@@ -65,7 +79,7 @@ struct RRDHistoryView: View {
                     Text(err)
                         .scaledFont(12)
                         .foregroundStyle(theme.warn)
-                    Text("This pfSense cannot read its own RRD files from PHP — that needs rrdtool, a shell binary. The app shows nothing rather than an empty chart that looks like an interface with no traffic.")
+                    Text("Pull down to retry. Any chart still shown is the last successfully loaded data for this range.")
                         .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
                 }
@@ -116,7 +130,7 @@ struct RRDHistoryView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         RRDChart(series: series)
                             .frame(height: 200)
-                        Text("From pfSense's own records, over the last week.")
+                        Text("From pfSense's own records · \(store.rrdWindow.displayName.lowercased()).")
                             .scaledFont(10)
                             .foregroundStyle(theme.labelFaint)
                     }

@@ -58,6 +58,7 @@ struct HAProxyView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    FreshnessView(sections: [.haproxy], showNames: true)
                     if let err = store.errors[.haproxy] {
                         Notice(symbol: "exclamationmark.triangle",
                                title: "HAProxy unavailable", detail: err, health: .warn)

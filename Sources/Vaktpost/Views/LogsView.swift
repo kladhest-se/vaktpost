@@ -76,6 +76,7 @@ struct LogsView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
 
+            FreshnessView(sections: [errorKey]).padding(.horizontal, 16)
             LazyVStack(alignment: .leading, spacing: 8) {
                 if let err = store.errors[errorKey] {
                     Notice(symbol: "exclamationmark.triangle",

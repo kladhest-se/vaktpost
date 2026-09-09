@@ -7,7 +7,7 @@ private let keychainLog = OSLog(subsystem: "se.kladhest.vaktpost", category: "Ke
 
 // MARK: - Profile
 
-struct ServerProfile: Codable, Identifiable, Equatable {
+struct ServerProfile: Codable, Identifiable, Equatable, Hashable {
     var id: UUID = UUID()
     /// Scheme + host + optional port, e.g. "https://fw01.example.se" or "https://10.0.0.1:8443"
     var baseURL: String = ""

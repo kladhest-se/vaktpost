@@ -44,10 +44,12 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
     private let state: TrustState
     private let owner = UUID()
     private let onPin: PinHandler
+    private let allowsTrustPrompt: Bool
 
-    init(profile: ServerProfile, onPin: @escaping PinHandler) {
+    init(profile: ServerProfile, allowsTrustPrompt: Bool = true, onPin: @escaping PinHandler) {
         state = TrustState(profile: profile)
         self.onPin = onPin
+        self.allowsTrustPrompt = allowsTrustPrompt
     }
 
     var lastSeenFingerprint: String? { state.read().fingerprint }
@@ -107,7 +109,7 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
             completion.resolve((.performDefaultHandling, nil))
             return
         }
-        guard let fingerprint else {
+        guard allowsTrustPrompt, let fingerprint else {
             completion.resolve((.cancelAuthenticationChallenge, nil))
             return
         }

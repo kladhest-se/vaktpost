@@ -25,6 +25,8 @@ struct DiagnosticsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 summary
+                NavigationLink("Data freshness") { DataFreshnessView() }
+                    .foregroundStyle(theme.accentColor)
 
                 if !failing.isEmpty {
                     GroupHeading(text: "Not working")
@@ -75,7 +77,7 @@ struct DiagnosticsView: View {
                                 FieldRow(key: "Version", value: version)
                             }
                             HStack {
-                                Text("LAST REFRESH")
+                                Text("LAST REFRESH ATTEMPT")
                                     .scaledFont(9, weight: .semibold)
                                     .foregroundStyle(theme.labelFaint)
                                 Spacer()

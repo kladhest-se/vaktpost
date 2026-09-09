@@ -46,6 +46,7 @@ struct VPNView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    FreshnessView(sections: [.openvpn, .openvpnClients, .ipsec, .wireguard], showNames: true)
                     if available.isEmpty {
                         Notice(
                             symbol: "lock.open",

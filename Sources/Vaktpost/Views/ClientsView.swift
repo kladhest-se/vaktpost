@@ -69,6 +69,9 @@ struct ClientsView: View {
         ScrollView {
             PageHeader(title: "Clients", subtitle: store.clients.count > 0 ? "\(store.clients.count) devices" : nil)
             VStack(spacing: 0) {
+                FreshnessView(sections: [.leases, .arp, .statics, .hostOverrides, .aliases], showNames: true)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                 // Below the header, in the content — `.searchable` would put
                 // it in the navigation bar above the title and jump on focus,
                 // which is what it did on the Firewall screen.

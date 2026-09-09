@@ -29,6 +29,7 @@ struct ACMEView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
+                    FreshnessView(sections: [.acme], showNames: true)
                 if let err = store.errors[.acme] {
                     Notice(symbol: "exclamationmark.triangle",
                            title: "ACME unavailable", detail: err, health: .warn)

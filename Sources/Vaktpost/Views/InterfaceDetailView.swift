@@ -31,7 +31,7 @@ struct InterfaceDetailView: View {
                 header
                 chart
                 rates
-                history
+                history.sectionFreshness([.rrd])
                 counters
                 note
             }
@@ -44,6 +44,7 @@ struct InterfaceDetailView: View {
         // and the empty chart explains itself — silently showing a different
         // span than the one selected would be worse than showing nothing.
         .task { await store.loadRRD(widenIfEmpty: true) }
+        .refreshable { await store.loadRRD(force: true) }
         .navigationTitle(iface.name)
         .navigationBarTitleDisplayMode(.inline)
     }

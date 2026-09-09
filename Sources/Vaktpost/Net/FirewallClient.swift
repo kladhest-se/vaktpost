@@ -10,8 +10,8 @@ actor FirewallClient {
 
     private let rpc: XMLRPCClient
 
-    init(profile: ServerProfile, onPin: @escaping TrustEvaluator.PinHandler) {
-        self.rpc = XMLRPCClient(profile: profile, onPin: onPin)
+    init(profile: ServerProfile, allowsTrustPrompt: Bool = true, onPin: @escaping TrustEvaluator.PinHandler) {
+        self.rpc = XMLRPCClient(profile: profile, allowsTrustPrompt: allowsTrustPrompt, onPin: onPin)
     }
 
     func invalidate() async {
@@ -178,6 +178,16 @@ actor FirewallClient {
             sections = JSONDict(payload.value("sections"))
         }
 
+        func require(_ names: [String]) throws {
+            for name in names {
+                guard let value = sections?.value(name) else {
+                    throw RPCError.malformed("Missing section: \(name)")
+                }
+                if case .null = value { throw RPCError.malformed("Empty section: \(name)") }
+                if let error = JSONDict(value)?.string("__error") { throw RPCError.fault(0, error) }
+            }
+        }
+
         /// A section that returns an object rather than rows.
         func object(_ name: String) -> JSONDict {
             JSONDict(sections?.value(name)) ?? JSONDict(.object([:]))!
@@ -191,19 +201,27 @@ actor FirewallClient {
     }
 
     func batchCore() async throws -> Batch {
-        Batch(try await rpc.runObject(.batchCore))
+        let batch = Batch(try await rpc.runObject(.batchCore))
+        try batch.require(["telemetry", "firmware", "interfaces", "gateways", "services"])
+        return batch
     }
 
     func batchClients() async throws -> Batch {
-        Batch(try await rpc.runObject(.batchClients))
+        let batch = Batch(try await rpc.runObject(.batchClients))
+        try batch.require(["dhcp_leases", "arp_table", "static_mappings", "host_overrides", "firewall_aliases"])
+        return batch
     }
 
     func batchVPN() async throws -> Batch {
-        Batch(try await rpc.runObject(.batchVpn))
+        let batch = Batch(try await rpc.runObject(.batchVpn))
+        try batch.require(["openvpn_servers", "openvpn_clients", "ipsec_sas", "wireguard"])
+        return batch
     }
 
     func batchSystem() async throws -> Batch {
-        Batch(try await rpc.runObject(.batchSystem))
+        let batch = Batch(try await rpc.runObject(.batchSystem))
+        try batch.require(["carp", "certificates", "packages", "notices", "dyndns"])
+        return batch
     }
 
     // MARK: Firewall objects

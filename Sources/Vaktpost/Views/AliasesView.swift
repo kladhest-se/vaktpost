@@ -29,6 +29,7 @@ struct AliasesView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
+                    FreshnessView(sections: [.aliases], showNames: true)
                 if let err = store.errors[.aliases] {
                     Notice(symbol: "exclamationmark.triangle",
                            title: "Aliases unavailable", detail: err, health: .warn)

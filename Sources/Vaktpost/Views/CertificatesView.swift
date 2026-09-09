@@ -63,6 +63,7 @@ struct CertificatesView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    FreshnessView(sections: [.certificates], showNames: true)
                     if let err = store.errors[.certificates] {
                         Notice(symbol: "exclamationmark.triangle",
                                title: "Certificates unavailable", detail: err, health: .warn)
