@@ -13,6 +13,7 @@ struct FirewallView: View {
     @State private var showFloating = false
     @State private var query = ""
     @State private var interfaceFilter: String?
+    @State private var cachedInterfaceOptions: [String] = []
 
     @State private var selection: String?
 
@@ -35,6 +36,24 @@ struct FirewallView: View {
                 }
             }
         )
+        .task { updateInterfaceOptions() }
+        .onChange(of: store.rules.count) { _ in updateInterfaceOptions() }
+    }
+
+    private func updateInterfaceOptions() {
+        var seen = Set<String>()
+        var result: [String] = []
+        for rule in store.rules {
+            for part in rule.interfaceName.split(separator: ",") {
+                let trimmed = part.trimmingCharacters(in: .whitespaces)
+                if seen.insert(trimmed).inserted {
+                    result.append(trimmed)
+                }
+            }
+        }
+        cachedInterfaceOptions = result.sorted {
+            (store.interfaceLabel(for: $0) ?? $0) < (store.interfaceLabel(for: $1) ?? $1)
+        }
     }
 
     private var listColumn: some View {
@@ -126,15 +145,7 @@ struct FirewallView: View {
     /// it shows every rule that applies to OPENVPN1 including the floating
     /// ones.
     private var interfaceOptions: [String] {
-        var seen = Set<String>()
-        for rule in store.rules {
-            for part in rule.interfaceName.split(separator: ",") {
-                seen.insert(part.trimmingCharacters(in: .whitespaces))
-            }
-        }
-        return seen.sorted {
-            (store.interfaceLabel(for: $0) ?? $0) < (store.interfaceLabel(for: $1) ?? $1)
-        }
+        cachedInterfaceOptions
     }
 
     private var filteredRules: [FirewallRule] {
@@ -267,7 +278,7 @@ struct FirewallView: View {
         case let (a?, l?) where a != l: return "\(a) → \(l)"
         case let (a?, _): return a
         case let (nil, l?): return l
-        default: return nil
+        case (nil, nil): return nil
         }
     }
 
@@ -524,6 +535,21 @@ struct PortForwardDetailView: View {
     @EnvironmentObject private var store: DashboardStore
     let forward: PortForward
 
+    @ViewBuilder
+    private func detailField(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label.uppercased())
+                .scaledFont(9, weight: .semibold)
+                .foregroundStyle(theme.labelFaint)
+            ForEach(expandedValues(value), id: \.self) { entry in
+                Text(entry)
+                    .scaledFont(13, weight: .medium, design: .monospaced)
+                    .foregroundStyle(theme.label)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
@@ -551,10 +577,10 @@ struct PortForwardDetailView: View {
                         // Source is usually `any`; shown here regardless,
                         // because on a detail screen a field that is always
                         // the same is still worth confirming.
-                        aliasField("From", forward.sourceSide.address)
-                        aliasField("To", forward.destinationSide.address)
+                        detailField("From", forward.sourceSide.address)
+                        detailField("To", forward.destinationSide.address)
                         if let port = forward.destinationSide.port, !port.isEmpty {
-                            aliasField("Port", port)
+                            detailField("Port", port)
                         }
                     }
                 }
@@ -562,9 +588,9 @@ struct PortForwardDetailView: View {
                 GroupHeading(text: "Forwards to")
                 Slab(rail: .ok) {
                     VStack(alignment: .leading, spacing: 8) {
-                        aliasField("Target", forward.target)
+                        detailField("Target", forward.target)
                         if let local = forward.localPort, !local.isEmpty {
-                            aliasField("Local port", local)
+                            detailField("Local port", local)
                         }
                     }
                 }
@@ -582,25 +608,5 @@ struct PortForwardDetailView: View {
     /// screen's; both types need it and neither owns the other.
     private func expandedValues(_ value: String) -> [String] {
         store.resolveAlias(value) ?? [value]
-    }
-
-    @ViewBuilder
-    private func aliasField(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label.uppercased())
-                .scaledFont(9, weight: .semibold)
-                .foregroundStyle(theme.labelFaint)
-            // One address per line.
-            //
-            // A wrapped run of comma-separated networks breaks mid-address, so
-            // `198.51.100.0/22` can end one line and start the next. A list
-            // reads as a list, and each entry stays whole and selectable.
-            ForEach(expandedValues(value), id: \.self) { entry in
-                Text(entry)
-                    .scaledFont(13, weight: .medium, design: .monospaced)
-                    .foregroundStyle(theme.label)
-                    .textSelection(.enabled)
-            }
-        }
     }
 }

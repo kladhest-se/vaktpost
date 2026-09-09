@@ -18,8 +18,23 @@ struct LogsView: View {
     @State private var source: Source = .firewall
     @State private var action: ActionFilter = .all
     @State private var query = ""
+    @State private var filteredLines: [LogLine] = []
 
-    private var lines: [LogLine] {
+    private var errorKey: DashboardStore.Section {
+        switch source {
+        case .firewall: return .firewallLog
+        case .system:   return .systemLog
+        case .auth:     return .authLog
+        case .dhcp:     return .dhcpLog
+        case .openvpn:  return .openvpnLog
+        }
+    }
+
+    /// Only the filter log carries a pass/block action, so the second picker
+    /// would be four inert buttons on the other four sources.
+    private var showsActionFilter: Bool { source == .firewall }
+
+    private func filterLines() {
         var list: [LogLine]
         switch source {
         case .firewall: list = store.firewallLog
@@ -35,24 +50,10 @@ struct LogsView: View {
             case .passed: list = list.filter { $0.action == "pass" }
             }
         }
-        guard !query.isEmpty else { return list }
+        guard !query.isEmpty else { filteredLines = list; return }
         let q = query.lowercased()
-        return list.filter { $0.text.lowercased().contains(q) }
+        filteredLines = list.filter { $0.text.lowercased().contains(q) }
     }
-
-    private var errorKey: DashboardStore.Section {
-        switch source {
-        case .firewall: return .firewallLog
-        case .system:   return .systemLog
-        case .auth:     return .authLog
-        case .dhcp:     return .dhcpLog
-        case .openvpn:  return .openvpnLog
-        }
-    }
-
-    /// Only the filter log carries a pass/block action, so the second picker
-    /// would be four inert buttons on the other four sources.
-    private var showsActionFilter: Bool { source == .firewall }
 
     var body: some View {
         ScrollView {
@@ -81,7 +82,7 @@ struct LogsView: View {
                 if let err = store.errors[errorKey] {
                     Notice(symbol: "exclamationmark.triangle",
                            title: "Log unavailable", detail: err, health: .warn)
-                } else if lines.isEmpty {
+                } else if filteredLines.isEmpty {
                     Notice(
                         symbol: "doc.text.magnifyingglass",
                         title: query.isEmpty ? "No log lines" : "No matches",
@@ -90,7 +91,7 @@ struct LogsView: View {
                             : nil
                     )
                 } else {
-                    ForEach(lines) { line in
+                    ForEach(filteredLines) { line in
                         // Every line opens. A filter line becomes fields;
                         // anything else gets its syslog prefix split off
                         // and its message given room to wrap, which is all
@@ -109,7 +110,10 @@ struct LogsView: View {
         }
         .background(theme.bg.ignoresSafeArea())
         .refreshable { await store.refreshManually() }
-        .task { await store.beginSecondaryLogs() }
+        .task { await store.beginSecondaryLogs(); filterLines() }
+        .onChange(of: source) { filterLines() }
+        .onChange(of: action) { filterLines() }
+        .onChange(of: query) { filterLines() }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 // One document, not one item per line.
@@ -122,18 +126,18 @@ struct LogsView: View {
                 ShareLink(
                     item: formattedLines.joined(separator: "\n"),
                     preview: SharePreview(
-                        "\(source.rawValue) log — \(lines.count) lines"
+                        "\(source.rawValue) log — \(filteredLines.count) lines"
                     )
                 ) {
                     Image(systemName: "square.and.arrow.up")
                 }
-                .disabled(lines.isEmpty)
+                .disabled(filteredLines.isEmpty)
             }
         }
     }
 
     private var formattedLines: [String] {
-        lines.map { line in
+        filteredLines.map { line in
             var parts: [String] = []
             if let ts = line.timestamp { parts.append(ts) }
             if let a = line.action { parts.append(a) }

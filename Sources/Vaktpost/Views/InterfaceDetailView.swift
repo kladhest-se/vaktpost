@@ -17,6 +17,7 @@ struct InterfaceDetailView: View {
     @EnvironmentObject private var store: DashboardStore
 
     let iface: InterfaceStat
+    @State private var loadTask: Task<Void, Never>?
 
     /// The live series, which starts empty each time the screen opens.
     private var points: [ThroughputTracker.Point] {
@@ -39,11 +40,11 @@ struct InterfaceDetailView: View {
             .padding(.bottom, 28)
         }
         .background(theme.bg.ignoresSafeArea())
-        .task { await store.monitorInterface(iface.seriesKey) }
-        // Widening on open only. A tap on "8 hours" is answered with 8 hours,
-        // and the empty chart explains itself — silently showing a different
-        // span than the one selected would be worse than showing nothing.
-        .task { await store.loadRRD(widenIfEmpty: true) }
+        .task {
+            loadTask?.cancel()
+            await store.monitorInterface(iface.seriesKey)
+            await store.loadRRD(widenIfEmpty: true)
+        }
         .refreshable { await store.loadRRD(force: true) }
         .navigationTitle(iface.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -197,7 +198,8 @@ struct InterfaceDetailView: View {
                     set: { window in
                         // Chosen, not widened: the note goes.
                         store.widenedFromEmpty = false
-                        Task { await store.loadRRD(window) }
+                        loadTask?.cancel()
+                        loadTask = Task { await store.loadRRD(window) }
                     }
                 )) {
                     ForEach(PHPSnippet.RRDWindow.allCases) { window in

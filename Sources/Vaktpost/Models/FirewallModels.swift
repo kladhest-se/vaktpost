@@ -114,7 +114,7 @@ struct FirewallRule: Identifiable {
     var protoLabel: String { (proto ?? "any").uppercased() }
 
     var isFloating: Bool {
-        interfaceName.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.count > 1
+        interfaceName.components(separatedBy: ",").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count > 1
     }
 }
 

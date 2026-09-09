@@ -117,7 +117,6 @@ final class ServerRegistry: ObservableObject {
 
     /// Do not let a trust decision from an obsolete connection overwrite an
     /// edited endpoint or an explicitly changed pin.
-    @discardableResult
     func pinCertificate(_ fingerprint: String, for expected: ServerProfile) -> Bool {
         guard let index = servers.firstIndex(where: { $0.id == expected.id }),
               servers[index].baseURL == expected.baseURL,

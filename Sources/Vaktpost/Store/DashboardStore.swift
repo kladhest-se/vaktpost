@@ -56,6 +56,17 @@ final class DashboardStore: ObservableObject {
     }
     }
 
+    // MARK: UserDefaults keys
+
+    private enum UDKey: String {
+        case temperatureWarn = "alerts.tempWarn"
+        case favouriteInterfaces = "interfaces.favourites"
+        case favouritesSeeded = "interfaces.favouritesSeeded"
+        case mutedAlerts = "alerts.hidden.v2"
+        case alertsSilenced = "alerts.silenced"
+        case acknowledgedAlerts = "alerts.acknowledged"
+    }
+
     /// The grouped calls a refresh makes.
     ///
     /// Grouped by screen rather than into one call: a PHP fatal cannot be
@@ -85,7 +96,6 @@ final class DashboardStore: ObservableObject {
     /// Success dates belong to individual sections, including on-demand loads.
     @Published private(set) var freshness: [Section: SectionFreshness] = [:]
 
-    @discardableResult
     private func beginFetch(_ sections: [Section]) -> UUID {
         let id = UUID()
         for section in sections { freshness[section, default: SectionFreshness()].begin(id, at: Date()) }
@@ -142,7 +152,7 @@ final class DashboardStore: ObservableObject {
     let liveThroughput = ThroughputTracker(capacity: 180)
     @Published var liveInterfaceKey: String?
     @Published var liveError: String?
-    let vpnThroughput = ThroughputTrackerV2()
+    let vpnThroughput = ThroughputTracker(bitsMultiplier: 1)
     let systemMetrics = MetricTracker<String, Double>()
     let gatewayMetrics = GatewayMetricTracker()
     let stateHistory = StateHistoryTracker()
@@ -453,47 +463,60 @@ final class DashboardStore: ObservableObject {
                 return true
             } catch let err as RPCError {
                 guard isCurrent(binding) else { return false }
-                switch err {
-                case .cancelled:
-                    break
-                case .transport, .offline:
-                    // Straight to the screen. Waiting for four more timeouts
-                    // to agree would take minutes.
-                    fatal = err.localizedDescription
-                    networkDown = true
-                    connectionError = fatal
-                case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL,
-                     .forbidden:
-                    // `.transport` belongs here.
-                    //
-                    // It was in the default branch, recorded against the
-                    // section and nothing else — so a phone with no network at
-                    // all produced thirty section errors and no connection
-                    // error, and the app stayed on its tabs showing whatever it
-                    // had fetched last time. That is the one case the
-                    // disconnected screen exists for.
-                    fatal = err.localizedDescription
-                case .fault:
-                    // A PHP error in a snippet: the function is missing on this
-                    // pfSense version, the shape is not what it expected, or
-                    // the account lacks the privilege. Every one of these
-                    // leaves a permanent notice on the firewall, so the section
-                    // is counted and eventually abandoned.
-                    let count = (faultCounts[section] ?? 0) + 1
-                    faultCounts[section] = count
-                    if optional { missingEndpoints.insert(section) }
-                    freshErrors[section] = count >= Self.faultLimit
-                        ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
-                        : err.localizedDescription
-                default:
-                    freshErrors[section] = err.localizedDescription
-                }
+                recordError(err, for: section, optional: optional)
             } catch {
                 guard isCurrent(binding) else { return false }
                 freshErrors[section] = error.localizedDescription
             }
             return false
         }
+
+        func recordError(_ err: RPCError, for section: Section, optional: Bool) {
+            switch err {
+            case .cancelled:
+                break
+            case .transport, .offline:
+                fatal = err.localizedDescription
+                networkDown = true
+                connectionError = fatal
+            case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
+                fatal = err.localizedDescription
+            case .fault:
+                let count = (faultCounts[section] ?? 0) + 1
+                faultCounts[section] = count
+                if optional { missingEndpoints.insert(section) }
+                freshErrors[section] = count >= Self.faultLimit
+                    ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
+                    : err.localizedDescription
+            default:
+                freshErrors[section] = err.localizedDescription
+            }
+        }
+
+        func recordBatchError(_ err: RPCError, for sections: [Section]) {
+            switch err {
+            case .cancelled:
+                break
+            case .transport, .offline:
+                fatal = err.localizedDescription
+                networkDown = true
+                connectionError = fatal
+            case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
+                fatal = err.localizedDescription
+            case .fault:
+                for section in sections {
+                    let count = (faultCounts[section] ?? 0) + 1
+                    faultCounts[section] = count
+                    missingEndpoints.insert(section)
+                    freshErrors[section] = count >= Self.faultLimit
+                        ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
+                        : err.localizedDescription
+                }
+            default:
+                for section in sections { freshErrors[section] = err.localizedDescription }
+            }
+        }
+
         guard isCurrent(binding) else { return }
 
         /// Runs one grouped call and hands the sections to a decoder.
@@ -538,38 +561,7 @@ final class DashboardStore: ObservableObject {
                 return result
             } catch let err as RPCError {
                 guard isCurrent(binding) else { return false }
-                switch err {
-                case .cancelled:
-                    break
-                case .transport, .offline:
-                    // Straight to the screen. Waiting for four more timeouts
-                    // to agree would take minutes.
-                    fatal = err.localizedDescription
-                    networkDown = true
-                    connectionError = fatal
-                case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL,
-                     .forbidden:
-                    // `.transport` belongs here.
-                    //
-                    // It was in the default branch, recorded against the
-                    // section and nothing else — so a phone with no network at
-                    // all produced thirty section errors and no connection
-                    // error, and the app stayed on its tabs showing whatever it
-                    // had fetched last time. That is the one case the
-                    // disconnected screen exists for.
-                    fatal = err.localizedDescription
-                case .fault:
-                    for section in sections {
-                        let count = (faultCounts[section] ?? 0) + 1
-                        faultCounts[section] = count
-                        missingEndpoints.insert(section)
-                        freshErrors[section] = count >= Self.faultLimit
-                            ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
-                            : err.localizedDescription
-                    }
-                default:
-                    for section in sections { freshErrors[section] = err.localizedDescription }
-                }
+                recordBatchError(err, for: sections)
             } catch {
                 guard isCurrent(binding) else { return false }
                 for section in sections { freshErrors[section] = error.localizedDescription }
@@ -816,79 +808,52 @@ final class DashboardStore: ObservableObject {
     private func fetchOne(_ section: Section) async throws {
         let binding = bindingID
         let client = client
+        try await fetchSection(binding, section, client: client)
+    }
+
+    private func fetchSection(_ binding: UUID, _ section: Section, client: FirewallClient) async throws {
         switch section {
         case .system:
-            let value = try await checked(binding, sections: [section]) { try await client.systemStatus() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            system = value
+            try await assign(binding, [section], fetcher: { try await client.systemStatus() }) { self.system = $0 }
         case .version:
-            let value = try await checked(binding, sections: [section]) { try await client.systemVersion() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            version = value
+            try await assign(binding, [section], fetcher: { try await client.systemVersion() }) { self.version = $0 }
         case .states:
-            let value = try await checked(binding, sections: [section]) { try await client.stateTableSize() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            states = value
+            try await assign(binding, [section], fetcher: { try await client.stateTableSize() }) { self.states = $0 }
         case .interfaces:
-            let value = try await checked(binding, sections: [section]) { try await client.interfaces() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            interfaces = value
+            try await assign(binding, [section], fetcher: { try await client.interfaces() }) { self.interfaces = $0 }
         case .gateways:
-            let value = try await checked(binding, sections: [section]) { try await client.gateways() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            gateways = value
+            try await assign(binding, [section], fetcher: { try await client.gateways() }) { self.gateways = $0 }
         case .services:
-            let value = try await checked(binding, sections: [section]) { try await client.services() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            services = value
+            try await assign(binding, [section], fetcher: { try await client.services() }) { self.services = $0 }
         case .leases:
-            let value = try await checked(binding, sections: [section]) { try await client.leases() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            leases = value
+            try await assign(binding, [section], fetcher: { try await client.leases() }) { self.leases = $0 }
         case .arp:
-            let value = try await checked(binding, sections: [section]) { try await client.arpTable() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            arp = value
+            try await assign(binding, [section], fetcher: { try await client.arpTable() }) { self.arp = $0 }
         case .statics:
-            let value = try await checked(binding, sections: [section]) { try await client.staticMappings() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            staticMappings = value
+            try await assign(binding, [section], fetcher: { try await client.staticMappings() }) { self.staticMappings = $0 }
         case .hostOverrides:
-            let value = try await checked(binding, sections: [section]) { try await client.hostOverrides() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            hostOverrides = value
+            try await assign(binding, [section], fetcher: { try await client.hostOverrides() }) { self.hostOverrides = $0 }
         case .firewallLog:
-            let value = try await checked(binding, sections: [section]) { try await client.firewallLog(limit: profile.logLimit) }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            firewallLog = value
+            try await assign(binding, [section], fetcher: { try await client.firewallLog(limit: self.profile.logLimit) }) { self.firewallLog = $0 }
+            capLogs()
         case .systemLog:
-            let value = try await checked(binding, sections: [section]) { try await client.systemLog(limit: profile.logLimit) }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            systemLog = value
+            try await assign(binding, [section], fetcher: { try await client.systemLog(limit: self.profile.logLimit) }) { self.systemLog = $0 }
+            capLogs()
         case .authLog:
-            let value = try await checked(binding, sections: [section]) { try await client.authLog(limit: profile.logLimit) }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            authLog = value
+            try await assign(binding, [section], fetcher: { try await client.authLog(limit: self.profile.logLimit) }) { self.authLog = $0 }
+            capLogs()
         case .dhcpLog:
-            let value = try await checked(binding, sections: [section]) { try await client.dhcpLog(limit: profile.logLimit) }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            dhcpLog = value
+            try await assign(binding, [section], fetcher: { try await client.dhcpLog(limit: self.profile.logLimit) }) { self.dhcpLog = $0 }
+            capLogs()
         case .openvpnLog:
-            let value = try await checked(binding, sections: [section]) { try await client.openvpnLog(limit: profile.logLimit) }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            openvpnLog = value
+            try await assign(binding, [section], fetcher: { try await client.openvpnLog(limit: self.profile.logLimit) }) { self.openvpnLog = $0 }
+            capLogs()
         case .openvpn:
-            let value = try await checked(binding, sections: [section]) { try await client.openvpnServers() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            openvpnServers = value
+            try await assign(binding, [section], fetcher: { try await client.openvpnServers() }) { self.openvpnServers = $0 }
         case .openvpnClients:
-            let value = try await checked(binding, sections: [section]) { try await client.openvpnClients() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            openvpnClients = value
+            try await assign(binding, [section], fetcher: { try await client.openvpnClients() }) { self.openvpnClients = $0 }
         case .ipsec:
-            let value = try await checked(binding, sections: [section]) { try await client.ipsecSAs() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            ipsecSAs = value
+            try await assign(binding, [section], fetcher: { try await client.ipsecSAs() }) { self.ipsecSAs = $0 }
         case .wireguard:
             let wg = try await checked(binding, sections: [section]) { try await client.wireguard() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
@@ -898,47 +863,50 @@ final class DashboardStore: ObservableObject {
             await loadFirewallObjects()
             guard isCurrent(binding) else { throw RPCError.cancelled }
         case .aliases:
-            let value = try await checked(binding, sections: [section]) { try await client.firewallAliases() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            aliases = value
+            try await assign(binding, [section], fetcher: { try await client.firewallAliases() }) { self.aliases = $0 }
         case .portForwards:
             await loadFirewallObjects()
             guard isCurrent(binding) else { throw RPCError.cancelled }
         case .carp:
-            let value = try await checked(binding, sections: [section]) { try await client.carp() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            carp = value
+            try await assign(binding, [section], fetcher: { try await client.carp() }) { self.carp = $0 }
         case .certificates:
-            let value = try await checked(binding, sections: [section]) { try await client.certificates() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            certificates = value
+            try await assign(binding, [section], fetcher: { try await client.certificates() }) { self.certificates = $0 }
         case .packages:
-            let value = try await checked(binding, sections: [section]) { try await client.packages() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            packages = value
+            try await assign(binding, [section], fetcher: { try await client.packages() }) { self.packages = $0 }
         case .filesystems:
-            let value = try await checked(binding, sections: [section]) { try await client.filesystems() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            filesystems = value
+            try await assign(binding, [section], fetcher: { try await client.filesystems() }) { self.filesystems = $0 }
         case .notices:
-            let value = try await checked(binding, sections: [section]) { try await client.notices() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            notices = value
+            try await assign(binding, [section], fetcher: { try await client.notices() }) { self.notices = $0 }
         case .dyndns:
-            let value = try await checked(binding, sections: [section]) { try await client.dyndns() }
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            dyndns = value
-
-        // Sections the refresh timer does not drive.
-        //
-        // `haproxy` is loaded by its own screen — a firewall running it has
-        // dozens of backends and none of it changes minute to minute.
-        // The other three are not reachable over XML-RPC without shelling out,
-        // which the snippet rules forbid; they stay as cases so the enum is
-        // exhaustive and the views referencing them compile with empty data.
+            try await assign(binding, [section], fetcher: { try await client.dyndns() }) { self.dyndns = $0 }
         case .haproxy, .acme, .rrd, .configHistory, .tables, .packageUpdates:
             break
         }
+    }
+
+    private func assign<T>(_ binding: UUID, _ sections: [Section], fetcher: @escaping () async throws -> T, assign: (T) -> Void) async throws {
+        let value: T
+        do {
+            value = try await Task.detached { [self] in
+                try await checked(binding, sections: sections) { try await fetcher() }
+            }.value
+        } catch {
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            throw error
+        }
+        guard isCurrent(binding) else { throw RPCError.cancelled }
+        assign(value)
+    }
+
+    /// Cap log arrays to prevent unbounded memory growth on busy firewalls.
+    private static let maxLogLines = 2000
+
+    private func capLogs() {
+        if firewallLog.count > Self.maxLogLines { firewallLog = Array(firewallLog.prefix(Self.maxLogLines)) }
+        if systemLog.count > Self.maxLogLines { systemLog = Array(systemLog.prefix(Self.maxLogLines)) }
+        if authLog.count > Self.maxLogLines { authLog = Array(authLog.prefix(Self.maxLogLines)) }
+        if dhcpLog.count > Self.maxLogLines { dhcpLog = Array(dhcpLog.prefix(Self.maxLogLines)) }
+        if openvpnLog.count > Self.maxLogLines { openvpnLog = Array(openvpnLog.prefix(Self.maxLogLines)) }
     }
 
     /// Fetches firewall rules, NAT port forwards and aliases on first use.
@@ -1300,7 +1268,7 @@ final class DashboardStore: ObservableObject {
     @Published var temperatureWarnOverride: Double? {
         didSet {
             UserDefaults.standard.set(temperatureWarnOverride ?? 0,
-                                      forKey: "alerts.tempWarn")
+                                      forKey: UDKey.temperatureWarn.rawValue)
         }
     }
 
@@ -1347,7 +1315,7 @@ final class DashboardStore: ObservableObject {
     /// lagg stay distinct.
     @Published var favouriteInterfaces: Set<String> = [] {
         didSet {
-            UserDefaults.standard.set(Array(favouriteInterfaces), forKey: "interfaces.favourites")
+            UserDefaults.standard.set(Array(favouriteInterfaces), forKey: UDKey.favouriteInterfaces.rawValue)
         }
     }
 
@@ -1380,8 +1348,8 @@ final class DashboardStore: ObservableObject {
     /// setting the person does not have.
     private func seedFavouritesIfNeeded() {
         guard !interfaces.isEmpty else { return }
-        guard !UserDefaults.standard.bool(forKey: "interfaces.favouritesSeeded") else { return }
-        UserDefaults.standard.set(true, forKey: "interfaces.favouritesSeeded")
+        guard !UserDefaults.standard.bool(forKey: UDKey.favouritesSeeded.rawValue) else { return }
+        UserDefaults.standard.set(true, forKey: UDKey.favouritesSeeded.rawValue)
 
         let wanted = interfaces.filter { iface in
             let name = iface.name.lowercased()
@@ -1410,12 +1378,12 @@ final class DashboardStore: ObservableObject {
             // they had silenced nothing. Changing what a stored value means
             // without changing where it is stored is a migration, and this is
             // the cheapest correct one: start again from the default.
-            UserDefaults.standard.set(Array(mutedAlertCategories), forKey: "alerts.hidden.v2")
+            UserDefaults.standard.set(Array(mutedAlertCategories), forKey: UDKey.mutedAlerts.rawValue)
         }
     }
 
     @Published var alertsSilenced: Bool = false {
-        didSet { UserDefaults.standard.set(alertsSilenced, forKey: "alerts.silenced") }
+        didSet { UserDefaults.standard.set(alertsSilenced, forKey: UDKey.alertsSilenced.rawValue) }
     }
 
     /// Individual alerts the person has acknowledged.
@@ -1429,7 +1397,7 @@ final class DashboardStore: ObservableObject {
     /// Most things people want to stop seeing are the second kind.
     @Published var acknowledgedAlerts: Set<String> = [] {
         didSet {
-            UserDefaults.standard.set(Array(acknowledgedAlerts), forKey: "alerts.acknowledged")
+            UserDefaults.standard.set(Array(acknowledgedAlerts), forKey: UDKey.acknowledgedAlerts.rawValue)
         }
     }
 

@@ -27,7 +27,8 @@ struct RRDHistoryView: View {
         return result
     }
 
-    @State private var selectedFile: String?
+    @State private var selectedFile: String? = nil
+    @State private var loadTask: Task<Void, Never>?
 
     var body: some View {
         ScrollView {
@@ -36,7 +37,10 @@ struct RRDHistoryView: View {
                 FreshnessView(sections: [.rrd])
                 Picker("Time range", selection: Binding(
                     get: { store.rrdWindow },
-                    set: { window in Task { await store.loadRRD(window) } }
+                    set: { window in
+                        loadTask?.cancel()
+                        loadTask = Task { await store.loadRRD(window) }
+                    }
                 )) {
                     ForEach(PHPSnippet.RRDWindow.allCases) { window in
                         Text(window.displayName).tag(window)
@@ -54,7 +58,10 @@ struct RRDHistoryView: View {
             .padding(.bottom, 28)
         }
         .background(theme.bg.ignoresSafeArea())
-        .task { await store.loadRRD(widenIfEmpty: true) }
+        .task {
+            loadTask?.cancel()
+            await store.loadRRD(widenIfEmpty: true)
+        }
         .refreshable { await store.loadRRD(force: true) }
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.inline)

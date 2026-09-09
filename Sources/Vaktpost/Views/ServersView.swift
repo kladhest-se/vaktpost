@@ -1,7 +1,6 @@
 import SwiftUI
 
 /// Manages the set of firewalls and which one is on screen.
-/// The list of firewalls, and which one is on screen.
 ///
 /// One row per firewall, and nothing else. The previous version carried a
 /// section header repeating the navigation title, a status pill, a fingerprint
@@ -194,17 +193,17 @@ struct ServerEditView: View {
                                 Group {
                                     if showKey {
                                         TextField("password", text: $password)
+                                            .textInputAutocapitalization(.never)
+                                            .autocorrectionDisabled()
+                                            .scaledFont(14, design: .monospaced)
                                     } else {
                                         SecureField("password", text: $password)
+                                            .textInputAutocapitalization(.never)
+                                            .autocorrectionDisabled()
+                                            .scaledFont(14, design: .monospaced)
                                     }
                                 }
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .scaledFont(14, design: .monospaced)
-                                Button { showKey.toggle() } label: {
-                                    Image(systemName: showKey ? "eye.slash" : "eye")
-                                        .foregroundStyle(theme.labelMuted)
-                                }
+                                toggleKeyButton
                             }
                             .padding(10)
                             .background(theme.cardRaised)
@@ -223,13 +222,7 @@ struct ServerEditView: View {
                         }
                         .tint(theme.accentColor)
 
-                        TextField("not pinned", text: $profile.pinnedFingerprint)
-                            .scaledFont(11, design: .monospaced)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .padding(10)
-                            .background(theme.cardRaised)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        pinnedFingerprintField
 
                         Button {
                             Task {
@@ -252,41 +245,13 @@ struct ServerEditView: View {
 
                 Slab(rail: .info, title: "Refresh") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Stepper(value: $profile.refreshSeconds, in: 10...300, step: 10) {
-                            FieldRow(key: "Auto-refresh", value: "\(profile.refreshSeconds)s")
-                        }
-                        .tint(theme.accentColor)
-                        Stepper(value: $profile.logLimit, in: 25...500, step: 25) {
-                            FieldRow(key: "Log lines fetched", value: "\(profile.logLimit)")
-                        }
-                        .tint(theme.accentColor)
+                        refreshStepper
+                        logLimitStepper
                     }
                 }
 
                 if let message {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(message)
-                            .scaledFont(12)
-                            .foregroundStyle(messageHealth.color(theme))
-                        if messageHealth == .warn, !isExisting {
-                            Button("Test Connection") {
-                                Task {
-                                    isTesting = true
-                                    defer { isTesting = false }
-                                    do {
-                                        let version = try await store.client.ping()
-                                        self.message = "Connected — pfSense \(version)"
-                                        messageHealth = .ok
-                                    } catch {
-                                        self.message = error.localizedDescription
-                                        messageHealth = .bad
-                                    }
-                                }
-                            }
-                            .scaledFont(12, weight: .medium)
-                            .foregroundStyle(theme.accentColor)
-                        }
-                    }
+                    messageView
                 }
 
                 if isExisting {
@@ -351,6 +316,84 @@ struct ServerEditView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Its password is deleted from the keychain.")
+        }
+    }
+
+    private var refreshStepper: some View {
+        Stepper(value: $profile.refreshSeconds, in: 10...300, step: 10) {
+            HStack {
+                Text("Auto-refresh")
+                    .scaledFont(10, weight: .semibold)
+                    .foregroundStyle(theme.labelFaint)
+                Spacer()
+                Text("\(profile.refreshSeconds)s")
+                    .scaledFont(13, design: .monospaced)
+                    .foregroundStyle(theme.label)
+            }
+        }
+        .tint(theme.accentColor)
+    }
+
+    private var logLimitStepper: some View {
+        Stepper(value: $profile.logLimit, in: 25...500, step: 25) {
+            HStack {
+                Text("Log lines fetched")
+                    .scaledFont(10, weight: .semibold)
+                    .foregroundStyle(theme.labelFaint)
+                Spacer()
+                Text("\(profile.logLimit)")
+                    .scaledFont(13, design: .monospaced)
+                    .foregroundStyle(theme.label)
+            }
+        }
+        .tint(theme.accentColor)
+    }
+
+    private var messageView: some View {
+        Group {
+            if let message {
+                let healthColor = messageHealth.color(theme)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(message)
+                        .scaledFont(12)
+                        .foregroundStyle(healthColor)
+                    if messageHealth == .warn, !isExisting {
+                        Button("Test Connection") {
+                            Task {
+                                isTesting = true
+                                defer { isTesting = false }
+                                do {
+                                    let version = try await store.client.ping()
+                                    self.message = "Connected — pfSense \(version)"
+                                    messageHealth = .ok
+                                } catch {
+                                    self.message = error.localizedDescription
+                                    messageHealth = .bad
+                                }
+                            }
+                        }
+                        .scaledFont(12, weight: .medium)
+                        .foregroundStyle(theme.accentColor)
+                    }
+                }
+            }
+        }
+    }
+
+    private var pinnedFingerprintField: some View {
+        TextField("not pinned", text: $profile.pinnedFingerprint)
+            .scaledFont(11, design: .monospaced)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .padding(10)
+            .background(theme.cardRaised)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var toggleKeyButton: some View {
+        Button { showKey.toggle() } label: {
+            Image(systemName: showKey ? "eye.slash" : "eye")
+                .foregroundStyle(theme.labelMuted)
         }
     }
 

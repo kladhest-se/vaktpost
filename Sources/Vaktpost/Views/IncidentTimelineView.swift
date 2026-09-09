@@ -36,36 +36,9 @@ struct IncidentTimelineView: View {
     @State private var source: SourceFilter = .all
     @State private var query = ""
     @State private var refreshing = false
-
-    private var allEvents: [IncidentEvent] {
-        IncidentTimeline.build([
-            (.firewall, store.firewallLog),
-            (.system, store.systemLog),
-            (.authentication, store.authLog),
-            (.dhcp, store.dhcpLog),
-            (.vpn, store.openvpnLog)
-        ])
-    }
-
-    private var events: [IncidentEvent] {
-        allEvents.filter { event in
-            let severityMatches: Bool
-            switch scope {
-            case .incidents: severityMatches = event.severity != .information
-            case .attention: severityMatches = event.severity == .attention
-            case .all: severityMatches = true
-            }
-            let sourceMatches = source.source == nil || source.source == event.source
-            let queryMatches = query.isEmpty
-                || event.line.text.localizedCaseInsensitiveContains(query)
-                || event.source.rawValue.localizedCaseInsensitiveContains(query)
-            return severityMatches && sourceMatches && queryMatches
-        }
-    }
-
-    private var incidentCount: Int {
-        allEvents.filter { $0.severity != .information }.count
-    }
+    @State private var allEvents: [IncidentEvent] = []
+    @State private var filteredEvents: [IncidentEvent] = []
+    @State private var incidentCount: Int = 0
 
     private let sections: [DashboardStore.Section] = [
         .firewallLog, .systemLog, .authLog, .dhcpLog, .openvpnLog
@@ -112,18 +85,18 @@ struct IncidentTimelineView: View {
                     )
                 }
 
-                if events.isEmpty {
+                if filteredEvents.isEmpty {
                     Notice(
                         symbol: scope == .all ? "clock" : "checkmark.seal",
                         title: emptyTitle,
-                        detail: allEvents.isEmpty
+                        detail: self.allEvents.isEmpty
                             ? "Refresh to retrieve the firewall, system, authentication, DHCP and VPN logs."
                             : "Change the source, severity or search filter to widen the timeline.",
-                        health: allEvents.isEmpty ? .idle : .ok
+                        health: self.allEvents.isEmpty ? .idle : .ok
                     )
                 } else {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(events) { event in
+                        ForEach(filteredEvents) { event in
                             NavigationLink {
                                 LogDetailView(line: event.line)
                             } label: {
@@ -148,8 +121,19 @@ struct IncidentTimelineView: View {
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle("Incident timeline")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await store.beginIncidentTimeline() }
-        .refreshable { await refresh() }
+        .task {
+            allEvents = IncidentTimeline.build([
+                (.firewall, store.firewallLog),
+                (.system, store.systemLog),
+                (.authentication, store.authLog),
+                (.dhcp, store.dhcpLog),
+                (.vpn, store.openvpnLog)
+            ])
+            filterEvents()
+        }
+        .onChange(of: scope) { filterEvents() }
+        .onChange(of: source) { filterEvents() }
+        .onChange(of: query) { filterEvents() }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { Task { await refresh() } } label: {
@@ -171,6 +155,31 @@ struct IncidentTimelineView: View {
         refreshing = true
         defer { refreshing = false }
         await store.refreshIncidentTimeline()
+    }
+
+    private func filterEvents() {
+        var count = 0
+        var result: [IncidentEvent] = []
+        for event in allEvents {
+            let severityMatches: Bool
+            switch scope {
+            case .incidents: severityMatches = event.severity != .information
+            case .attention: severityMatches = event.severity == .attention
+            case .all: severityMatches = true
+            }
+            let sourceMatches = source.source == nil || source.source == event.source
+            let queryMatches = query.isEmpty
+                || event.line.text.localizedCaseInsensitiveContains(query)
+                || event.source.rawValue.localizedCaseInsensitiveContains(query)
+            if severityMatches && sourceMatches && queryMatches {
+                result.append(event)
+                if event.severity != .information {
+                    count += 1
+                }
+            }
+        }
+        filteredEvents = result
+        incidentCount = count
     }
 }
 

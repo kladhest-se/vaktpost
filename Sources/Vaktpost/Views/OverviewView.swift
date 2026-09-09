@@ -40,7 +40,8 @@ struct OverviewView: View {
                                 .wobble(isEditingBinding.wrappedValue)
                         }
 
-                        ForEach(Array(visibleSections.enumerated()), id: \.element.self) { index, section in
+                        let indexedSections = Array(visibleSections.enumerated())
+                        ForEach(indexedSections, id: \.element.self) { index, section in
                             SectionView(
                                 section: section,
                                 title: section.displayName,
@@ -717,7 +718,7 @@ private struct SectionView: View {
                             .scaledFont(10, weight: .bold)
                             .foregroundStyle(.white)
                             .frame(width: 24, height: 24)
-                            .background(Color.red, in: Circle())
+                            .background(theme.bad, in: Circle())
                             .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
                     }
                     .accessibilityHidden(true)
@@ -763,7 +764,7 @@ private struct SectionView: View {
         .offset(y: liveOffset)
         .scaleEffect(isDragging ? 1.03 : 1.0)
         .opacity(isDragging ? 0.95 : 1.0)
-        .shadow(color: isDragging ? .black.opacity(0.2) : .clear,
+        .shadow(color: isDragging ? theme.label.opacity(0.15) : .clear,
                 radius: 12, y: isDragging ? 8 : 0)
         .zIndex(isDragging ? 1 : 0)
         .gesture(isEditing ? dragGesture : nil)
@@ -788,35 +789,6 @@ private struct SectionView: View {
     private func persistOrder(_ sections: [OverviewSection]) {
         guard let active = registry.active else { return }
         registry.setOverviewSectionOrder(active, sections)
-    }
-
-    private func moveSectionUp() {
-        guard let currentIndex = visibleSections.firstIndex(of: section),
-              currentIndex > 0 else { return }
-        var newSections = visibleSections
-        newSections.swapAt(currentIndex, currentIndex - 1)
-        visibleSections = newSections
-        persistOrder(newSections)
-    }
-    
-    private func moveSectionDown() {
-        guard let currentIndex = visibleSections.firstIndex(of: section),
-              currentIndex < visibleSections.count - 1 else { return }
-        var newSections = visibleSections
-        newSections.swapAt(currentIndex, currentIndex + 1)
-        visibleSections = newSections
-        persistOrder(newSections)
-    }
-}
-
-extension View {
-    @ViewBuilder
-    func `if`<Content>(_ condition: Bool, transform: (Self) -> Content) -> some View where Content: View {
-        if condition {
-            transform(self)
-        } else {
-            self
-        }
     }
 }
 

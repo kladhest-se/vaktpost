@@ -15,7 +15,7 @@ struct DiagnosticsView: View {
     @EnvironmentObject private var store: DashboardStore
     @EnvironmentObject private var registry: ServerRegistry
 
-    private var failing: [(section: DashboardStore.Section, message: String)] {
+    private var _failing: [(section: DashboardStore.Section, message: String)] {
         store.errors
             .map { (section: $0.key, message: $0.value) }
             .sorted { $0.section.displayName < $1.section.displayName }
@@ -28,9 +28,9 @@ struct DiagnosticsView: View {
                 NavigationLink("Data freshness") { DataFreshnessView() }
                     .foregroundStyle(theme.accentColor)
 
-                if !failing.isEmpty {
+                if !_failing.isEmpty {
                     GroupHeading(text: "Not working")
-                    ForEach(failing, id: \.section) { entry in
+                    ForEach(_failing, id: \.section) { entry in
                         Slab(rail: store.abandonedSections.contains(entry.section) ? .bad : .warn) {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack(alignment: .firstTextBaseline) {
@@ -239,11 +239,11 @@ struct DiagnosticsView: View {
     }
 
     private var summary: some View {
-        Slab(rail: failing.isEmpty ? .ok : .warn) {
+        Slab(rail: _failing.isEmpty ? .ok : .warn) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(failing.isEmpty
+                Text(_failing.isEmpty
                      ? "Everything the app asks for is answering"
-                     : "\(failing.count) of \(DashboardStore.Section.allCases.count) sections are failing")
+                     : "\(_failing.count) of \(DashboardStore.Section.allCases.count) sections are failing")
                     .scaledFont(14, weight: .semibold)
                     .foregroundStyle(theme.label)
                 Text("Nothing here is fetched — it is what the last refresh already found out.")

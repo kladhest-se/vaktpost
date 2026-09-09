@@ -260,8 +260,7 @@ actor FirewallClient {
 
     func log(_ source: PHPSnippet.LogSource, limit: Int, kind: LogLine.Kind) async throws -> [LogLine] {
         let value = try await rpc.run(.log(source, limit: limit))
-        let rows: [JSONValue]
-        if let dict = JSONDict(value) { rows = dict.list("data") } else { rows = value.arrayValue ?? [] }
+        let rows = JSONDict(value)?.list("data") ?? value.arrayValue ?? []
         // Log lines arrive as plain strings, newest last. Reversed so the most
         // recent is at the top, which is the order a person reads a log in.
         // Blank lines are dropped.

@@ -85,7 +85,6 @@ struct VPNView: View {
         }
     }
 
-    @ViewBuilder
     private var wireguardPane: some View {
         ForEach(store.wireguardTunnels) { tunnel in
             WireGuardCard(
@@ -96,7 +95,6 @@ struct VPNView: View {
         }
     }
 
-    @ViewBuilder
     private var ipsecPane: some View {
         ForEach(store.ipsecSAs) { IPsecCard(sa: $0) }
     }
@@ -111,7 +109,7 @@ struct VPNView: View {
 struct OpenVPNCard: View {
     @EnvironmentObject private var theme: ThemeManager
     let server: OpenVPNServerStatus
-    @ObservedObject var vpnThroughput: ThroughputTrackerV2
+    @ObservedObject var vpnThroughput: ThroughputTracker
 
     var body: some View {
         NavigationLink {
@@ -150,7 +148,7 @@ struct OpenVPNCard: View {
 struct OpenVPNDetailView: View {
     @EnvironmentObject private var theme: ThemeManager
     let server: OpenVPNServerStatus
-    @ObservedObject var vpnThroughput: ThroughputTrackerV2
+    @ObservedObject var vpnThroughput: ThroughputTracker
 
     var body: some View {
         ScrollView {
@@ -246,7 +244,7 @@ struct WireGuardCard: View {
     @EnvironmentObject private var theme: ThemeManager
     let tunnel: WireGuardTunnel
     let peers: [WireGuardPeer]
-    @ObservedObject var vpnThroughput: ThroughputTrackerV2
+    @ObservedObject var vpnThroughput: ThroughputTracker
 
     private var connected: Int {
         peers.filter { $0.health == .ok }.count

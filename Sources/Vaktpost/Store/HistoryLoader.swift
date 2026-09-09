@@ -26,7 +26,6 @@ final class HistoryLoader<Key: Hashable, Value>: ObservableObject {
         self.now = now
     }
 
-    @discardableResult
     func load(_ key: Key, force: Bool = false,
               fetch: @escaping @MainActor () async throws -> Value) async -> Bool {
         guard !Task.isCancelled else { return false }

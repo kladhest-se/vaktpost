@@ -1,5 +1,12 @@
 import Foundation
 
+/// Maximum elapsed time between samples before a throughput reading is discarded.
+///
+/// Beyond seven days the counters are almost certainly from a different interface
+/// or a rebooted box, so treating them as a counter reset (which they are) is
+/// correct, but the delta would be enormous and produce a bogus spike.
+private let maxThroughputElapsed: TimeInterval = 7 * 86_400
+
 /// Derives interface throughput from cumulative byte counters.
 ///
 /// The REST API reports lifetime `inbytes`/`outbytes` per interface, not a
@@ -15,6 +22,12 @@ final class ThroughputTracker: ObservableObject {
         var at: Date
         var inBps: Double
         var outBps: Double
+
+        init(at: Date, inBps: Double, outBps: Double) {
+            self.at = at
+            self.inBps = inBps
+            self.outBps = outBps
+        }
     }
 
     private struct Reading {
@@ -29,12 +42,18 @@ final class ThroughputTracker: ObservableObject {
     /// 60 points is half an hour at the default refresh, and two minutes at
     /// the interface screen's two-second poll. The live screen asks for more
     /// so its chart covers a useful span rather than the last ninety seconds.
-    init(capacity: Int = 60) {
+    ///
+    /// `bitsMultiplier` controls the output units: `8` produces bits per
+    /// second (LAN interfaces), `1` produces bytes per second (VPN tunnels).
+    init(capacity: Int = 60, bitsMultiplier: Double = 8) {
         self.capacity = capacity
+        self.bitsMultiplier = bitsMultiplier
     }
 
     private var last: [String: Reading] = [:]
     @Published private(set) var series: [String: [Point]] = [:]
+
+    private let bitsMultiplier: Double
 
     func ingest(_ interfaces: [InterfaceStat], at now: Date = Date()) {
         for iface in interfaces {
@@ -51,7 +70,7 @@ final class ThroughputTracker: ObservableObject {
 
             guard let previous = last[key] else { continue }
             let elapsed = now.timeIntervalSince(previous.at)
-            guard elapsed > 0.5, elapsed < 86400 * 7 else { continue }
+            guard elapsed > 0.5, elapsed < maxThroughputElapsed else { continue }
 
             let deltaIn = inBytes - previous.inBytes
             let deltaOut = outBytes - previous.outBytes
@@ -64,12 +83,39 @@ final class ThroughputTracker: ObservableObject {
             var points = series[key] ?? []
             points.append(Point(
                 at: now,
-                inBps: deltaIn * 8 / elapsed,
-                outBps: deltaOut * 8 / elapsed
+                inBps: deltaIn * bitsMultiplier / elapsed,
+                outBps: deltaOut * bitsMultiplier / elapsed
             ))
             if points.count > capacity { points.removeFirst(points.count - capacity) }
             series[key] = points
         }
+    }
+
+    /// Ingest a single key — used for VPN tunnels where the byte counts come
+    /// from the OpenVPN / WireGuard status endpoints rather than InterfaceStat.
+    func ingest(key: String, inBytes: Double, outBytes: Double, at now: Date = Date()) {
+        let prev = last[key]
+        defer { last[key] = Reading(at: now, inBytes: inBytes, outBytes: outBytes) }
+        guard let prev else { return }
+        let elapsed = now.timeIntervalSince(prev.at)
+        guard elapsed > 0.5, elapsed < maxThroughputElapsed else { return }
+
+        let deltaIn = inBytes - prev.inBytes
+        let deltaOut = outBytes - prev.outBytes
+
+        guard deltaIn >= 0, deltaOut >= 0 else {
+            series[key] = []
+            return
+        }
+
+        var points = series[key] ?? []
+        points.append(Point(
+            at: now,
+            inBps: deltaIn * bitsMultiplier / elapsed,
+            outBps: deltaOut * bitsMultiplier / elapsed
+        ))
+        if points.count > capacity { points.removeFirst(points.count - capacity) }
+        series[key] = points
     }
 
     func points(for device: String) -> [Point] { series[device] ?? [] }

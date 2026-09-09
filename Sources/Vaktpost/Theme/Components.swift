@@ -220,12 +220,15 @@ struct Notice: View {
 // MARK: - Formatting helpers
 
 enum Fmt {
-    static func bytes(_ v: Double) -> String {
-        let units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
+    private static func bytes(_ v: Double, units: [String]) -> String {
         var value = v
         var i = 0
         while value >= 1024, i < units.count - 1 { value /= 1024; i += 1 }
         return String(format: i == 0 ? "%.0f %@" : "%.1f %@", value, units[i])
+    }
+
+    static func bytes(_ v: Double) -> String {
+        bytes(v, units: ["B", "KiB", "MiB", "GiB", "TiB", "PiB"])
     }
 
     static func uptime(_ seconds: Int) -> String {
@@ -259,11 +262,7 @@ enum Fmt {
     }
 
     static func bytesPerSec(_ bps: Double) -> String {
-        let units = ["B/s", "KiB/s", "MiB/s", "GiB/s"]
-        var v = bps
-        var i = 0
-        while v >= 1024, i < units.count - 1 { v /= 1024; i += 1 }
-        return String(format: i == 0 ? "%.0f %@" : "%.1f %@", v, units[i])
+        bytes(bps, units: ["B/s", "KiB/s", "MiB/s", "GiB/s"])
     }
 }
 
@@ -355,20 +354,6 @@ struct Sparkline: View {
                     .frame(height: 1)
                     .offset(y: y - 0.5)
             }
-        }
-    }
-
-    private func yAxisLabels(in size: CGSize) -> some View {
-        VStack(spacing: 0) {
-            Text(Fmt.bytesPerSec(peak))
-                .scaledFont(8, design: .monospaced)
-                .foregroundStyle(theme.labelFaint.opacity(0.6))
-                .padding(.leading, 2)
-            Spacer()
-            Text("0")
-                .scaledFont(8, design: .monospaced)
-                .foregroundStyle(theme.labelFaint.opacity(0.6))
-                .padding(.leading, 2)
         }
     }
 
@@ -960,8 +945,8 @@ struct GatewayTrend: View {
 struct VPNSparklineRow: View {
     @EnvironmentObject private var theme: ThemeManager
     let name: String
-    let inPoints: [ThroughputTrackerV2.Point]
-    let outPoints: [ThroughputTrackerV2.Point]
+    let inPoints: [ThroughputTracker.Point]
+    let outPoints: [ThroughputTracker.Point]
     let latestIn: Double?
     let latestOut: Double?
 

@@ -1,6 +1,9 @@
 import Foundation
 import Combine
 
+/// Default number of points retained in time-series before old samples are discarded.
+private let defaultSeriesCapacity = 60
+
 /// Generic metric tracker that stores time-series readings.
 /// Used for system metrics history and gateway delay/loss trends.
 @MainActor
@@ -12,7 +15,7 @@ final class MetricTracker<Key: Hashable, Value: Numeric & Comparable>: Observabl
         var value: Value
     }
 
-    private let capacity = 60
+    private let capacity = defaultSeriesCapacity
     @Published private(set) var series: [Key: [Point]] = [:]
 
     /// Gauges are independent samples, not cumulative counters. Falling CPU,
@@ -46,7 +49,7 @@ final class GatewayMetricTracker: ObservableObject {
         var lossPercent: Double?
     }
 
-    private let capacity = 60
+    private let capacity = defaultSeriesCapacity
     @Published private(set) var series: [String: [Reading]] = [:]
 
     func ingest(key: String, delayMS: Double?, lossPercent: Double?, at now: Date = Date()) {
@@ -74,7 +77,7 @@ final class StateHistoryTracker: ObservableObject {
         var value: Int
     }
 
-    private let capacity = 60
+    private let capacity = defaultSeriesCapacity
     @Published private(set) var points: [Point] = []
 
     func ingest(current: Int, at now: Date = Date()) {
@@ -87,74 +90,4 @@ final class StateHistoryTracker: ObservableObject {
     func latest() -> Int? { points.last?.value }
 
     func reset() { points.removeAll() }
-}
-
-/// Throughput-specific tracker that stores in/out bytes and computes rates.
-@MainActor
-final class ThroughputTrackerV2: ObservableObject {
-
-    struct Point: Identifiable {
-        let id = UUID()
-        var at: Date
-        var inBps: Double
-        var outBps: Double
-
-        init(at: Date, inBps: Double, outBps: Double) {
-            self.at = at
-            self.inBps = inBps
-            self.outBps = outBps
-        }
-    }
-
-    private struct Reading {
-        var at: Date
-        var inBytes: Double
-        var outBytes: Double
-    }
-
-    private let capacity = 60
-    private var last: [String: Reading] = [:]
-    @Published private(set) var series: [String: [Point]] = [:]
-
-    func ingest(key: String, inBytes: Double, outBytes: Double, at now: Date = Date()) {
-        let prev = last[key]
-        defer { last[key] = Reading(at: now, inBytes: inBytes, outBytes: outBytes) }
-        guard let prev else { return }
-        let elapsed = now.timeIntervalSince(prev.at)
-        guard elapsed > 0.5, elapsed < 86400 * 7 else { return }
-
-        let deltaIn = inBytes - prev.inBytes
-        let deltaOut = outBytes - prev.outBytes
-
-        guard deltaIn >= 0, deltaOut >= 0 else {
-            series[key] = []
-            return
-        }
-
-        var points = series[key] ?? []
-        points.append(Point(
-            at: now,
-            inBps: deltaIn / elapsed,
-            outBps: deltaOut / elapsed
-        ))
-        if points.count > capacity { points.removeFirst(points.count - capacity) }
-        series[key] = points
-    }
-
-    func inPoints(for key: String) -> [Point] {
-        guard let points = series[key] else { return [] }
-        return points.map { Point(at: $0.at, inBps: $0.inBps, outBps: 0) }
-    }
-
-    func outPoints(for key: String) -> [Point] {
-        guard let points = series[key] else { return [] }
-        return points.map { Point(at: $0.at, inBps: 0, outBps: $0.outBps) }
-    }
-
-    func latest(for key: String) -> Point? { series[key]?.last }
-
-    func reset() {
-        last.removeAll()
-        series.removeAll()
-    }
 }

@@ -285,7 +285,7 @@ struct ClientDetailView: View {
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle(client.name)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: client.mac) {
+        .task(id: client.id) {
             vendor = nil
             let result = await MacVendorDatabase.shared.lookup(mac: client.mac)
             guard !Task.isCancelled else { return }
