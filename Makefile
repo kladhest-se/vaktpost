@@ -8,7 +8,7 @@
 # xcodebuild invocations, which is why `build` must stay the target that
 # compiles without booting anything.
 
-.PHONY: help project open build test run install archive clean \
+.PHONY: help project open build test run install archive clean oui \
 	destinations devices teams web
 
 PROJECT := Vaktpost.xcodeproj
@@ -31,7 +31,13 @@ help:
 	@echo "    make install DEVICE=FA371128-… TEAM_ID=ABCDE12345"
 	@echo ""
 	@echo "  make web             serve public-web/ on :8000"
+	@echo "  make oui             refresh the bundled IEEE MAC vendor database"
 	@echo "  make clean           remove the generated project and build products"
+
+oui:
+	@python3 Tools/generate_oui.py \
+		--output Resources/OUI/ieee-oui.bin \
+		--manifest Resources/OUI/README.md
 
 # ── Generating the project ───────────────────────────────────────────────────
 

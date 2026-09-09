@@ -23,6 +23,7 @@ targets:
     sources:
       - path: Sources/Vaktpost
       - path: Resources/Assets.xcassets
+      - path: Resources/OUI
     configFiles:
       Debug: Config/iOS.xcconfig
       Release: Config/iOS.xcconfig

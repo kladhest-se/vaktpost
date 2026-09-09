@@ -30,6 +30,7 @@ make test        # the tests, on a simulator
 make open        # generate the project and open it in Xcode
 make archive TEAM_ID=ABCDE12345
 make install DEVICE=00008132-… TEAM_ID=ABCDE12345
+make oui         # refresh the bundled IEEE MAC vendor database
 make web         # serve public-web/ on :8000
 ```
 
@@ -185,7 +186,7 @@ Each section fails independently: an uninstalled package or a privilege the key 
 
 ## Features
 
-**Clients.** pfSense exposes leases, ARP and static mappings as three unrelated tables. They are joined on MAC (falling back to IP) into one identity per device, which is how you actually think about "is the printer online". Tapping through shows the filter-log lines mentioning that IP.
+**Clients.** pfSense exposes leases, ARP and static mappings as three unrelated tables. They are joined on MAC (falling back to IP) into one identity per device, which is how you actually think about "is the printer online". Tapping through shows all associated addresses and leases, exact endpoint matches from the filter log, and the manufacturer from a compact offline copy of the official IEEE assignment lists. MAC addresses never leave the phone for vendor lookup.
 
 **Alerts.** pfSense has no alerts endpoint. Every item is derived on-device in `Models/Alert.swift` from state already fetched — gateways, stopped services, disk/memory/swap/mbuf pressure, state-table fill, available updates, certificate expiry, CARP maintenance mode, IPsec down. Thresholds live in one file.
 

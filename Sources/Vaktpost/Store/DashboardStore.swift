@@ -175,9 +175,6 @@ final class DashboardStore: ObservableObject {
     @Published var dhcpLog: [LogLine] = []
     @Published var openvpnLog: [LogLine] = []
 
-    /// Pre-computed index mapping IP prefixes to positions in `firewallLog`.
-    /// Built during refresh so `logLines(matching:)` is O(k) instead of O(n).
-    private var firewallLogIndex: [String: [Int]] = [:]
 
     @Published var openvpnServers: [OpenVPNServerStatus] = []
     @Published var openvpnClients: [OpenVPNServerStatus] = []
@@ -390,7 +387,6 @@ final class DashboardStore: ObservableObject {
     private func clearData() {
         Self.resetData(self)
         freshness.removeAll()
-        firewallLogIndex.removeAll()
         blockedHosts = []
         haproxyStatsAccessors = []
         haproxyInstalled = false
@@ -668,7 +664,6 @@ final class DashboardStore: ObservableObject {
         await loadSecondaryLogsIfNeeded()
         guard isCurrent(binding) else { return }
 
-        buildFirewallLogIndex()
 
         // VPN — all optional; a firewall may have none of these configured.
         _ = await runBatch(
@@ -961,6 +956,26 @@ final class DashboardStore: ObservableObject {
         guard !wantsSecondaryLogs else { return }
         wantsSecondaryLogs = true
         await loadSecondaryLogsIfNeeded()
+    }
+
+    func beginIncidentTimeline() async {
+        let binding = bindingID
+        let needsSecondaryLogs = !wantsSecondaryLogs
+        wantsSecondaryLogs = true
+        if firewallLog.isEmpty { await runSection(.firewallLog) }
+        guard isCurrent(binding) else { return }
+        if needsSecondaryLogs || systemLog.isEmpty || authLog.isEmpty || dhcpLog.isEmpty || openvpnLog.isEmpty {
+            await loadSecondaryLogsIfNeeded()
+        }
+    }
+
+    func refreshIncidentTimeline() async {
+        wantsSecondaryLogs = true
+        let binding = bindingID
+        for section: Section in [.firewallLog, .systemLog, .authLog, .dhcpLog, .openvpnLog] {
+            guard isCurrent(binding), !Task.isCancelled else { return }
+            await runSection(section)
+        }
     }
 
     private func loadSecondaryLogsIfNeeded() async {
@@ -1722,48 +1737,15 @@ final class DashboardStore: ObservableObject {
     }
 
     func logLines(matching ip: String) -> [LogLine] {
-        guard !ip.isEmpty else { return [] }
-
-        // Extract a 3-octet prefix from the IP for index lookup.
-        let components = ip.split(separator: ".").prefix(3)
-        let prefix = components.joined(separator: ".")
-
-        // If the IP has at least 3 octets, use the index for fast lookup.
-        if components.count == 3, let indices = firewallLogIndex[prefix] {
-            // Gather unique lines from the index, preserving order.
-            var seen = Set<Int>()
-            var result: [LogLine] = []
-            for idx in indices where seen.insert(idx).inserted {
-                let line = firewallLog[idx]
-                if line.source?.contains(ip) ?? false
-                    || line.destination?.contains(ip) ?? false
-                    || line.text.contains(ip) {
-                    result.append(line)
-                }
-            }
-            return result
-        }
-
-        // Fall back to linear scan for partial matches or incomplete IPs.
-        return firewallLog.filter {
-            ($0.source?.contains(ip) ?? false)
-                || ($0.destination?.contains(ip) ?? false)
-                || $0.text.contains(ip)
-        }
+        let keys = Set([ip].compactMap(ClientAddress.key))
+        return firewallLog.filter { $0.involves(addresses: keys) }
     }
 
-    /// Builds `firewallLogIndex` by scanning every log line once.
-    private func buildFirewallLogIndex() {
-        firewallLogIndex.removeAll()
-        for (index, line) in firewallLog.enumerated() {
-            if let src = line.source {
-                let key = src.split(separator: ".").prefix(3).joined(separator: ".")
-                firewallLogIndex[key, default: []].append(index)
-            }
-            if let dst = line.destination {
-                let key = dst.split(separator: ".").prefix(3).joined(separator: ".")
-                firewallLogIndex[key, default: []].append(index)
-            }
+    func refreshClientInvestigation() async {
+        let binding = bindingID
+        for section: Section in [.leases, .arp, .statics, .hostOverrides, .aliases, .firewallLog] {
+            guard isCurrent(binding), !Task.isCancelled else { return }
+            await fetch(section)
         }
     }
 }

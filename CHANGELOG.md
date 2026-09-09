@@ -1,5 +1,17 @@
 # Changelog
 
+## Offline MAC vendor lookup
+
+- Added a bundled 1.6 MB index built from the official IEEE MA-L, MA-M, MA-S and legacy IAB public listings.
+- Client investigations now show the manufacturer, assignment type and registered prefix without sending MAC addresses to another service.
+- Locally administered, randomized and multicast addresses are identified before lookup.
+
+## Incident timeline
+
+- Added a unified, chronological view of firewall, system, authentication, DHCP and OpenVPN events.
+- Added severity, source and text filters, per-source freshness, partial-failure handling and full-entry navigation.
+- Added timestamp normalization for structured, Unix and syslog dates.
+
 ## Unreleased — XML-RPC transport
 
 Replaces the pfSense REST API package with pfSense's built-in XML-RPC service.

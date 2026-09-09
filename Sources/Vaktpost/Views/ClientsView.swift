@@ -48,13 +48,14 @@ struct ClientsView: View {
                 // show the device as it was at the moment it was tapped, and
                 // the list behind it refreshes every thirty seconds.
                 if let client = store.clients.first(where: { $0.id == id }) {
-                    ClientDetailView(client: client)
+                    ClientDetailView(client: client).id(store.bindingID)
                 } else {
                     Notice(symbol: "questionmark.circle",
                            title: "That device is no longer in the list")
                 }
             }
         )
+        .onChange(of: store.bindingID) { _, _ in selection = nil }
     }
 
     /// Whichever of the client sections failed, if any.
@@ -99,7 +100,8 @@ struct ClientsView: View {
                             detail: failure,
                             health: .warn
                         )
-                    } else if rows.isEmpty {
+                    }
+                    if rows.isEmpty && clientFetchFailure == nil {
                         Notice(
                             symbol: "person.2.slash",
                             title: query.isEmpty ? "No clients seen" : "No matches",
@@ -200,85 +202,162 @@ struct ClientDetailView: View {
     @EnvironmentObject private var theme: ThemeManager
     @EnvironmentObject private var store: DashboardStore
     let client: NetworkClient
+    @State private var action = "All"
+    @State private var query = ""
+    @State private var refreshing = false
+    @State private var vendor: MacVendorLookupResult?
 
-    private var relatedLog: [LogLine] { store.logLines(matching: client.ip) }
+    private var investigation: ClientInvestigation {
+        ClientInvestigation(client: client, leases: store.leases, arp: store.arp,
+                            mappings: store.staticMappings, overrides: store.hostOverrides,
+                            aliases: store.aliases)
+    }
+
+    private var relatedLog: [LogLine] {
+        let keys = Set(investigation.addresses.compactMap(ClientAddress.key))
+        return store.firewallLog.filter { $0.involves(addresses: keys) }
+    }
+
+    private var filteredLog: [LogLine] {
+        relatedLog.filter { line in
+            let verdict = line.action ?? line.filterFields?.action
+            let matchesAction = action == "All" || (action == "Allowed" ? verdict == "pass" :
+                verdict == "block" || verdict == "reject")
+            return matchesAction && (query.isEmpty || line.text.localizedCaseInsensitiveContains(query))
+        }
+    }
+
+    private func refresh() async {
+        guard !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
+        await store.refreshClientInvestigation()
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Slab(rail: client.health, title: "Identity") {
+                PageHeader(title: "Client investigation", subtitle: client.name)
+                FreshnessView(sections: [.leases, .arp, .statics, .hostOverrides, .aliases], showNames: true)
+                Slab(rail: client.health, title: "Identity and names") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text(client.name)
-                                .scaledFont(18, weight: .bold)
-                                .foregroundStyle(theme.label)
+                            Text(client.name).scaledFont(18, weight: .bold)
                             Spacer()
                             StatusPill(text: client.presence, health: client.health)
                         }
-                        Text("from \(client.nameSource)")
-                            .scaledFont(11)
-                            .foregroundStyle(theme.labelFaint)
-                        Hairline()
-                        FieldRow(key: "IP", value: client.ip)
                         FieldRow(key: "MAC", value: client.mac)
-                        if LocalDevice.isThisDevice(client.ip) {
-                            // Said in words as well as the icon: an icon alone
-                            // leaves somebody guessing what it claims.
-                            HStack(spacing: 6) {
-                                Image(systemName: "iphone.gen3")
-                                    .scaledFont(11)
-                                Text("This is the device you are using")
-                                    .scaledFont(11)
-                            }
-                            .foregroundStyle(theme.accentColor)
-                        }
-
-                        // Every name this device has, not only the one that
-                        // won the title. The firewall alias is usually the one
-                        // to search a rule for, even where the DNS name reads
-                        // better at the top of a card.
-                        ForEach(client.knownNames, id: \.value) { entry in
-                            FieldRow(key: entry.source, value: entry.value,
-                                     mono: entry.source != "Description")
-                        }
-                        if let iface = client.interfaceName, !iface.isEmpty {
-                            FieldRow(key: "Interface", value: store.interfaceLabel(for: iface) ?? iface)
-                        }
+                        vendorFields
                         FieldRow(key: "Known from", value: client.sourceSummary, mono: false)
-                    }
-                }
-
-                if client.seenInLease || client.leaseEnds != nil {
-                    Slab(rail: .info, title: "DHCP") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            FieldRow(key: "Assignment", value: client.isStatic ? "static mapping" : "dynamic lease", mono: false)
-                            if let state = client.leaseState, !state.isEmpty {
-                                FieldRow(key: "Lease state", value: state)
-                            }
-                            if let ends = client.leaseEnds, !ends.isEmpty {
-                                FieldRow(key: "Expires", value: ends)
-                            }
+                        ForEach(investigation.names, id: \.self) { name in
+                            Text(name).scaledFont(12)
                         }
                     }
+                    .textSelection(.enabled)
                 }
-
-                GroupHeading(text: "Filter log")
-                if relatedLog.isEmpty {
-                    Slab(rail: .idle) {
-                        Text("No lines mentioning \(client.ip) in the last \(store.firewallLog.count) fetched. Widen the log limit in Settings to look further back.")
-                            .scaledFont(12)
-                            .foregroundStyle(theme.labelMuted)
-                    }
-                } else {
-                    ForEach(relatedLog.prefix(50)) { LogRow(line: $0) }
+                Slab(rail: .info, title: "Associated addresses") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(investigation.addresses, id: \.self) { ip in
+                            FieldRow(key: LocalDevice.isThisDevice(ip) ? "This device" : "Address", value: ip)
+                        }
+                        Text("Addresses come from the fetched ARP, DHCP and static mapping tables. Lease history may include addresses that have since been reassigned.")
+                            .scaledFont(12).foregroundStyle(theme.labelMuted)
+                    }.textSelection(.enabled)
+                }
+                records
+                GroupHeading(text: "Matching firewall log")
+                FreshnessView(sections: [.firewallLog], showNames: true)
+                Text("\(relatedLog.count) matching entries in \(store.firewallLog.count) fetched. These match address endpoints; they do not prove which device held an address at the time. Increase the log limit in Settings to look further back.")
+                    .scaledFont(12).foregroundStyle(theme.labelMuted)
+                Picker("Log action", selection: $action) {
+                    ForEach(["All", "Allowed", "Blocked"], id: \.self) { Text($0).tag($0) }
+                }.pickerStyle(.segmented)
+                InlineSearchField(text: $query, prompt: "Search matching log entries")
+                if filteredLog.isEmpty {
+                    Notice(symbol: "doc.text.magnifyingglass", title: "No matching entries in the fetched log")
+                }
+                LazyVStack(spacing: 10) {
+                    ForEach(filteredLog) { LogRow(line: $0) }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 28)
+            .padding(.horizontal, 16).padding(.vertical, 12)
         }
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle(client.name)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: client.mac) {
+            vendor = nil
+            let result = await MacVendorDatabase.shared.lookup(mac: client.mac)
+            guard !Task.isCancelled else { return }
+            vendor = result
+        }
+        .refreshable { await refresh() }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { Task { await refresh() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                }.disabled(refreshing).accessibilityLabel("Refresh client investigation")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var vendorFields: some View {
+        switch vendor {
+        case nil:
+            FieldRow(key: "Manufacturer", value: "Looking up…", mono: false)
+        case .found(let name, let prefix, let registry):
+            FieldRow(key: "Manufacturer", value: name, mono: false)
+            FieldRow(key: "IEEE assignment", value: "\(registry) · \(prefix)")
+            FieldRow(key: "Lookup", value: "Offline IEEE registry", mono: false)
+        case .locallyAdministered:
+            FieldRow(key: "Manufacturer", value: "Local or private MAC", mono: false)
+            Text("This address may be randomized or assigned locally, so its prefix does not reliably identify the hardware vendor.")
+                .scaledFont(11)
+                .foregroundStyle(theme.labelFaint)
+        case .multicast:
+            FieldRow(key: "Manufacturer", value: "Multicast address", mono: false)
+        case .unknown:
+            FieldRow(key: "Manufacturer", value: "Not found in bundled IEEE registry", mono: false)
+        case .invalid:
+            FieldRow(key: "Manufacturer", value: "Invalid or unavailable MAC", mono: false)
+        case .unavailable:
+            FieldRow(key: "Manufacturer", value: "Offline registry unavailable", mono: false)
+        }
+    }
+
+    private var records: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            GroupHeading(text: "Lease and neighbor evidence")
+            ForEach(Array(investigation.leases.enumerated()), id: \.offset) { _, lease in
+                Slab(rail: .info, title: "DHCP lease") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        FieldRow(key: "Address", value: lease.ip)
+                        FieldRow(key: "State", value: lease.state)
+                        FieldRow(key: "Interface", value: store.interfaceLabel(for: lease.interfaceName ?? "") ?? lease.interfaceName ?? "—")
+                        FieldRow(key: "Starts", value: lease.starts ?? "—")
+                        FieldRow(key: "Expires", value: lease.ends ?? "—")
+                    }
+                }
+            }
+            ForEach(Array(investigation.neighbors.enumerated()), id: \.offset) { _, entry in
+                Slab(rail: .info, title: "ARP observation") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        FieldRow(key: "Address", value: entry.ip)
+                        FieldRow(key: "Interface", value: store.interfaceLabel(for: entry.interfaceName ?? "") ?? entry.interfaceName ?? "—")
+                        FieldRow(key: "Expires in", value: entry.expiryDescription ?? "—")
+                    }
+                }
+            }
+            ForEach(Array(investigation.mappings.enumerated()), id: \.offset) { _, mapping in
+                Slab(rail: .info, title: "Static mapping") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        FieldRow(key: "Address", value: mapping.ip)
+                        FieldRow(key: "Description", value: mapping.descr ?? "—", mono: false)
+                        FieldRow(key: "Interface", value: store.interfaceLabel(for: mapping.interfaceName ?? "") ?? mapping.interfaceName ?? "—")
+                    }
+                }
+            }
+        }.textSelection(.enabled)
     }
 }
