@@ -23,6 +23,14 @@ struct NetworkClient: Identifiable {
     var seenInARP: Bool
     var seenInLease: Bool
     var online: Bool?
+    
+    // MARK: Traffic tracking
+    
+    var bytesIn: Double = 0
+    var bytesOut: Double = 0
+    var bytesInPerSec: Double = 0
+    var bytesOutPerSec: Double = 0
+    var lastTrafficUpdate: Date?
 
     /// The best name available.
     ///
@@ -279,3 +287,135 @@ struct HostOverride: Identifiable {
 
     var isUsable: Bool { !ip.isEmpty && !host.isEmpty }
 }
+
+/// A device ranked by how many data sources mention it.
+///
+/// Devices appearing in DHCP + ARP + static mappings are ranked highest,
+/// because they are the ones the user is most likely to care about.
+struct TopTalker: Identifiable {
+    var id: String { mac }
+    let mac: String
+    let ip: String
+    let hostname: String?
+    let sourceCount: Int
+
+    var rankLabel: String {
+        switch sourceCount {
+        case 4: return "DHCP + ARP + Static + DNS"
+        case 3: return "3 data sources"
+        case 2: return "2 data sources"
+        default: return "1 data source"
+        }
+    }
+}
+
+// MARK: - Network Diagnostics
+
+struct PingResult {
+    let host: String
+    let success: Bool
+    let avgMs: Double?
+    let message: String
+
+    init(_ d: JSONDict) {
+        host = d.string("host") ?? ""
+        success = d.bool("success") ?? false
+        avgMs = d.double("avgMs")
+        message = d.string("message", "error") ?? "unknown"
+    }
+}
+
+struct TracerouteResult {
+    let host: String
+    let hops: [TracerouteHop]
+
+    init(_ d: JSONDict) {
+        host = d.string("host") ?? ""
+        hops = d.list("hops").compactMap { JSONDict($0) }.map(TracerouteHop.init)
+    }
+}
+
+struct TracerouteHop {
+    let hop: Int
+    let detail: String
+    let latencies: [Double]
+
+    init(_ d: JSONDict) {
+        hop = d.int("hop") ?? 0
+        detail = d.string("detail", "ip") ?? "*"
+        latencies = d.list("latencies").compactMap { $0.doubleValue }
+    }
+}
+
+struct DNSLookupResult {
+    let host: String
+    let records: [DNSRecord]
+    let queryTime: Int?
+    let serverTimings: [DNSServerTiming]
+    let answers: [DNSAnswer]
+    let hasError: Bool
+
+    init(_ d: JSONDict) {
+        host = d.string("host") ?? ""
+        hasError = d.string("error") != nil
+        // dig format
+        records = d.list("records").compactMap { JSONDict($0) }.map(DNSRecord.init)
+        queryTime = d.int("queryTime")
+        serverTimings = d.list("serverTimings").compactMap { JSONDict($0) }.map(DNSServerTiming.init)
+        // nslookup fallback format
+        answers = d.list("answers").compactMap { JSONDict($0) }.map(DNSAnswer.init)
+    }
+}
+
+struct DNSRecord {
+    let name: String
+    let classType: String
+    let type: String
+    let value: String
+
+    init(_ d: JSONDict) {
+        name = d.string("name") ?? ""
+        classType = d.string("class") ?? ""
+        type = d.string("type") ?? ""
+        value = d.string("value") ?? ""
+    }
+}
+
+struct DNSServerTiming {
+    let server: String
+    let timeString: String
+
+    init(_ d: JSONDict) {
+        server = d.string("server") ?? ""
+        timeString = d.string("time") ?? "0 msec"
+    }
+}
+
+struct DNSAnswer {
+    let name: String?
+    let address: String?
+
+    init(_ d: JSONDict) {
+        name = d.string("name")
+        address = d.string("address")
+    }
+}
+
+/// Per-host traffic data from pfSense's Status > Traffic page.
+struct HostTraffic: Identifiable {
+    var id: String { "\(interface)|\(ip)" }
+    var interface: String
+    var ip: String
+    var hostname: String?
+    var bandwidthIn: Double
+    var bandwidthOut: Double
+    
+    init(_ d: JSONDict) {
+        interface = d.string("interface", "if") ?? "—"
+        ip = d.string("ip", "host") ?? "—"
+        hostname = d.string("hostname")
+        bandwidthIn = d.double("bandwidthIn", "inbytes", "in_bytes") ?? 0
+        bandwidthOut = d.double("bandwidthOut", "outbytes", "out_bytes") ?? 0
+    }
+}
+

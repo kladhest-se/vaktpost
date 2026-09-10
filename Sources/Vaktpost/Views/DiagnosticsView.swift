@@ -25,8 +25,6 @@ struct DiagnosticsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 summary
-                NavigationLink("Data freshness") { DataFreshnessView() }
-                    .foregroundStyle(theme.accentColor)
 
                 if !_failing.isEmpty {
                     GroupHeading(text: "Not working")

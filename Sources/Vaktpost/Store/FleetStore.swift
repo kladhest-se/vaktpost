@@ -1,5 +1,5 @@
 import Foundation
-import Combine
+import Observation
 
 struct FleetReading: Sendable {
     var cpuUsage: Double?
@@ -32,11 +32,11 @@ struct FleetSnapshot {
 /// Independent snapshots: polling never changes the selected dashboard server.
 /// Sequential checks cap firewall load and one failure does not stop the others.
 @MainActor
-final class FleetStore: ObservableObject {
+final class FleetStore: Observable {
     typealias Fetch = @MainActor (ServerProfile) async throws -> FleetReading
-    @Published private(set) var snapshots: [UUID: FleetSnapshot] = [:]
-    @Published private(set) var isRefreshing = false
-    @Published private(set) var checkingID: UUID?
+    private(set) var snapshots: [UUID: FleetSnapshot] = [:]
+    private(set) var isRefreshing = false
+    private(set) var checkingID: UUID?
     private var requestID = UUID()
     private var monitorID: UUID?
     private var task: Task<Void, Never>?
@@ -96,7 +96,7 @@ final class FleetStore: ObservableObject {
         }
     }
 
-    func monitor(_ profiles: [ServerProfile], interval: Duration = .seconds(60)) async {
+    func monitor(_ profiles: [ServerProfile], interval: Duration = .seconds(10)) async {
         let id = UUID()
         monitorID = id
         defer { if monitorID == id { stop() } }

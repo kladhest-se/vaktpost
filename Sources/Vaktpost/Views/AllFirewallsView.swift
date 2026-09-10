@@ -6,7 +6,7 @@ struct AllFirewallsView: View {
     @Environment(\.dashboardStore) private var dashboard: DashboardStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var fleet = FleetStore()
+    @State private var fleet = FleetStore()
     @State private var managing = false
 
     private struct Poll: Hashable {

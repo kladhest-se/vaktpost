@@ -30,5 +30,7 @@
     </array>
     <key>NSAppTransportSecurity</key>
     <dict/>
+    <key>NSFaceIDUsageDescription</key>
+    <string>Use Face ID to quickly and securely unlock Vaktpost</string>
 </dict>
 </plist>

@@ -21,4 +21,23 @@ Validation performed
 - Three additional DashboardBindingTests cover history reset and rejection of delayed success/error responses after rebinding. These were typechecked but not executed here.
 - Full iOS build, simulator execution, certificate UI interaction, and live pfSense integration remain unverified because simulator services were inaccessible in the execution environment. Compiler checks are not a substitute for those runtime checks.
 
+Additional fixes — 10 September 2026
+
+13. FleetStore converted from ObservableObject to @Observable (Swift 6 modernisation).
+14. ServerRegistry converted from ObservableObject to @Observable.
+15. DashboardStore scheduler closure fixed — uses `[self]` capture with proper Swift 6 actor crossing handling.
+16. ServerProfile now conforms to Sendable.
+17. Duplicate comment in ServerProfile.swift removed.
+18. @unchecked Sendable classes verified safe (Once and TrustState both use NSLock for internal synchronisation).
+19. Added RefreshSchedulerTests.swift with 5 tests covering scheduler lifecycle and intervals.
+20. Removed unused import Combine from RefreshScheduler.swift (re-added for TimeInterval conformance).
+21. AllFirewallsView changed to use @State instead of @StateObject for FleetStore.
+22. ThemeManager converted to @Observable; all @EnvironmentObject usages updated to @Environment.
+23. FleetStore monitor interval reduced from 60s to 10s for faster CPU update frequency.
+24. NetworkView refactored: removed search bar, added center header, added status filter picker (All/Up/Down).
+
+Remaining low-priority item:
+
+- DashboardStore refactoring (1,744 lines split into smaller stores).
+
 The original build workflow is retained: generate the Xcode project with XcodeGen (or use make build/make test). Generated Xcode projects, compiled products, temporary test packages, caches, and logs are excluded from this archive. Project source, assets, configuration, documentation, website files, and tests are included.

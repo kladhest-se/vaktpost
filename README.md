@@ -93,7 +93,7 @@ Every push runs a gate first: nothing generated would be committed, the
 structural suites pass, no internal hostname appears in the tree, and the app
 compiles. The suite worth knowing about is `readonly`, which asserts that this
 app still cannot write to a firewall — no non-GET method literal, `httpMethod`
-only ever `"GET"`, no write helper on `APIClient`, and no `URLSession`
+only ever `"GET"`, no write helper on `XMLRPCClient`, and no `URLSession`
 constructed outside it. The claim on the website is checked rather than
 remembered.
 
@@ -109,25 +109,6 @@ remembered.
    that makes XML-RPC work, and it is administrator-equivalent.
 4. In Vaktpost, enter the firewall address, that username and its password.
 5. Connect once, then **Pin last seen certificate** in the firewall's settings.
-
-## Previous firewall setup (REST, no longer used)
-
-1. Install `pfSense-pkg-RESTAPI` on the firewall.
-2. **System → REST API → Settings** — enable key authentication.
-3. **System → REST API → Keys** — create a key.
-4. Give the key's user a read-only privilege set. The endpoints used are listed below; nothing else is needed.
-5. Open Vaktpost, enter `https://<firewall>`, paste the key, connect.
-
-### TLS
-
-pfSense ships a self-signed webConfigurator certificate, so a stock `URLSession` refuses the connection.
-
-Two options, in order of preference:
-
-- **Pin the certificate.** Connect once with "allow untrusted" on, then in **Settings → TLS** tap *Pin last seen certificate*. From then on the connection is accepted only if the firewall presents that exact leaf, whether or not it chains to a trusted root. Re-pin after renewing the certificate.
-- **Allow untrusted TLS** with no pin. Works, but accepts any certificate — fine on a trusted LAN, weak over the internet.
-
-If you front the firewall with a proper certificate (ACME package, or HAProxy in front), leave both off and normal validation applies.
 
 ## What it runs
 
@@ -169,48 +150,31 @@ Things the REST API could not reach at all:
 Each needs either a shell or a PHP function that writes, so the snippet rules
 exclude them. They are still present as empty sections rather than removed.
 
-## Endpoints used by the previous REST build
-
-| Screen | Endpoint |
-|---|---|
-| Overview | `status/system`, `system/version`, `firewall/states/size`, `status/gateways`, `status/services` |
-| Clients | `status/dhcp_server/leases`, `diagnostics/arp_table`, `services/dhcp_server/static_mappings` |
-| Network | `status/interfaces`, `diagnostics/arp_table` |
-| Logs | `status/logs/firewall`, `status/logs/system`, `status/logs/auth`, `status/logs/dhcp`, `status/logs/openvpn` |
-| VPN | `status/openvpn/servers`, `status/openvpn/clients`, `status/ipsec/sas`, `status/wireguard/tunnels`, `status/wireguard/peers` |
-| Firewall | `firewall/rules`, `firewall/aliases`, `firewall/nat/port_forwards` |
-| System | `status/carp`, `diagnostics/config_history/revisions`, `system/certificates`, `system/certificate_authorities`, `system/packages` |
-| System (on demand) | `diagnostics/tables` |
-
-Each section fails independently: an uninstalled package or a privilege the key lacks degrades that one card rather than the screen. Endpoints backed by optional packages (WireGuard, static mappings, CARP) are marked optional — once one 404s, it is retried every twentieth cycle instead of every refresh, so a firewall without WireGuard doesn't pay for dead calls every thirty seconds.
-
 ## Features
+
+**Overview.** Status, interfaces, system resources, gateways, services, firewall log, VPN, and client data — all configurable, reorderable, and show data freshness. CPU, memory, disk, and swap include sparklines showing recent history. Gateway latency and packet loss track over time with trend indicators.
+
+**VPN.** OpenVPN servers and clients, IPsec security associations, and WireGuard tunnels and peers — all with health status and connection details.
 
 **Clients.** pfSense exposes leases, ARP and static mappings as three unrelated tables. They are joined on MAC (falling back to IP) into one identity per device, which is how you actually think about "is the printer online". Tapping through shows all associated addresses and leases, exact endpoint matches from the filter log, and the manufacturer from a compact offline copy of the official IEEE assignment lists. MAC addresses never leave the phone for vendor lookup.
 
-**Alerts.** pfSense has no alerts endpoint. Every item is derived on-device in `Models/Alert.swift` from state already fetched — gateways, stopped services, disk/memory/swap/mbuf pressure, state-table fill, available updates, certificate expiry, CARP maintenance mode, IPsec down. Thresholds live in one file.
+**Incident timeline.** Filter, system, authentication, DHCP and OpenVPN logs are combined and ordered using the firewall's configured timezone. Severity, source and text filters narrow the view, and every event opens its original log entry.
 
-**Throughput sparklines.** The API reports lifetime byte counters, not rates. Consecutive samples are differenced client-side to get bits/sec, kept in a 60-point ring buffer (~30 min at the default refresh). A negative delta means the counter reset — interface bounce or reboot — and starts a fresh baseline rather than charting a spike. History is per-firewall and cleared on switch.
+**Alerts.** pfSense has no alerts endpoint. Every item is derived on-device from state already fetched — gateways, stopped services, disk/memory/swap/mbuf pressure, state-table fill, certificate expiry, CARP maintenance mode, IPsec down, Dynamic DNS mismatch. Thresholds live in one file. Alerts support acknowledgment and per-category muting.
+
+**Throughput sparklines.** The XML-RPC service reports lifetime byte counters, not rates. Consecutive samples are differenced client-side to get bits/sec, kept in a 60-point ring buffer (~30 min at the default refresh). A negative delta means the counter reset — interface bounce or reboot — and starts a fresh baseline rather than charting a spike. History is per-firewall and cleared on switch.
 
 **Multiple firewalls.** Each has its own keychain item, TLS settings, refresh interval and log limit. Switch from the Overview chip row or More. A single-server config from an earlier build is migrated on first launch.
 
-**Firewall browser.** Read-only rules, NAT port forwards and aliases, filterable by interface and searchable. The firewall objects are loaded lazily on first navigation to save bandwidth — they are large, static, and most users never look. v2 returns filter addresses as objects rather than strings; `FilterAddress` in `Models/FirewallModels.swift` renders both shapes.
+**Diagnostics.** Built-in ping, traceroute, and DNS lookup tools for network troubleshooting. Connection status, data freshness, and throughput sampling information are all visible in one place.
 
+**Field-name tolerance.** Model fields may change between pfSense releases, and several status endpoints return values that are sometimes strings and sometimes numbers. Responses are decoded into `JSONValue` and read through accessors that accept a list of candidate keys and coerce types (`Core/JSONValue.swift`). If a value shows as `—` on a newer version, add the new key name to the relevant accessor call — no other change needed.
 
-### What UniFi does that this cannot
+**Theming.** All four Catppuccin flavours (Latte, Frappé, Macchiato, Mocha) plus Auto mode. Seven accent colors. Custom app icons.
 
-Speed tests, DPI traffic inspection and IDS/IPS threat dashboards depend on gateway features pfSense doesn't expose through this API — Suricata and pfBlockerNG have no v2 endpoints at all. Dynamic DNS is missing for the same reason: the package exposes no dyndns endpoints. Those are absent by necessity, not oversight.
+## What this transport cannot read safely
 
-The firewall itself is the authority on what exists. To check on your own version:
-
-```sh
-curl -sk -H "X-API-Key: $KEY" https://firewall/api/v2/schema/openapi \
-  | jq -r '.paths | keys[]' | sort
-```
-
-## Field-name tolerance
-
-The REST API package renames model fields between releases, and several status endpoints return values that are sometimes strings and sometimes numbers. Responses are decoded into `JSONValue` and read through accessors that accept a list of candidate keys and coerce types (`Core/JSONValue.swift`). If a value shows as `—` on a newer package version, add the new key name to the relevant `d.string(...)` / `d.double(...)` call in `Models/Models.swift` — no other change needed.
+Speed tests, DPI traffic inspection and IDS/IPS threat dashboards depend on package-specific commands or shell access that the audited XML-RPC snippet allowlist does not permit. The app does read Dynamic DNS configuration and cached update status through pfSense's built-in PHP functions. Diagnostics shows which optional read functions are available on the connected firewall.
 
 ## Theming
 
@@ -239,21 +203,22 @@ Resources/Info.plist
 Sources/Vaktpost/
   App/VaktpostApp.swift        entry point + tab shell
   Theme/                       Catppuccin palettes, ThemeManager, components, sparkline
-  Core/                        JSONValue, ServerProfile + ServerRegistry, Keychain
-  Net/                         APIClient, TrustEvaluator (TLS pinning)
-  Models/                      status, clients, VPN, firewall objects, system, alerts
-  Store/                       DashboardStore, ThroughputTracker
+  Core/                        JSONValue, ServerProfile + ServerRegistry, Keychain, HapticFeedback, MacVendorDatabase
+  Net/                         XMLRPCClient, PHPSnippets, TrustEvaluator (TLS pinning)
+  Models/                      status, clients, VPN, firewall objects, system, alerts, diagnostics
+  Store/                       DashboardStore, ThroughputTracker, MetricTracker, RefreshScheduler
   Views/                       Overview, Clients, Network, Logs, More,
                                Alerts, VPN, Firewall, System, Servers,
-                               Settings, Onboarding
-Tests/VaktpostTests/           decoder, client join, throughput, health mapping
+                               Settings, Onboarding, Diagnostics
+Tests/VaktpostTests/           transport, decoder, binding, client, alert, and scheduler tests
+Resources/OUI/                 compact IEEE assignment index + source manifest
 Resources/Entitlements/        Entitlements (empty; nothing is required)
 public-web/                    project website (static, no build step)
 ```
 
 ## Notes
 
-- API keys are stored in the keychain, one item per firewall keyed by profile UUID, with `kSecAttrAccessibleAfterFirstUnlock`. Never in UserDefaults.
+- Passwords are stored in the keychain, one item per firewall keyed by profile UUID, with `kSecAttrAccessibleAfterFirstUnlock`. Never in UserDefaults.
 - Auto-refresh runs only while the app is in the foreground and is cancelled on backgrounding.
 - Temperature is null on most hardware until a thermal sensor module is loaded
   under **System → Advanced → Miscellaneous → Thermal Sensors**. On Intel

@@ -147,8 +147,31 @@ actor XMLRPCClient {
         }
     }
 
+    func run(_ snippet: PHPSnippet, params: [String: JSONValue], timeout: TimeInterval? = nil) async throws -> JSONValue {
+        do {
+            return try await queue.run {
+                do {
+                    return try await self.perform(snippet, params: params, timeout: timeout)
+                } catch let error as RPCError where error.isRetryable {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                    try Task.checkCancellation()
+                    return try await self.perform(snippet, params: params, timeout: timeout)
+                }
+            }
+        } catch is CancellationError {
+            throw RPCError.cancelled
+        }
+    }
+
     func runObject(_ snippet: PHPSnippet, timeout: TimeInterval? = nil) async throws -> JSONDict {
         guard let dict = JSONDict(try await run(snippet, timeout: timeout)) else {
+            throw RPCError.malformed(nil)
+        }
+        return dict
+    }
+
+    func runObject(_ snippet: PHPSnippet, params: [String: JSONValue], timeout: TimeInterval? = nil) async throws -> JSONDict {
+        guard let dict = JSONDict(try await run(snippet, params: params, timeout: timeout)) else {
             throw RPCError.malformed(nil)
         }
         return dict
@@ -287,6 +310,72 @@ actor XMLRPCClient {
         return try Self.decode(body)
     }
 
+    private func perform(_ snippet: PHPSnippet, params: [String: JSONValue], timeout: TimeInterval? = nil) async throws -> JSONValue {
+        try Task.checkCancellation()
+        guard profile.isConfigured else { throw RPCError.notConfigured }
+        guard let password = Keychain.password(for: profile.id), !password.isEmpty else {
+            throw RPCError.noCredentials
+        }
+        guard let base = URL(string: profile.baseURL.trimmingCharacters(in: .whitespaces)),
+              let url = URL(string: "/xmlrpc.php", relativeTo: base)
+        else { throw RPCError.badURL }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        if let timeout { request.timeoutInterval = timeout }
+        request.httpBody = Self.methodCall(script: snippet.script, params: params).data(using: .utf8)
+
+        let pair = "\(profile.username):\(password)"
+        if let encoded = pair.data(using: .utf8)?.base64EncodedString() {
+            request.setValue("Basic \(encoded)", forHTTPHeaderField: "Authorization")
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError {
+            switch error.code {
+            case .serverCertificateUntrusted,
+                 .serverCertificateHasBadDate,
+                 .serverCertificateHasUnknownRoot,
+                 .serverCertificateNotYetValid,
+                 .secureConnectionFailed:
+                throw RPCError.tls
+            case .cancelled:
+                throw RPCError.cancelled
+            case .notConnectedToInternet,
+                 .networkConnectionLost,
+                 .cannotConnectToHost,
+                 .cannotFindHost,
+                 .dnsLookupFailed:
+                throw RPCError.offline(error.localizedDescription)
+            default:
+                throw RPCError.transport(error.localizedDescription)
+            }
+        } catch is CancellationError {
+            throw RPCError.cancelled
+        } catch {
+            throw RPCError.transport(error.localizedDescription)
+        }
+
+        let body = String(data: data, encoding: .utf8)
+
+        switch (response as? HTTPURLResponse)?.statusCode ?? 0 {
+        case 200...299: break
+        case 401: throw RPCError.unauthorized
+        case 403: throw RPCError.forbidden
+        case let code:
+            if let body, body.contains("<fault>") {
+                return try Self.decode(body)
+            }
+            throw RPCError.transport("Firewall returned HTTP \(code).")
+        }
+
+        guard let body else { throw RPCError.malformed(nil) }
+        return try Self.decode(body)
+    }
+
     // MARK: Encoding
 
     static func methodCall(script: String) -> String {
@@ -295,6 +384,36 @@ actor XMLRPCClient {
         <methodCall>
         <methodName>pfsense.exec_php</methodName>
         <params><param><value><string>\(escape(script))</string></value></param></params>
+        </methodCall>
+        """
+    }
+
+    static func methodCall(script: String, params: [String: JSONValue]) -> String {
+        // Encode params as a JSON string, then base64 to avoid all quoting issues.
+        var parts: [String] = []
+        for (key, value) in params {
+            switch value {
+            case .string(let s):
+                parts.append("\"\(key)\":\"\(s)\"")
+            case .number(let n):
+                parts.append("\"\(key)\":\(n)")
+            case .bool(let b):
+                parts.append("\"\(key)\":\(b ? "true" : "false")")
+            case .null:
+                parts.append("\"\(key)\":null")
+            case .object, .array:
+                parts.append("\"\(key)\":null")
+            }
+        }
+        let paramsJSON = "{\(parts.joined(separator: ","))}"
+        let paramsB64 = Data(paramsJSON.utf8).base64EncodedString()
+        
+        let wrappedScript = "$_PARAMS = json_decode(base64_decode('\(paramsB64)'), true); \(script)"
+        return """
+        <?xml version="1.0"?>
+        <methodCall>
+        <methodName>pfsense.exec_php</methodName>
+        <params><param><value><string>\(escape(wrappedScript))</string></value></param></params>
         </methodCall>
         """
     }
@@ -331,10 +450,7 @@ actor XMLRPCClient {
     /// Enough to identify the failure, not enough to paste a page into an
     /// alert.
     static func excerpt(_ body: String) -> String? {
-        let text = body
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .trimmingCharacters(in: .whitespaces)
+        let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
         return text.count > 200 ? String(text.prefix(200)) + "…" : text
     }

@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 /// Custom environment keys for @Observable stores.
 ///
@@ -8,46 +9,60 @@ import SwiftUI
 // MARK: - Environment key wrappers
 
 private struct DashboardStoreEnvironmentKey: EnvironmentKey {
-    static var defaultValue: DashboardStore? = nil
+    @MainActor
+    static var defaultValue: DashboardStore { _defaultDashboardStore }
 }
 
 private struct ServerRegistryEnvironmentKey: EnvironmentKey {
-    static var defaultValue: ServerRegistry? = nil
+    @MainActor
+    static var defaultValue: ServerRegistry { _defaultServerRegistry }
 }
 
 private struct ThemeManagerEnvironmentKey: EnvironmentKey {
-    static var defaultValue: ThemeManager? = nil
+    @MainActor
+    static var defaultValue: ThemeManager { _defaultThemeManager }
 }
+
+// MARK: - Default instances
+
+@MainActor
+private let _defaultDashboardStore = DashboardStore(registry: ServerRegistry())
+
+@MainActor
+private let _defaultServerRegistry = ServerRegistry()
+
+@MainActor
+private let _defaultThemeManager = ThemeManager()
 
 extension EnvironmentValues {
     var dashboardStore: DashboardStore {
-        get { self[DashboardStoreEnvironmentKey.self]! }
+        get { self[DashboardStoreEnvironmentKey.self] }
         set { self[DashboardStoreEnvironmentKey.self] = newValue }
     }
     var serverRegistry: ServerRegistry {
-        get { self[ServerRegistryEnvironmentKey.self]! }
+        get { self[ServerRegistryEnvironmentKey.self] }
         set { self[ServerRegistryEnvironmentKey.self] = newValue }
     }
     var themeManager: ThemeManager {
-        get { self[ThemeManagerEnvironmentKey.self]! }
+        get { self[ThemeManagerEnvironmentKey.self] }
         set { self[ThemeManagerEnvironmentKey.self] = newValue }
     }
     
     /// Allow @Environment(\.themeManager) private var theme: ThemeManager
     var theme: ThemeManager {
-        get { self[ThemeManagerEnvironmentKey.self]! }
+        get { self[ThemeManagerEnvironmentKey.self] }
         set { self[ThemeManagerEnvironmentKey.self] = newValue }
     }
     
     /// Allow @Environment(\.dashboardStore) private var store: DashboardStore
     var store: DashboardStore {
-        get { self[DashboardStoreEnvironmentKey.self]! }
+        get { self[DashboardStoreEnvironmentKey.self] }
         set { self[DashboardStoreEnvironmentKey.self] = newValue }
     }
     
     /// Allow @Environment(\.serverRegistry) private var registry: ServerRegistry
     var registry: ServerRegistry {
-        get { self[ServerRegistryEnvironmentKey.self]! }
+        get { self[ServerRegistryEnvironmentKey.self] }
         set { self[ServerRegistryEnvironmentKey.self] = newValue }
     }
 }

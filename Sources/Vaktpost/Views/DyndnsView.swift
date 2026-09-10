@@ -27,7 +27,7 @@ struct DyndnsView: View {
         switch filter {
         case .all: break
         case .stale:
-            let staleIDs = Set(store.staleDyndns.map(\.id))
+            let staleIDs = Set(store.overviewLayout.staleDyndns.map(\.id))
             list = list.filter { staleIDs.contains($0.id) }
         case .disabled:
             list = list.filter { !$0.enabled }
@@ -63,7 +63,7 @@ struct DyndnsView: View {
                         summary
                         ForEach(entries) { entry in
                             DyndnsRow(entry: entry,
-                                      isStale: store.staleDyndns.contains { $0.id == entry.id })
+                                      isStale: store.overviewLayout.staleDyndns.contains { $0.id == entry.id })
                         }
                         if entries.isEmpty {
                             Notice(symbol: "magnifyingglass", title: "No matches")
@@ -84,7 +84,7 @@ struct DyndnsView: View {
     /// One line saying whether anything needs attention, so the answer does not
     /// require scrolling twenty cards.
     private var summary: some View {
-        let stale = store.staleDyndns.count
+        let stale = store.overviewLayout.staleDyndns.count
         let enabled = store.dyndns.filter(\.enabled).count
         return Slab(rail: stale > 0 ? .warn : .ok) {
             VStack(alignment: .leading, spacing: 4) {

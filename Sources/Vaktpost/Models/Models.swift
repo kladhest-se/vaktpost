@@ -22,6 +22,13 @@ struct SystemStatus {
     var cpuCount: Int?
     var serial: String?
     var biosVersion: String?
+    /// Per-core temperatures from `dev.cpu.N.temperature` sysctls.
+    struct CoreTemp: Equatable {
+        var core: Int
+        var temp: Double
+        var source: String
+    }
+    var coreTemps: [CoreTemp] = []
 
     init(_ d: JSONDict) {
         // Present under the REST transport, absent under XML-RPC where only
@@ -54,6 +61,14 @@ struct SystemStatus {
         } else {
             temperature = nil
         }
+        // Per-core temperatures from dev.cpu.N.temperature sysctls.
+        coreTemps = d.list("core_temps")
+            .compactMap { JSONDict($0) }
+            .compactMap { d2 -> CoreTemp? in
+                guard let core = d2.int("core"), let temp = d2.double("temp"), let source = d2.string("source")
+                else { return nil }
+                return CoreTemp(core: core, temp: temp, source: source)
+            }
         mbufUsage = d.double("mbuf_usage", "mbuf")
         uptimeSeconds = Self.uptime(d.value("uptime_sec", "uptime_seconds", "uptime"))
 

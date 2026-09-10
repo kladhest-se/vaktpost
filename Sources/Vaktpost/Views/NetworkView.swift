@@ -4,71 +4,52 @@ struct NetworkView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
 
-    @State private var query = ""
+    @State private var selectedTab = 0
+    @State private var interfaceFilter: InterfaceFilter = .all
+
+    enum InterfaceFilter: String, CaseIterable, Identifiable {
+        case all = "All", up = "Up", down = "Down"
+        var id: String { rawValue }
+    }
 
     var body: some View {
-        ScrollView {
-            PageHeader(title: "Network", subtitle: store.interfaces.count > 0 ? "\(store.interfaces.count) interfaces" : nil)
-            VStack(alignment: .leading, spacing: 12) {
-                InlineSearchField(text: $query, prompt: "Filter interfaces")
-                FreshnessView(sections: [.interfaces])
-                interfacesPane
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 28)
-        }
-        .background(theme.bg.ignoresSafeArea())
-        .refreshable { await store.refreshManually() }
-    }
-
-    // MARK: Interfaces
-
-    private var filteredInterfaces: [InterfaceStat] {
-        guard !query.isEmpty else { return store.interfaces }
-        let q = query.lowercased()
-        return store.interfaces.filter {
-            $0.name.lowercased().contains(q)
-                || $0.device.lowercased().contains(q)
-                || ($0.ipv4 ?? "").contains(q)
-        }
-    }
-
-    @ViewBuilder
-    private var interfacesPane: some View {
-        if let err = store.errors[.interfaces] {
-            Notice(symbol: "exclamationmark.triangle", title: "Interfaces unavailable",
-                   detail: err, health: .warn)
-        } else if filteredInterfaces.isEmpty {
-            Notice(symbol: "point.3.connected.trianglepath.dotted",
-                   title: query.isEmpty ? "No interfaces reported" : "No matches")
-        } else {
-            VStack(spacing: 12) {
-                HStack {
-                    Text("\(store.interfacesUp) of \(store.interfaces.count) up")
-                        .scaledFont(12, design: .monospaced)
-                        .foregroundStyle(theme.labelFaint)
-                    Spacer()
-                }
-
-                ForEach(filteredInterfaces) { iface in
-                    // Tappable: the card is a summary, the detail screen watches
-                    // the same interface at two-second resolution.
-                    NavigationLink {
-                        InterfaceDetailView(iface: iface)
-                    } label: {
-                        InterfaceCard(iface: iface)
+        NavigationView {
+            ScrollView {
+                PageHeader(title: "Network", subtitle: selectedTab == 0 ? "\(store.interfaces.count) interfaces" : "\(store.gatewayManager.gateways.count) gateways")
+                VStack(spacing: 0) {
+                    Picker("Network", selection: $selectedTab) {
+                        Text("Interfaces").tag(0)
+                        Text("Gateways").tag(1)
                     }
-                    .buttonStyle(.plain)
-                    // `swipeActions` would do nothing here — it only works inside a
-                    // List, and this is a LazyVStack. A long press works, and the
-                    // card carries a visible star as well, since a gesture with no
-                    // affordance is a feature nobody finds.
-                    .contextMenu {
-                        Button {
-                            store.toggleFavourite(iface)
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    
+                    if selectedTab == 0 {
+                        Picker("Status", selection: $interfaceFilter) {
+                            ForEach(InterfaceFilter.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 4)
+                        
+                        interfacesContent
+                    } else {
+                        gatewaysContent
+                    }
+                }
+                .refreshable { await store.refreshManually() }
+            }
+            .background(theme.bg.ignoresSafeArea())
+            .navigationTitle("Network")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if selectedTab == 0 && store.interfaces.count > 1 {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        NavigationLink {
+                            InterfaceComparisonView()
                         } label: {
-                            Label(store.isFavourite(iface) ? "Remove from Overview" : "Show on Overview",
-                                  systemImage: store.isFavourite(iface) ? "star.slash" : "star")
+                            Image(systemName: "arrow.left.arrow.right")
                         }
                     }
                 }
@@ -76,23 +57,95 @@ struct NetworkView: View {
         }
     }
 
+    // MARK: Interfaces
+
+    private var filteredInterfaces: [InterfaceStat] {
+        switch interfaceFilter {
+        case .all: return store.interfaces
+        case .up: return store.interfaces.filter { $0.status == "up" }
+        case .down: return store.interfaces.filter { $0.status != "up" }
+        }
+    }
+
+    private var interfacesContent: some View {
+        VStack(spacing: 12) {
+            FreshnessView(sections: [.interfaces])
+            
+            if let err = store.errors[.interfaces] {
+                Notice(
+                    symbol: "exclamationmark.triangle",
+                    title: "Could not read interface status",
+                    detail: err,
+                    health: .warn
+                )
+            }
+            
+            let interfaces = filteredInterfaces
+            if interfaces.isEmpty && store.errors[.interfaces] == nil {
+                Notice(
+                    symbol: "point.3.connected.trianglepath.dotted",
+                    title: interfaceFilter == .all ? "No interfaces reported" : "No \(interfaceFilter.rawValue) interfaces",
+                    detail: interfaceFilter == .all
+                        ? "The firewall did not report any interfaces."
+                        : nil
+                )
+            } else {
+                ForEach(interfaces) { iface in
+                    NavigationLink {
+                        InterfaceDetailView(iface: iface)
+                    } label: {
+                        InterfaceCard(iface: iface)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 28)
+    }
+
+    // MARK: Gateways
+
+    private var gatewaysContent: some View {
+        VStack(spacing: 12) {
+            FreshnessView(sections: [.gateways])
+            
+            if store.gatewayManager.gateways.isEmpty {
+                if let err = store.errors[.gateways] {
+                    Notice(
+                        symbol: "exclamationmark.triangle",
+                        title: "Could not read gateway status",
+                        detail: err,
+                        health: .warn
+                    )
+                } else {
+                    Notice(
+                        symbol: "routing.compose",
+                        title: "No gateways reported",
+                        detail: "The firewall did not report any gateways."
+                    )
+                }
+            } else {
+                ForEach(store.gatewayManager.gateways, id: \.name) { gw in
+                    GatewayCard(gateway: gw, gatewayMetrics: store.gatewayManager.gatewayMetrics)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 28)
+    }
+}
+
 /// One interface, as a card.
-///
-/// Rebuilt after a regex meant to remove the ARP pane matched to the wrong
-/// closing brace and took this and `ARPRow` with it. The ARP row is gone on
-/// purpose — Clients covers that table — but this was collateral.
 struct InterfaceCard: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
     let iface: InterfaceStat
 
     var body: some View {
-        Slab(rail: iface.health, trailing: iface.device) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .firstTextBaseline) {
-                    // Filled when pinned to the Overview. Tapping the star
-                    // toggles it without opening the interface, so the two
-                    // actions on this card stay distinct.
+        Slab(rail: iface.health) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
                     Button {
                         store.toggleFavourite(iface)
                     } label: {
@@ -102,60 +155,104 @@ struct InterfaceCard: View {
                                              ? theme.accentColor : theme.labelFaint)
                     }
                     .buttonStyle(.plain)
-
+                    
                     Text(iface.name)
-                        .scaledFont(16, weight: .semibold)
+                        .scaledFont(15, weight: .semibold)
                         .foregroundStyle(theme.label)
-
-                    Spacer(minLength: 8)
+                        .lineLimit(2)
+                    Spacer()
                     StatusPill(text: iface.status, health: iface.health)
                 }
-
-                Text(iface.addressLine)
-                    .scaledFont(12, design: .monospaced)
-                    .foregroundStyle(theme.labelMuted)
-                    .textSelection(.enabled)
-
-                if let media = iface.media, !media.isEmpty {
-                    Text(media)
-                        .scaledFont(11)
-                        .foregroundStyle(theme.labelFaint)
-                        .lineLimit(2)
+                
+                HStack(spacing: 10) {
+                    Text(iface.addressLine)
+                        .scaledFont(12, weight: .medium, design: .monospaced)
+                        .foregroundStyle(theme.labelMuted)
+                    Spacer()
+                    if let media = iface.media, !media.isEmpty {
+                        Text(media)
+                            .scaledFont(10, weight: .semibold, design: .monospaced)
+                            .foregroundStyle(theme.labelFaint)
+                    }
                 }
-
-                HStack(spacing: 0) {
-                    traffic("IN", iface.inBytes, theme.ok)
-                    traffic("OUT", iface.outBytes, theme.info)
+                
+                if let inBytes = iface.inBytes, let outBytes = iface.outBytes {
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("IN")
+                                .scaledFont(10, weight: .bold, design: .rounded)
+                                .tracking(0.8)
+                                .foregroundStyle(theme.labelFaint)
+                            Text(Fmt.bytes(inBytes))
+                                .scaledFont(13, weight: .medium, design: .monospaced)
+                                .foregroundStyle(theme.ok)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("OUT")
+                                .scaledFont(10, weight: .bold, design: .rounded)
+                                .tracking(0.8)
+                                .foregroundStyle(theme.labelFaint)
+                            Text(Fmt.bytes(outBytes))
+                                .scaledFont(13, weight: .medium, design: .monospaced)
+                                .foregroundStyle(theme.info)
+                        }
+                    }
                 }
-
-                // The same chart the Overview draws. Lifetime counters say how
-                // much has gone through an interface since boot; they say
-                // nothing about whether anything is going through it now,
-                // which is what somebody scanning this list wants.
+                
                 ThroughputChart(
                     tracker: store.throughput,
                     store: store,
                     device: iface.seriesKey,
-                    // The same height as the Overview's. A 44-point strip is
-                    // a sparkline; these are the charts somebody came to the
-                    // Network tab to read.
-                    height: 110
+                    height: 44
                 )
             }
         }
     }
-
-    private func traffic(_ label: String, _ bytes: Double?, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .scaledFont(10, weight: .bold, design: .rounded)
-                .tracking(0.8)
-                .foregroundStyle(theme.labelFaint)
-            Text(bytes.map(Fmt.bytes) ?? "—")
-                .scaledFont(15, weight: .semibold, design: .monospaced)
-                .foregroundStyle(color)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
 }
+
+/// One gateway, as a card.
+struct GatewayCard: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+    let gateway: GatewayStatus
+    let gatewayMetrics: GatewayMetricTracker
+
+    private var delayPoints: [Double] {
+        gatewayMetrics.readings(for: gateway.name).compactMap { $0.delayMS }
+    }
+
+    private var lossPoints: [Double] {
+        gatewayMetrics.readings(for: gateway.name).compactMap { $0.lossPercent }
+    }
+
+    var body: some View {
+        Slab(rail: gateway.health) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text(gateway.name)
+                        .scaledFont(15, weight: .semibold)
+                        .foregroundStyle(theme.label)
+                        .lineLimit(2)
+                    Spacer()
+                    StatusPill(text: gateway.status, health: gateway.health)
+                }
+                
+                Text(gateway.readout)
+                    .scaledFont(12, design: .monospaced)
+                    .foregroundStyle(theme.labelMuted)
+                
+                if let ip = gateway.monitorIP, !ip.isEmpty {
+                    Text("monitor \(ip)")
+                        .scaledFont(11, design: .monospaced)
+                        .foregroundStyle(theme.labelFaint)
+                }
+                
+                GatewayTrend(
+                    delayPoints: delayPoints,
+                    lossPoints: lossPoints,
+                    latestDelay: gateway.delayMS,
+                    latestLoss: gateway.lossPercent
+                )
+            }
+        }
+    }
 }

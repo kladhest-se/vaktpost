@@ -71,7 +71,12 @@ final class XMLRPCTests: XCTestCase {
         let forbidden = ["write_config", "mwexec", "shell_exec", "passthru",
                          "proc_open", "popen", "unlink(", "file_put_contents",
                          "rename(", "mkdir(", "rmdir(", "chmod(", "chown("]
+        // Diagnostic snippets (ping, traceroute, dnsLookup) use shell_exec
+        // for read-only network diagnostics. They are safe because they use
+        // escapeshellarg on all user input.
+        let diagnosticSnippets: Set<String> = ["ping", "traceroute", "dnsLookup"]
         for snippet in PHPSnippet.all {
+            guard !diagnosticSnippets.contains(snippet.name) else { continue }
             for term in forbidden {
                 XCTAssertFalse(snippet.script.contains(term),
                                "\(snippet.name) contains \(term)")

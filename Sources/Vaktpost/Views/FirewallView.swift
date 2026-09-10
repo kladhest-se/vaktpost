@@ -37,7 +37,7 @@ struct FirewallView: View {
             }
         )
         .task { updateInterfaceOptions() }
-        .onChange(of: store.rules.count) { _ in updateInterfaceOptions() }
+        .onChange(of: store.rules.count) { updateInterfaceOptions() }
     }
 
     private func updateInterfaceOptions() {

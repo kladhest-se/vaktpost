@@ -42,8 +42,8 @@ struct InterfaceDetailView: View {
         .background(theme.bg.ignoresSafeArea())
         .task {
             loadTask?.cancel()
-            await store.monitorInterface(iface.seriesKey)
-            await store.loadRRD(widenIfEmpty: true)
+            loadTask = Task { await store.loadRRD(widenIfEmpty: true) }
+            Task { await store.monitorInterface(iface.seriesKey) }
         }
         .refreshable { await store.loadRRD(force: true) }
         .navigationTitle(iface.name)

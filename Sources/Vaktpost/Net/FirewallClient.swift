@@ -77,6 +77,10 @@ actor FirewallClient {
         try await rpc.runList(.interfaceCounters).map(InterfaceStat.init)
     }
 
+    func hostTraffic() async throws -> [HostTraffic] {
+        try await rpc.runList(.hostTraffic).map(HostTraffic.init)
+    }
+
     func gateways() async throws -> [GatewayStatus] {
         try await rpc.runList(.gateways).map(GatewayStatus.init)
     }

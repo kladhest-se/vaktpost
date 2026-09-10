@@ -1,4 +1,6 @@
 import SwiftUI
+import Observation
+
 /// The active theme and accent, persisted to UserDefaults.
 ///
 /// Five choices, one list: Auto plus the four themes. There is no separate
@@ -15,7 +17,8 @@ import SwiftUI
 /// `objectWillChange`, so the tab tree would not repaint when the theme
 /// changed. `@Observable` with a `didSet` write-through does.
 @MainActor
-final class ThemeManager: ObservableObject {
+@Observable
+final class ThemeManager {
 
     /// Auto, or one theme pinned.
     enum Selection: Equatable, Hashable, Identifiable {

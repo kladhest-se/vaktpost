@@ -6,6 +6,7 @@ import Observation
 /// uninstalled package, a privilege the key lacks) degrades that card rather
 /// than the whole screen.
 @MainActor
+@Observable
 final class DashboardStore: Observable {
 
     enum Section: String, CaseIterable {
@@ -82,6 +83,12 @@ final class DashboardStore: Observable {
         case core, clients, vpn, system
     }
 
+    // MARK: Managers
+
+    let alertManager = AlertManager()
+    let gatewayManager = GatewayManager()
+    let overviewLayout = OverviewLayout()
+
     // MARK: Dependencies
 
     let registry: ServerRegistry
@@ -154,7 +161,6 @@ final class DashboardStore: Observable {
     var liveError: String?
     let vpnThroughput = ThroughputTracker(bitsMultiplier: 1)
     let systemMetrics = MetricTracker<String, Double>()
-    let gatewayMetrics = GatewayMetricTracker()
     let stateHistory = StateHistoryTracker()
     var prevFirewallCounts = FirewallCounts()
 
@@ -173,7 +179,6 @@ final class DashboardStore: Observable {
     var version: SystemVersion?
     var states: StateTableSize?
     var interfaces: [InterfaceStat] = []
-    var gateways: [GatewayStatus] = []
     var services: [ServiceStatus] = []
     var leases: [DHCPLease] = []
     var arp: [ARPEntry] = []
@@ -229,8 +234,6 @@ final class DashboardStore: Observable {
     /// every thirty seconds is wasted bandwidth.
     var isLoadingFirewallObjects = false
     private var hasLoadedFirewallObjects = false
-
-    var alerts: [VaktpostAlert] = []
 
     // MARK: Status
 
@@ -299,12 +302,10 @@ final class DashboardStore: Observable {
 
     init(registry: ServerRegistry, defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        mutedAlertCategories = Set(defaults.stringArray(forKey: "alerts.hidden.v2") ?? [])
-        defaults.removeObject(forKey: "alerts.muted")   // superseded; see above
-        alertsSilenced = defaults.bool(forKey: "alerts.silenced")
-        acknowledgedAlerts = Set(defaults.stringArray(forKey: "alerts.acknowledged") ?? [])
         let tempWarn = defaults.double(forKey: "alerts.tempWarn")
-        temperatureWarnOverride = tempWarn > 0 ? tempWarn : nil
+        alertManager.temperatureWarnOverride = tempWarn > 0 ? tempWarn : nil
+        overviewLayout.alertManager = alertManager
+        overviewLayout.gatewayManager = gatewayManager
         favouriteInterfaces = Set(defaults.stringArray(forKey: "interfaces.favourites") ?? [])
         let checkedAt = defaults.double(forKey: "packages.lastCheck")
         lastPackageCheck = checkedAt > 0 ? Date(timeIntervalSince1970: checkedAt) : nil
@@ -356,15 +357,14 @@ final class DashboardStore: Observable {
         lastCPUTicks = nil
         vpnThroughput.reset()
         systemMetrics.reset()
-        gatewayMetrics.reset()
+        gatewayManager.reset()
         resetRRD()
         missingEndpoints.removeAll()
         faultCounts.removeAll()
         refreshCount = 0
         await previousClient.invalidate()
         guard isCurrent(binding), isConfigured else { return }
-        await refresh()
-        guard isCurrent(binding) else { return }
+        Task { await refresh() }
         startAutoRefresh()
     }
 
@@ -372,7 +372,7 @@ final class DashboardStore: Observable {
     /// Automatically stays in sync because new properties are added here.
     private static let resetData: (DashboardStore) -> Void = { store in
         store.system = nil; store.version = nil; store.states = nil; store.carp = nil
-        store.interfaces = []; store.gateways = []; store.services = []
+        store.interfaces = []; store.gatewayManager.gateways = []; store.services = []
         store.leases = []; store.arp = []; store.staticMappings = []
         store.hostOverrides = []
         store.firewallLog = []; store.systemLog = []; store.authLog = []; store.dhcpLog = []; store.openvpnLog = []
@@ -388,7 +388,7 @@ final class DashboardStore: Observable {
         store.hasLoadedACME = false
         store.acmeCertificates = []; store.acmeAccounts = []
         store.haproxyFrontends = []; store.haproxyBackends = []
-        store.alerts = []; store.errors = [:]; store.connectionError = nil; store.lastRefresh = nil
+        store.alertManager.alerts = []; store.errors = [:]; store.connectionError = nil; store.lastRefresh = nil
     }
 
     private func clearData() {
@@ -408,6 +408,7 @@ final class DashboardStore: Observable {
         liveError = nil
         prevFirewallCounts = FirewallCounts()
         wantsSecondaryLogs = false
+        overviewLayout.sync(from: self)
     }
 
     // MARK: Refresh
@@ -587,7 +588,7 @@ final class DashboardStore: Observable {
                 .compactMap { JSONDict($0) }.map(Filesystem.init)
             self.version = SystemVersion(batch.object("firmware"))
             self.interfaces = batch.rows("interfaces").map(InterfaceStat.init)
-            self.gateways = batch.rows("gateways").map(GatewayStatus.init)
+            self.gatewayManager.gateways = batch.rows("gateways").map(GatewayStatus.init)
             self.services = batch.rows("services").map(ServiceStatus.init)
             return !self.interfaces.isEmpty
         }
@@ -598,8 +599,8 @@ final class DashboardStore: Observable {
         if succeededSections.contains(.states), let current = states?.current {
             stateHistory.ingest(current: current)
         }
-        for gw in gateways where succeededSections.contains(.gateways) {
-            gatewayMetrics.ingest(
+        for gw in gatewayManager.gateways where succeededSections.contains(.gateways) {
+            gatewayManager.ingest(
                 key: gw.name,
                 delayMS: gw.delayMS,
                 lossPercent: gw.lossPercent
@@ -620,15 +621,12 @@ final class DashboardStore: Observable {
         // These four batches are independent of each other. Running them
         // concurrently cuts the round-trip latency from ~4× to ~1× (plus the
         // core batch time), since pfSense serialises XML-RPC calls.
-        var clientsLoaded = false
-        var vpnLoaded = false
-        var systemLoaded = false
         
         // Capture previous firewall counts on the main actor before the task group.
         let savedCounts = FirewallCounts(
-            blocked: self.blockedRecently,
-            rejected: self.rejectedRecently,
-            passed: self.firewallLog.count - self.blockedRecently - self.rejectedRecently
+            blocked: self.overviewLayout.blockedRecently,
+            rejected: self.overviewLayout.rejectedRecently,
+            passed: self.firewallLog.count - self.overviewLayout.blockedRecently - self.overviewLayout.rejectedRecently
         )
 
         await withTaskGroup(of: (String, Bool).self) { group in
@@ -691,18 +689,8 @@ final class DashboardStore: Observable {
                 return ("system", success)
             }
 
-            for await (label, success) in group {
+            for await _ in group {
                 guard isCurrent(binding) else { return }
-                switch label {
-                case "clients":
-                    clientsLoaded = success
-                case "vpn":
-                    vpnLoaded = success
-                case "system":
-                    systemLoaded = success
-                default:
-                    break
-                }
             }
         }
         guard isCurrent(binding) else { return }
@@ -774,8 +762,9 @@ final class DashboardStore: Observable {
             connectionError = succeeded == 0 ? fatal : nil
         }
         lastRefresh = Date()
-        alerts = VaktpostAlert.build(from: self)
-        pruneAcknowledgements()
+        alertManager.alerts = VaktpostAlert.build(from: self)
+        alertManager.pruneAcknowledgements()
+        overviewLayout.sync(from: self)
     }
 
     /// Fetches the pf tables. Called when the System screen appears, not by
@@ -815,8 +804,8 @@ final class DashboardStore: Observable {
         guard isConfigured else { return }
         await fetch(section)
         guard isCurrent(binding) else { return }
-        alerts = VaktpostAlert.build(from: self)
-        pruneAcknowledgements()
+        alertManager.alerts = VaktpostAlert.build(from: self)
+        alertManager.pruneAcknowledgements()
     }
 
     /// Fetches a single section from the API and updates the store.
@@ -852,7 +841,7 @@ final class DashboardStore: Observable {
         case .interfaces:
             try await assign(binding, [section], fetcher: { try await client.interfaces() }) { self.interfaces = $0 }
         case .gateways:
-            try await assign(binding, [section], fetcher: { try await client.gateways() }) { self.gateways = $0 }
+            try await assign(binding, [section], fetcher: { try await client.gateways() }) { self.gatewayManager.gateways = $0 }
         case .services:
             try await assign(binding, [section], fetcher: { try await client.services() }) { self.services = $0 }
         case .leases:
@@ -917,7 +906,7 @@ final class DashboardStore: Observable {
     private func assign<T>(_ binding: UUID, _ sections: [Section], fetcher: @escaping () async throws -> T, assign: @escaping (T) -> Void) async throws {
         let value: T
         do {
-            value = try await Task.detached { [checkedBinding = binding, checkedSections = sections] in
+            value = try await Task.detached { [checkedBinding = binding] in
                 guard !Task.isCancelled else { throw RPCError.cancelled }
                 var fresh = SectionFreshness()
                 fresh.begin(checkedBinding, at: Date())
@@ -1104,6 +1093,11 @@ final class DashboardStore: Observable {
             }
             try? await Task.sleep(for: interval)
         }
+    }
+
+    /// Fetch interface counters for external use (e.g., comparison view polling).
+    func fetchInterfaceCounters() async throws -> [InterfaceStat] {
+        try await client.interfaceCounters()
     }
 
     /// Certificates close enough to expiry to badge.
@@ -1301,20 +1295,6 @@ final class DashboardStore: Observable {
 
     // MARK: Temperature threshold
 
-    /// Where the temperature alert fires, in °C, or nil to follow the sensor.
-    ///
-    /// The built-in thresholds are a guess about hardware the app cannot see:
-    /// 95 for a chipset, 80 for a CPU die. Those are reasonable defaults and
-    /// wrong for somebody who knows their board runs at 80 and wants to hear
-    /// about 82. Whoever owns the firewall knows what normal looks like on it,
-    /// so they get to say.
-    var temperatureWarnOverride: Double? {
-        didSet {
-            UserDefaults.standard.set(temperatureWarnOverride ?? 0,
-                                      forKey: UDKey.temperatureWarn.rawValue)
-        }
-    }
-
     // MARK: Firmware
 
     var isCheckingFirmware = false
@@ -1401,91 +1381,6 @@ final class DashboardStore: Observable {
                 || name.hasPrefix("wan") || name.hasPrefix("lan")
         }
         favouriteInterfaces.formUnion(wanted.map(\.seriesKey))
-    }
-
-    // MARK: Alert silencing
-
-    /// Categories the person has chosen not to be told about.
-    ///
-    /// Alerts are derived on the device from status already fetched, so this
-    /// filters what is shown rather than what is measured — a silenced
-    /// category still appears on its own screen, it just stops driving the
-    /// badge and the Overview banner.
-    var mutedAlertCategories: Set<String> = [] {
-        didSet {
-            // A new key, deliberately.
-            //
-            // `alerts.muted` was written by a build where the switches meant
-            // the opposite thing, so anyone who touched that screen has a
-            // stored set that now reads inverted — every kind silenced when
-            // they had silenced nothing. Changing what a stored value means
-            // without changing where it is stored is a migration, and this is
-            // the cheapest correct one: start again from the default.
-            UserDefaults.standard.set(Array(mutedAlertCategories), forKey: UDKey.mutedAlerts.rawValue)
-        }
-    }
-
-    var alertsSilenced: Bool = false {
-        didSet { UserDefaults.standard.set(alertsSilenced, forKey: UDKey.alertsSilenced.rawValue) }
-    }
-
-    /// Individual alerts the person has acknowledged.
-    ///
-    /// Keyed by signature rather than by identity, so the same condition
-    /// reported a degree hotter stays acknowledged. Persisted, because an
-    /// acknowledgement that expires when the app is backgrounded is not one.
-    ///
-    /// This is separate from silencing a whole category: silencing says "never
-    /// tell me about certificates", acknowledging says "I have seen this one".
-    /// Most things people want to stop seeing are the second kind.
-    var acknowledgedAlerts: Set<String> = [] {
-        didSet {
-            UserDefaults.standard.set(Array(acknowledgedAlerts), forKey: UDKey.acknowledgedAlerts.rawValue)
-        }
-    }
-
-    func acknowledge(_ alert: VaktpostAlert) {
-        acknowledgedAlerts.insert(alert.signature)
-    }
-
-    /// Forgets acknowledgements for conditions that are no longer true.
-    ///
-    /// Called after each refresh. Without it, acknowledging a gateway that was
-    /// down would silence that gateway going down again next month — the
-    /// acknowledgement would outlive the thing it was about.
-    private func pruneAcknowledgements() {
-        let present = Set(alerts.map(\.signature))
-        let stale = acknowledgedAlerts.subtracting(present)
-        if !stale.isEmpty { acknowledgedAlerts.subtract(stale) }
-    }
-
-    func unacknowledgeAll() {
-        acknowledgedAlerts.removeAll()
-    }
-
-    /// Acknowledged conditions that are still true.
-    var acknowledgedButPresent: [VaktpostAlert] {
-        alerts.filter { acknowledgedAlerts.contains($0.signature) }
-    }
-
-    /// Alerts after silencing. Everything on screen uses this; `alerts` stays
-    /// the unfiltered truth so the Alerts screen can say what is hidden.
-    var visibleAlerts: [VaktpostAlert] {
-        if alertsSilenced { return [] }
-        return alerts.filter {
-            !mutedAlertCategories.contains($0.category.rawValue)
-                && !acknowledgedAlerts.contains($0.signature)
-        }
-    }
-
-    /// Hidden by silencing, not by acknowledgement.
-    ///
-    /// Subtracting one count from the other would include acknowledged alerts,
-    /// which are reported separately — the screen would say the same alert was
-    /// hidden twice for two different reasons.
-    var silencedAlertCount: Int {
-        if alertsSilenced { return alerts.count }
-        return alerts.filter { mutedAlertCategories.contains($0.category.rawValue) }.count
     }
 
     /// What the firewall calls an interface.
@@ -1589,7 +1484,7 @@ final class DashboardStore: Observable {
     /// Shared by the Clients list and the ARP table so one device is not
     /// called two different things on two screens.
     func nameForAddress(_ ip: String) -> String? {
-        if let client = clients.first(where: { $0.ip == ip }), client.name != ip {
+        if let client = overviewLayout.clients.first(where: { $0.ip == ip }), client.name != ip {
             return client.name
         }
         return nil
@@ -1625,121 +1520,19 @@ final class DashboardStore: Observable {
         system = snapshot
     }
 
-    /// Dyndns entries whose last-pushed address no longer matches the address
-    /// on the interface they watch.
-    ///
-    /// This is the failure that matters and the one nothing else reports:
-    /// pfSense keeps no update history, so a dyndns client that quietly stopped
-    /// working looks identical to one that has had nothing to do. Comparing the
-    /// cache against the live interface address catches it.
-    var staleDyndns: [DyndnsEntry] {
-        dyndns.filter { entry in
-            guard entry.enabled, let cached = entry.cachedAddress, !cached.isEmpty else { return false }
-            guard let ifName = entry.interfaceName,
-                  let iface = interfaces.first(where: {
-                      $0.device == ifName || $0.name.lowercased() == ifName.lowercased()
-                  }),
-                  let current = iface.ipv4, !current.isEmpty
-            else { return false }
-            return cached != current
-        }
-    }
-
-    var criticalNotices: [SystemNotice] { notices }
-
-    var fullFilesystems: [Filesystem] {
-        filesystems.filter { $0.health == .warn || $0.health == .bad }
-    }
-
-     // MARK: Auto refresh
+    // MARK: Auto refresh
 
     func startAutoRefresh() {
         let interval = max(10, profile.refreshSeconds)
         refreshScheduler = RefreshScheduler(interval: TimeInterval(interval))
-        refreshScheduler?.start { [weak self] in
-            await self?.refresh()
+        refreshScheduler?.start { [self] in
+            await refresh()
         }
     }
 
     func stopAutoRefresh() {
         refreshScheduler?.stop(reason: .manual)
         refreshScheduler = nil
-    }
-
-    // MARK: Derived
-
-    var clients: [NetworkClient] {
-        NetworkClient.merge(leases: leases, arp: arp, statics: staticMappings,
-                            overrides: hostOverrides, aliases: aliases)
-    }
-
-    var interfacesUp: Int { interfaces.filter(\.isUp).count }
-
-    /// Best guess at the uplink: the interface a gateway monitors, else one
-    /// literally named WAN, else the first that is up.
-    var wanInterface: InterfaceStat? {
-        if let named = interfaces.first(where: { $0.name.lowercased().contains("wan") }) { return named }
-        return interfaces.first(where: \.isUp)
-    }
-
-    var servicesDown: [ServiceStatus] {
-        services.filter { $0.enabled != false && !$0.running }
-    }
-
-    var blockedRecently: Int {
-        firewallLog.filter { $0.action == "block" }.count
-    }
-
-    var rejectedRecently: Int {
-        firewallLog.filter { $0.action == "reject" }.count
-    }
-
-    var passedRecently: Int {
-        firewallLog.count - blockedRecently - rejectedRecently
-    }
-
-    var blockedDelta: Int? {
-        guard prevFirewallCounts.blocked > 0 else { return nil }
-        return blockedRecently - prevFirewallCounts.blocked
-    }
-
-    var rejectedDelta: Int? {
-        guard prevFirewallCounts.rejected > 0 else { return nil }
-        return rejectedRecently - prevFirewallCounts.rejected
-    }
-
-    var passedDelta: Int? {
-        guard prevFirewallCounts.passed > 0 else { return nil }
-        return passedRecently - prevFirewallCounts.passed
-    }
-
-    /// The tab badge. Silenced categories do not contribute — a badge that
-    /// counts things the person has asked not to see is just a red dot they
-    /// learn to ignore.
-    var criticalAlertCount: Int {
-        visibleAlerts.filter { $0.severity == .bad || $0.severity == .warn }.count
-    }
-
-    var hasVPN: Bool {
-        !openvpnServers.isEmpty || !openvpnClients.isEmpty
-            || !ipsecSAs.isEmpty || !wireguardTunnels.isEmpty
-    }
-
-    var overallHealth: Health {
-        if connectionError != nil { return .bad }
-        if alerts.contains(where: { $0.severity == .bad }) { return .bad }
-        if alerts.contains(where: { $0.severity == .warn }) { return .warn }
-        if interfaces.isEmpty && gateways.isEmpty { return .idle }
-        return .ok
-    }
-
-    var headline: String {
-        switch overallHealth {
-        case .ok: return "All monitored paths healthy"
-        case .warn: return "Degraded — \(criticalAlertCount) item\(criticalAlertCount == 1 ? "" : "s") need attention"
-        case .bad: return "Attention required"
-        case .idle, .info: return "Waiting for data"
-        }
     }
 
     func logLines(matching ip: String) -> [LogLine] {

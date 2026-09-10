@@ -274,7 +274,7 @@ struct SystemView: View {
                     .foregroundStyle(theme.labelMuted)
             }
         } else {
-            Slab(rail: store.fullFilesystems.isEmpty ? .ok : .warn) {
+            Slab(rail: store.overviewLayout.fullFilesystems.isEmpty ? .ok : .warn) {
                 VStack(spacing: 10) {
                     ForEach(store.filesystems) { fs in
                         Meter(

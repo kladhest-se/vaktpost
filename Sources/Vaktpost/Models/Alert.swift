@@ -129,7 +129,7 @@ struct VaktpostAlert: Identifiable {
                              title: "Cannot reach firewall", detail: msg))
         }
 
-        for gw in store.gateways where gw.health != .ok && gw.health != .idle {
+        for gw in store.gatewayManager.gateways where gw.health != .ok && gw.health != .idle {
             out.append(.init(
                 severity: gw.health,
                 category: .gateway,
@@ -138,7 +138,7 @@ struct VaktpostAlert: Identifiable {
             ))
         }
 
-        for svc in store.servicesDown {
+        for svc in store.overviewLayout.servicesDown {
             out.append(.init(severity: .bad, category: .service,
                              title: "\(svc.descr ?? svc.name) not running",
                              detail: "Service is enabled but reported as \(svc.status.isEmpty ? "stopped" : svc.status)."))
@@ -170,7 +170,7 @@ struct VaktpostAlert: Identifiable {
             // person lowering the warning does not silently lose the
             // distinction between warm and serious.
             var tempLimits = sys.temperatureThresholds
-            if let warn = store.temperatureWarnOverride {
+            if let warn = store.alertManager.temperatureWarnOverride {
                 tempLimits = (warn: warn, bad: max(warn + 10, tempLimits.bad))
             }
             if let temp = sys.temperature, temp >= tempLimits.warn {
@@ -204,7 +204,7 @@ struct VaktpostAlert: Identifiable {
         }
 
         // The firewall's own notices, one alert each.
-        for notice in store.criticalNotices where !notice.isFromThisApp {
+        for notice in store.overviewLayout.criticalNotices where !notice.isFromThisApp {
             out.append(.init(
                 severity: notice.health,
                 category: .system,
@@ -228,7 +228,7 @@ struct VaktpostAlert: Identifiable {
         // failing now. The whole history stays visible under System → Notices,
         // where it belongs; only something that failed in the last quarter of
         // an hour is worth an alert.
-        let ours = store.criticalNotices.filter(\.isFromThisApp)
+        let ours = store.overviewLayout.criticalNotices.filter(\.isFromThisApp)
         let recent = ours.filter { notice in
             guard let when = notice.date else { return true }   // undated: assume current
             return Date().timeIntervalSince(when) < 900
@@ -255,7 +255,7 @@ struct VaktpostAlert: Identifiable {
             ))
         }
 
-        for fs in store.fullFilesystems {
+        for fs in store.overviewLayout.fullFilesystems {
             out.append(.init(
                 severity: fs.health,
                 category: .capacity,
@@ -264,7 +264,7 @@ struct VaktpostAlert: Identifiable {
             ))
         }
 
-        for entry in store.staleDyndns {
+        for entry in store.overviewLayout.staleDyndns {
             out.append(.init(
                 severity: .warn,
                 category: .system,

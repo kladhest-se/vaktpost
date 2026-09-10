@@ -1,5 +1,5 @@
 import Foundation
-import Combine
+import Observation
 
 /// Default number of points retained in time-series before old samples are discarded.
 private let defaultSeriesCapacity = 60
@@ -7,7 +7,8 @@ private let defaultSeriesCapacity = 60
 /// Generic metric tracker that stores time-series readings.
 /// Used for system metrics history and gateway delay/loss trends.
 @MainActor
-final class MetricTracker<Key: Hashable, Value: Numeric & Comparable>: ObservableObject {
+@Observable
+final class MetricTracker<Key: Hashable, Value: Numeric & Comparable> {
 
     struct Point: Identifiable {
         let id = UUID()
@@ -16,7 +17,7 @@ final class MetricTracker<Key: Hashable, Value: Numeric & Comparable>: Observabl
     }
 
     private let capacity = defaultSeriesCapacity
-    @Published private(set) var series: [Key: [Point]] = [:]
+    private(set) var series: [Key: [Point]] = [:]
 
     /// Gauges are independent samples, not cumulative counters. Falling CPU,
     /// memory, disk, and swap readings are valid history, including the first.
@@ -41,7 +42,8 @@ final class MetricTracker<Key: Hashable, Value: Numeric & Comparable>: Observabl
 
 /// Gateway-specific tracker for delay and loss percentages.
 @MainActor
-final class GatewayMetricTracker: ObservableObject {
+@Observable
+final class GatewayMetricTracker {
 
     struct Reading {
         let at: Date
@@ -50,7 +52,7 @@ final class GatewayMetricTracker: ObservableObject {
     }
 
     private let capacity = defaultSeriesCapacity
-    @Published private(set) var series: [String: [Reading]] = [:]
+    private(set) var series: [String: [Reading]] = [:]
 
     func ingest(key: String, delayMS: Double?, lossPercent: Double?, at now: Date = Date()) {
         var readings = series[key] ?? []
@@ -69,7 +71,8 @@ final class GatewayMetricTracker: ObservableObject {
 
 /// Tracks state table current values across refreshes for trend visualization.
 @MainActor
-final class StateHistoryTracker: ObservableObject {
+@Observable
+final class StateHistoryTracker {
 
     struct Point: Identifiable {
         let id = UUID()
@@ -78,7 +81,7 @@ final class StateHistoryTracker: ObservableObject {
     }
 
     private let capacity = defaultSeriesCapacity
-    @Published private(set) var points: [Point] = []
+    private(set) var points: [Point] = []
 
     func ingest(current: Int, at now: Date = Date()) {
         var pts = points

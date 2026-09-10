@@ -18,6 +18,10 @@ struct SettingsView: View {
                 GroupHeading(text: "Alerts")
                 alertsSlab
 
+                if BiometricAuth.canUseBiometrics() {
+                    GroupHeading(text: "Lock screen")
+                    lockScreenSlab
+                }
 
                 GroupHeading(text: "Diagnostics")
                 NavigationLink { DiagnosticsView() } label: {
@@ -85,8 +89,8 @@ struct SettingsView: View {
                 // Turning something on to receive it is the direction people
                 // expect, and it makes the default state look like the default.
                 Toggle(isOn: Binding(
-                    get: { !store.alertsSilenced },
-                    set: { store.alertsSilenced = !$0 }
+                    get: { !store.alertManager.alertsSilenced },
+                    set: { store.alertManager.alertsSilenced = !$0 }
                 )) {
                     Text("Show alerts")
                         .scaledFont(14)
@@ -94,7 +98,7 @@ struct SettingsView: View {
                 }
                 .tint(theme.accentColor)
 
-                if !store.alertsSilenced {
+                if !store.alertManager.alertsSilenced {
                     Hairline()
                     Text("Kinds of alerts")
                         .scaledFont(12)
@@ -109,10 +113,10 @@ struct SettingsView: View {
                     // puts a secondary choice and costs nothing to leave there.
                     ForEach(VaktpostAlert.Category.allCases, id: \.rawValue) { category in
                         Toggle(isOn: Binding(
-                            get: { !store.mutedAlertCategories.contains(category.rawValue) },
+                            get: { !store.alertManager.mutedAlertCategories.contains(category.rawValue) },
                             set: { shown in
-                                if shown { store.mutedAlertCategories.remove(category.rawValue) }
-                                else { store.mutedAlertCategories.insert(category.rawValue) }
+                                if shown { store.alertManager.mutedAlertCategories.remove(category.rawValue) }
+                                else { store.alertManager.mutedAlertCategories.insert(category.rawValue) }
                             }
                         )) {
                             HStack(spacing: 8) {
@@ -143,21 +147,35 @@ struct SettingsView: View {
     @ViewBuilder
     private var temperatureMenu: some View {
         Button {
-            store.temperatureWarnOverride = nil
+            store.alertManager.temperatureWarnOverride = nil
         } label: {
-            Label("Automatic", systemImage: store.temperatureWarnOverride == nil
+            Label("Automatic", systemImage: store.alertManager.temperatureWarnOverride == nil
                   ? "checkmark" : "thermometer.medium")
         }
         ForEach([70, 75, 80, 85, 90, 95], id: \.self) { degrees in
             Button {
-                store.temperatureWarnOverride = Double(degrees)
+                store.alertManager.temperatureWarnOverride = Double(degrees)
             } label: {
-                if Int(store.temperatureWarnOverride ?? -1) == degrees {
+                if Int(store.alertManager.temperatureWarnOverride ?? -1) == degrees {
                     Label("Warn at \(degrees) °C", systemImage: "checkmark")
                 } else {
                     Text("Warn at \(degrees) °C")
                 }
             }
+        }
+    }
+
+    private var lockScreenSlab: some View {
+        Slab(rail: .info) {
+            Toggle(isOn: Binding(
+                get: { BiometricAuth.isEnabled },
+                set: { BiometricAuth.isEnabled = $0 }
+            )) {
+                Text("Require Face ID / Touch ID")
+                    .scaledFont(14)
+                    .foregroundStyle(theme.label)
+            }
+            .tint(theme.accentColor)
         }
     }
 

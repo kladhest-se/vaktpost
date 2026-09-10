@@ -152,24 +152,47 @@ struct PHPSnippet: Sendable {
     // alone is not interpretable. 81 °C is unremarkable for a chipset and
     // worth investigating on a CPU die. Probing the sysctls identifies the
     // sensor, which is what lets the app pick a threshold that is not a guess.
-    $temp = "";
+    //
+    // Per-core temperatures are read by probing dev.cpu.N.temperature for all
+    // cores. The first valid reading is also used as the primary temp_c for
+    // backward compatibility.
+    $temp = null;
     $temp_source = "";
+    $core_temps = [];
+    $cpu_count = (int) get_cpu_count();
     if (function_exists("get_single_sysctl")) {
+      // First, try to find the best single sensor (chipset > ACPI > first CPU).
       $probes = [
         "dev.pchtherm.0.temperature",
         "hw.acpi.thermal.tz0.temperature",
-        "dev.cpu.0.temperature",
       ];
       foreach ($probes as $oid) {
         $reading = get_single_sysctl($oid);
         if ($reading !== "" && $reading !== null) {
-          $temp = $reading;
+          $temp = floatval($reading);
           $temp_source = $oid;
           break;
         }
       }
+      // If no chipset/ACPI sensor, fall back to first CPU.
+      if ($temp === null && $cpu_count > 0) {
+        $firstCore = "dev.cpu.0.temperature";
+        $reading = get_single_sysctl($firstCore);
+        if ($reading !== "" && $reading !== null) {
+          $temp = floatval($reading);
+          $temp_source = $firstCore;
+        }
+      }
+      // Read all core temperatures.
+      for ($i = 0; $i < $cpu_count; $i++) {
+        $oid = "dev.cpu.{$i}.temperature";
+        $reading = get_single_sysctl($oid);
+        if ($reading !== "" && $reading !== null) {
+          $core_temps[] = ["core" => $i, "temp" => floatval($reading), "source" => $oid];
+        }
+      }
     }
-    if ($temp === "" || $temp === null) { $temp = get_temp(); }
+    if ($temp === null) { $temp = get_temp(); }
 
     // An array of ["name" => "1537", "descr" => "Super Micro 1537"].
     $platform = system_identify_specific_platform();
@@ -187,11 +210,13 @@ struct PHPSnippet: Sendable {
       "mem_usage" => floatval(mem_usage()),
       "swap_usage" => floatval(swap_usage()),
       "uptime_sec" => (int) get_uptime_sec(),
-      "temp_c" => ($temp === "" || $temp === null) ? null : floatval($temp),
+      "temp_c" => ($temp === null || $temp === false) ? null : $temp,
       // Which sensor answered. A chipset runs far hotter than a CPU die, so
       // the same number means different things and needs a different label
       // and a different threshold.
       "temp_source" => $temp_source,
+      // Per-core temperatures for multi-CPU systems.
+      "core_temps" => $core_temps,
       "cpu_load_avg" => [
         floatval(trim($load[0])), floatval(trim($load[1])), floatval(trim($load[2])),
       ],
@@ -368,6 +393,45 @@ struct PHPSnippet: Sendable {
         "inpkts" => $data["inpkts"],
         "outpkts" => $data["outpkts"],
       ];
+    }
+    $toreturn = ["data" => $rows];
+    """)
+
+    static let hostTraffic = PHPSnippet("host_traffic", """
+    require_once '/etc/inc/interfaces.inc';
+    require_once '/etc/inc/system.inc';
+    $rows = [];
+    foreach (get_configured_interface_with_descr() as $ifdescr => $ifname) {
+      $data = get_interface_info($ifdescr);
+      if (!is_array($data)) { continue; }
+      $arp = system_get_arp_table(false);
+      $arpMap = [];
+      if (is_array($arp) && is_array($arp["entry"])) {
+        foreach ($arp["entry"] as $entry) {
+          if (is_array($entry) && isset($entry["ip"])) {
+            $arpMap[$entry["ip"]] = $entry;
+          }
+        }
+      }
+      if (isset($data["ifhosttraffic"]) && is_array($data["ifhosttraffic"])) {
+        foreach ($data["ifhosttraffic"] as $host) {
+          if (!is_array($host)) { continue; }
+          $ip = isset($host["host"]) ? strval($host["host"]) : "";
+          $inbps = isset($host["inbytes"]) ? floatval($host["inbytes"]) : 0;
+          $outbps = isset($host["outbytes"]) ? floatval($host["outbytes"]) : 0;
+          $hostname = "";
+          if (isset($arpMap[$ip]) && isset($arpMap[$ip]["name"]) && !empty($arpMap[$ip]["name"])) {
+            $hostname = $arpMap[$ip]["name"];
+          }
+          $rows[] = [
+            "interface" => $ifname,
+            "ip" => $ip,
+            "hostname" => $hostname,
+            "bandwidthIn" => $inbps,
+            "bandwidthOut" => $outbps,
+          ];
+        }
+      }
     }
     $toreturn = ["data" => $rows];
     """)
@@ -887,24 +951,47 @@ struct PHPSnippet: Sendable {
     // alone is not interpretable. 81 °C is unremarkable for a chipset and
     // worth investigating on a CPU die. Probing the sysctls identifies the
     // sensor, which is what lets the app pick a threshold that is not a guess.
-    $temp = "";
+    //
+    // Per-core temperatures are read by probing dev.cpu.N.temperature for all
+    // cores. The first valid reading is also used as the primary temp_c for
+    // backward compatibility.
+    $temp = null;
     $temp_source = "";
+    $core_temps = [];
+    $cpu_count = (int) get_cpu_count();
     if (function_exists("get_single_sysctl")) {
+      // First, try to find the best single sensor (chipset > ACPI > first CPU).
       $probes = [
         "dev.pchtherm.0.temperature",
         "hw.acpi.thermal.tz0.temperature",
-        "dev.cpu.0.temperature",
       ];
       foreach ($probes as $oid) {
         $reading = get_single_sysctl($oid);
         if ($reading !== "" && $reading !== null) {
-          $temp = $reading;
+          $temp = floatval($reading);
           $temp_source = $oid;
           break;
         }
       }
+      // If no chipset/ACPI sensor, fall back to first CPU.
+      if ($temp === null && $cpu_count > 0) {
+        $firstCore = "dev.cpu.0.temperature";
+        $reading = get_single_sysctl($firstCore);
+        if ($reading !== "" && $reading !== null) {
+          $temp = floatval($reading);
+          $temp_source = $firstCore;
+        }
+      }
+      // Read all core temperatures.
+      for ($i = 0; $i < $cpu_count; $i++) {
+        $oid = "dev.cpu.{$i}.temperature";
+        $reading = get_single_sysctl($oid);
+        if ($reading !== "" && $reading !== null) {
+          $core_temps[] = ["core" => $i, "temp" => floatval($reading), "source" => $oid];
+        }
+      }
     }
-    if ($temp === "" || $temp === null) { $temp = get_temp(); }
+    if ($temp === null) { $temp = get_temp(); }
 
     // An array of ["name" => "1537", "descr" => "Super Micro 1537"].
     $platform = system_identify_specific_platform();
@@ -922,11 +1009,13 @@ struct PHPSnippet: Sendable {
       "mem_usage" => floatval(mem_usage()),
       "swap_usage" => floatval(swap_usage()),
       "uptime_sec" => (int) get_uptime_sec(),
-      "temp_c" => ($temp === "" || $temp === null) ? null : floatval($temp),
+      "temp_c" => ($temp === null || $temp === false) ? null : $temp,
       // Which sensor answered. A chipset runs far hotter than a CPU die, so
       // the same number means different things and needs a different label
       // and a different threshold.
       "temp_source" => $temp_source,
+      // Per-core temperatures for multi-CPU systems.
+      "core_temps" => $core_temps,
       "cpu_load_avg" => [
         floatval(trim($load[0])), floatval(trim($load[1])), floatval(trim($load[2])),
       ],

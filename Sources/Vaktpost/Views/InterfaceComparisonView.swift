@@ -1,42 +1,65 @@
 import SwiftUI
 
-/// Compare throughput between two interfaces.
+/// Compare throughput across multiple interfaces.
 ///
-/// Useful for WAN failover debugging: see whether the backup link actually
-/// picks up traffic when the primary goes down, or whether traffic stays
-/// pinned to one path. Shows the app's live samples (two-second resolution)
-/// side by side so the shapes are directly comparable.
+/// Select interfaces with checkboxes, then see all of them overlaid on a
+/// shared graph — one graph for inbound traffic and another for outbound.
+/// This makes it easy to spot which links are busy, whether traffic is
+/// pinned to a single path, or whether failover actually switches flows.
 
 struct InterfaceComparisonView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
 
-    @State private var leftKey: String?
-    @State private var rightKey: String?
+    @State private var selectedKeys: Set<String> = []
+    @State private var refreshInterval: TimeInterval = 5
+    @State private var pollingTask: Task<Void, Never>?
 
-    private var leftIface: InterfaceStat? {
-        guard let key = leftKey else { return nil }
-        return store.interfaces.first { $0.seriesKey == key }
+    private let refreshOptions: [(String, TimeInterval)] = [
+        ("0.2s", 0.2),
+        ("5s", 5),
+        ("10s", 10),
+        ("30s", 30),
+    ]
+
+    private static let selectedInterfacesKey = "InterfaceComparison.selectedInterfaces"
+    private static let refreshIntervalKey = "InterfaceComparison.refreshInterval"
+
+    private var interfaceColors: [String: Color] {
+        let palette = [theme.ok, theme.info, theme.warn, theme.teal, theme.mauve, theme.lavender, theme.peach, theme.maroon, theme.bad, theme.blue]
+        return Array(selectedKeys).enumerated().reduce(into: [:]) { dict, pair in
+            let (index, key) = pair
+            dict[key] = palette[index % palette.count]
+        }
     }
 
-    private var rightIface: InterfaceStat? {
-        guard let key = rightKey else { return nil }
-        return store.interfaces.first { $0.seriesKey == key }
-    }
-
-    private var leftPoints: [ThroughputTracker.Point] {
-        store.throughput.points(for: leftKey ?? "")
-    }
-
-    private var rightPoints: [ThroughputTracker.Point] {
-        store.throughput.points(for: rightKey ?? "")
+    private var selectedInterfaces: [InterfaceStat] {
+        store.interfaces
+            .filter { selectedKeys.contains($0.seriesKey) }
+            .sorted { store.interfaceLabel(for: $0.name) ?? $0.name < store.interfaceLabel(for: $1.name) ?? $1.name }
     }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                picker
-                charts
+                interfaceList
+                if !selectedInterfaces.isEmpty {
+                    VStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Refresh rate")
+                                .scaledFont(10, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                            Picker("Refresh", selection: $refreshInterval) {
+                                ForEach(refreshOptions, id: \.1) { label, interval in
+                                    Text(label).tag(interval)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                        inboundChart
+                        outboundChart
+                    }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 28)
@@ -45,168 +68,404 @@ struct InterfaceComparisonView: View {
         .navigationTitle("Compare")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            if leftKey == nil, let first = store.interfaces.first {
-                leftKey = first.seriesKey
+            if let saved = UserDefaults.standard.stringArray(forKey: InterfaceComparisonView.selectedInterfacesKey) {
+                selectedKeys = Set(saved)
             }
-            if rightKey == nil, store.interfaces.count > 1 {
-                let second = store.interfaces.dropFirst().first
-                rightKey = second?.seriesKey
+            if let savedInterval = UserDefaults.standard.object(forKey: InterfaceComparisonView.refreshIntervalKey) as? TimeInterval {
+                refreshInterval = savedInterval
+            }
+        }
+        .onChange(of: selectedKeys) { _, newValue in
+            UserDefaults.standard.set(Array(newValue), forKey: InterfaceComparisonView.selectedInterfacesKey)
+        }
+        .onChange(of: refreshInterval) { _, newValue in
+            UserDefaults.standard.set(newValue, forKey: InterfaceComparisonView.refreshIntervalKey)
+        }
+        .task(id: selectedKeys) {
+            startPolling()
+        }
+        .task(id: refreshInterval) {
+            restartPolling()
+        }
+    }
+
+    // MARK: Polling
+
+    private func startPolling() {
+        pollingTask?.cancel()
+        guard !selectedKeys.isEmpty else { return }
+        pollingTask = Task {
+            while !Task.isCancelled {
+                do {
+                    let counters = try await store.fetchInterfaceCounters()
+                    if !Task.isCancelled {
+                        store.throughput.ingest(counters, at: Date())
+                    }
+                } catch {
+                    // Polling errors are silent — the chart shows whatever
+                    // samples are already collected.
+                }
+                do {
+                    try await Task.sleep(for: .seconds(refreshInterval))
+                } catch {
+                    break
+                }
             }
         }
     }
 
-    // MARK: Picker
+    private func restartPolling() {
+        startPolling()
+    }
 
-    private var picker: some View {
+    // MARK: Interface list
+
+    private var interfaceList: some View {
         Slab(rail: .idle) {
-            HStack(spacing: 12) {
-                Picker("Left", selection: $leftKey) {
-                    ForEach(store.interfaces, id: \.seriesKey) { iface in
-                        Text(store.interfaceLabel(for: iface.name) ?? iface.name)
-                            .tag(iface.seriesKey as String?)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Interfaces")
+                        .scaledFont(12, weight: .semibold)
+                    Spacer()
+                    if !selectedKeys.isEmpty {
+                        Text("\(selectedKeys.count) selected")
+                            .scaledFont(10, weight: .medium)
+                            .foregroundStyle(theme.labelFaint)
                     }
                 }
-                .pickerStyle(.menu)
 
-                Text("vs")
-                    .scaledFont(12, weight: .medium)
-                    .foregroundStyle(theme.labelFaint)
-
-                Picker("Right", selection: $rightKey) {
-                    ForEach(store.interfaces, id: \.seriesKey) { iface in
-                        Text(store.interfaceLabel(for: iface.name) ?? iface.name)
-                            .tag(iface.seriesKey as String?)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 16) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(splitInterfaces.left, id: \.seriesKey) { iface in
+                                InterfaceCheckRow(
+                                    label: store.interfaceLabel(for: iface.name) ?? iface.name,
+                                    health: iface.health,
+                                    isSelected: selectedKeys.contains(iface.seriesKey),
+                                    action: {
+                                        toggleSelection(for: iface.seriesKey)
+                                    }
+                                )
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(splitInterfaces.right, id: \.seriesKey) { iface in
+                                InterfaceCheckRow(
+                                    label: store.interfaceLabel(for: iface.name) ?? iface.name,
+                                    health: iface.health,
+                                    isSelected: selectedKeys.contains(iface.seriesKey),
+                                    action: {
+                                        toggleSelection(for: iface.seriesKey)
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
-                .pickerStyle(.menu)
+                .padding(.horizontal, 2)
             }
-            .frame(minHeight: 40)
+        }
+    }
+
+    private var splitInterfaces: (left: [InterfaceStat], right: [InterfaceStat]) {
+        let mid = (store.interfaces.count + 1) / 2
+        return (Array(store.interfaces.prefix(mid)), Array(store.interfaces.suffix(store.interfaces.count - mid)))
+    }
+
+    private func toggleSelection(for key: String) {
+        if selectedKeys.contains(key) {
+            selectedKeys.remove(key)
+        } else {
+            selectedKeys.insert(key)
         }
     }
 
     // MARK: Charts
 
-    private var charts: some View {
-        Group {
-            if let left = leftIface {
-                comparisonSlab(side: "IN", left: leftPoints.map(\.inBps), right: rightPoints.map(\.inBps), label: store.interfaceLabel(for: left.name) ?? left.name, health: left.health)
-            }
-            if let left = leftIface {
-                comparisonSlab(side: "OUT", left: leftPoints.map(\.outBps), right: rightPoints.map(\.outBps), label: store.interfaceLabel(for: left.name) ?? left.name, health: left.health)
-            }
-        }
-        .transition(.opacity)
+    private var inboundChart: some View {
+        MultiSeriesChart(
+            title: "Inbound",
+            series: selectedInterfaces.map { iface -> (label: String, values: [Double], color: Color) in
+                let points = store.throughput.points(for: iface.seriesKey)
+                let label = store.interfaceLabel(for: iface.name) ?? iface.name
+                return (label, points.map(\.inBps), interfaceColors[iface.seriesKey] ?? theme.ok)
+            },
+            color: theme.ok
+        )
     }
 
-    private func comparisonSlab(side: String, left: [Double], right: [Double], label: String, health: Health) -> some View {
-        Slab(rail: health, title: "\(side) throughput") {
-            VStack(alignment: .leading, spacing: 8) {
-                sparklinePair(left, right, theme: theme)
-                HStack {
-                    Text(label)
-                        .scaledFont(10, weight: .medium)
-                        .foregroundStyle(theme.labelMuted)
-                    Spacer()
-                    if !left.isEmpty {
-                        Text(Rate.bits(left.max() ?? 0))
-                            .scaledFont(10, design: .monospaced)
-                            .foregroundStyle(theme.labelFaint)
-                    }
-                    if !right.isEmpty {
-                        Text(Rate.bits(right.max() ?? 0))
-                            .scaledFont(10, design: .monospaced)
-                            .foregroundStyle(theme.labelFaint)
-                    }
-                }
+    private var outboundChart: some View {
+        MultiSeriesChart(
+            title: "Outbound",
+            series: selectedInterfaces.map { iface -> (label: String, values: [Double], color: Color) in
+                let points = store.throughput.points(for: iface.seriesKey)
+                let label = store.interfaceLabel(for: iface.name) ?? iface.name
+                return (label, points.map(\.outBps), interfaceColors[iface.seriesKey] ?? theme.info)
+            },
+            color: theme.info
+        )
+    }
+}
+
+// MARK: - Interface check row
+
+private struct InterfaceCheckRow: View {
+    let label: String
+    let health: Health
+    let isSelected: Bool
+    let action: () -> Void
+
+    private var statusColor: Color {
+        switch health {
+        case .ok: return theme.ok
+        case .info: return theme.info
+        case .warn: return .yellow
+        case .bad: return .red
+        case .idle: return theme.labelFaint
+        }
+    }
+
+    @Environment(\.themeManager) private var theme: ThemeManager
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: isSelected ? "checkmark.square" : "square")
+                    .foregroundStyle(isSelected ? theme.accentColor : theme.labelFaint)
+                    .symbolRenderingMode(.multicolor)
+
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 6, height: 6)
+
+                Text(label)
+                    .scaledFont(13)
+
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Multi-series chart
+
+private struct MultiSeriesChart: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+
+    let title: String
+    let series: [(label: String, values: [Double], color: Color)]
+    var color: Color
+
+    @State private var showTooltip = false
+    @State private var tooltipX: CGFloat?
+    @State private var tooltipValues: [(label: String, value: Double, color: Color)]?
+
+    private var peak: Double {
+        series.flatMap(\.values).max() ?? 1
+    }
+
+    var body: some View {
+        Slab(rail: .idle, title: title) {
+            VStack(alignment: .leading, spacing: 0) {
+                chart
+                    .frame(minHeight: 160)
+                legend
             }
         }
     }
 
-    private func sparklinePair(_ left: [Double], _ right: [Double], theme: ThemeManager) -> some View {
+    private var chart: some View {
         GeometryReader { geo in
             ZStack {
-                // Left interface
-                Path { path in
-                    guard left.count > 1 else { return }
-                    let step = geo.size.width / CGFloat(left.count - 1)
-                    let peak = max(left.max() ?? 1, right.max() ?? 1, 1)
-                    let pts = left.enumerated().map { idx, v in
-                        CGPoint(x: CGFloat(idx) * step,
-                                y: geo.size.height - (CGFloat(v / peak) * geo.size.height * 0.92) - 2)
+                let chartHeight = max(160, geo.size.height - 80)
+                gridlines(width: geo.size.width, height: chartHeight)
+                ForEach(validSeries, id: \.label) { s in
+                    chartPath(s.values, width: geo.size.width, height: chartHeight, color: s.color, isArea: true)
+                    chartPath(s.values, width: geo.size.width, height: chartHeight, color: s.color, isArea: false)
+                }
+                if showTooltip, let x = tooltipX, let vals = tooltipValues {
+                    tooltipLine(at: x, width: geo.size.width, height: chartHeight)
+                    ForEach(Array(vals.enumerated()), id: \.offset) { idx, v in
+                        tooltipMarker(at: x, width: geo.size.width, height: chartHeight, color: v.color, value: v.value)
+                        tooltipLabel(text: v.label, value: v.value, at: x, width: geo.size.width, height: chartHeight, color: v.color)
                     }
-                    path.move(to: CGPoint(x: pts.first?.x ?? 0, y: geo.size.height))
-                    if let first = pts.first { path.addLine(to: first) }
-                    for point in pts.dropFirst() { path.addLine(to: point) }
-                    path.addLine(to: CGPoint(x: pts.last?.x ?? 0, y: geo.size.height))
-                    path.closeSubpath()
                 }
-                .fill(theme.ok.opacity(0.2))
-                .mask(alignment: .leading) {
-                    Rectangle().frame(width: geo.size.width * 0.5)
-                }
-
-                Path { path in
-                    guard left.count > 1 else { return }
-                    let step = geo.size.width / CGFloat(left.count - 1)
-                    let peak = max(left.max() ?? 1, right.max() ?? 1, 1)
-                    let pts = left.enumerated().map { idx, v in
-                        CGPoint(x: CGFloat(idx) * step,
-                                y: geo.size.height - (CGFloat(v / peak) * geo.size.height * 0.92) - 2)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { location in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    showTooltip.toggle()
+                    if showTooltip {
+                        let chartX = max(0, min(location.x, geo.size.width))
+                        if let sample = sampleAt(x: chartX, width: geo.size.width, height: max(160, geo.size.height - 80)) {
+                            tooltipX = sample.x
+                            tooltipValues = sample.values
+                        } else {
+                            showTooltip = false
+                            tooltipValues = nil
+                        }
+                    } else {
+                        tooltipValues = nil
                     }
-                    path.move(to: pts.first ?? .zero)
-                    for point in pts.dropFirst() { path.addLine(to: point) }
                 }
-                .stroke(theme.ok, style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
-                .mask(alignment: .leading) {
-                    Rectangle().frame(width: geo.size.width * 0.5)
-                }
-
-                // Right interface
-                Path { path in
-                    guard right.count > 1 else { return }
-                    let step = geo.size.width / CGFloat(right.count - 1)
-                    let peak = max(left.max() ?? 1, right.max() ?? 1, 1)
-                    let pts = right.enumerated().map { idx, v in
-                        CGPoint(x: CGFloat(idx) * step + geo.size.width * 0.5,
-                                y: geo.size.height - (CGFloat(v / peak) * geo.size.height * 0.92) - 2)
-                    }
-                    path.move(to: CGPoint(x: pts.first?.x ?? 0, y: geo.size.height))
-                    if let first = pts.first { path.addLine(to: first) }
-                    for point in pts.dropFirst() { path.addLine(to: point) }
-                    path.addLine(to: CGPoint(x: pts.last?.x ?? 0, y: geo.size.height))
-                    path.closeSubpath()
-                }
-                .fill(theme.info.opacity(0.2))
-                .mask(alignment: .trailing) {
-                    Rectangle().frame(width: geo.size.width * 0.5, alignment: .trailing)
-                }
-
-                Path { path in
-                    guard right.count > 1 else { return }
-                    let step = geo.size.width / CGFloat(right.count - 1)
-                    let peak = max(left.max() ?? 1, right.max() ?? 1, 1)
-                    let pts = right.enumerated().map { idx, v in
-                        CGPoint(x: CGFloat(idx) * step + geo.size.width * 0.5,
-                                y: geo.size.height - (CGFloat(v / peak) * geo.size.height * 0.92) - 2)
-                    }
-                    path.move(to: pts.first ?? .zero)
-                    for point in pts.dropFirst() { path.addLine(to: point) }
-                }
-                .stroke(theme.info, style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
-                .mask(alignment: .trailing) {
-                    Rectangle().frame(width: geo.size.width * 0.5, alignment: .trailing)
-                }
-
-                // Divider
-                Rectangle()
-                    .fill(theme.hairline)
-                    .frame(width: 1)
-                    .frame(maxHeight: .infinity)
-                    .frame(maxWidth: .infinity)
             }
         }
-        .frame(height: 100)
         .background(theme.hairline.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+
+    private var legend: some View {
+        WrapFlowLegend(series: series)
+            .padding(.vertical, 4)
+    }
+
+    private var validSeries: [(label: String, values: [Double], color: Color)] {
+        series.filter { $0.values.count > 1 }
+    }
+
+    private var estimatedLegendRows: Int {
+        max(1, (series.count + 1) / 2)
+    }
+
+    private func gridlines(width: CGFloat, height: CGFloat) -> some View {
+        ZStack {
+            ForEach(0..<4) { i in
+                let y = height * CGFloat(i) / 3
+                Rectangle()
+                    .fill(theme.hairline.opacity(0.08))
+                    .frame(height: 1)
+                    .offset(y: y - 0.5)
+            }
+        }
+    }
+
+    private func tooltipLine(at x: CGFloat, width: CGFloat, height: CGFloat) -> some View {
+        Path { p in
+            p.move(to: CGPoint(x: x, y: 0))
+            p.addLine(to: CGPoint(x: x, y: height))
+        }
+        .stroke(theme.label.opacity(0.3), style: StrokeStyle(lineWidth: 1))
+    }
+
+    private func tooltipMarker(at x: CGFloat, width: CGFloat, height: CGFloat, color: Color, value: Double) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: 6, height: 6)
+            .position(x: x, y: height - (CGFloat(value / peak) * height * 0.92) - 2)
+            .shadow(color: color.opacity(0.4), radius: 2)
+    }
+
+    private func tooltipLabel(text: String, value: Double, at x: CGFloat, width: CGFloat, height: CGFloat, color: Color) -> some View {
+        let y = height - (CGFloat(value / peak) * height * 0.92) - 2
+        let halfWidth: CGFloat = 40
+        let clampedX = min(max(x, halfWidth), max(halfWidth, width - halfWidth))
+        return Text("\(Fmt.bytesPerSec(value))")
+            .scaledFont(9, design: .monospaced)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.8), in: Capsule())
+            .position(x: clampedX, y: max(8, y - 12))
+    }
+
+    private func sampleAt(x: CGFloat, width: CGFloat, height: CGFloat) -> (x: CGFloat, values: [(label: String, value: Double, color: Color)])? {
+        let count = validSeries.first?.values.count ?? 0
+        guard count > 1 else { return nil }
+
+        let values = validSeries.compactMap { series -> (label: String, value: Double, color: Color)? in
+            guard series.values.count > 1 else { return nil }
+            let step = width / CGFloat(series.values.count - 1)
+            let index = Int((x / step).rounded()).clamped(to: 0...(series.values.count - 1))
+            return (label: series.label, value: series.values[index], color: series.color)
+        }
+        
+        guard !values.isEmpty else { return nil }
+        let firstSeries = validSeries.first { $0.values.count > 1 }!
+        let step = width / CGFloat(firstSeries.values.count - 1)
+        let index = Int((x / step).rounded()).clamped(to: 0...(firstSeries.values.count - 1))
+        let snappedX = CGFloat(index) * step
+        
+        return (snappedX, values)
+    }
+
+    @ViewBuilder
+    private func chartPath(_ values: [Double], width: CGFloat, height: CGFloat, color: Color, isArea: Bool) -> some View {
+        let pts = points(values, width: width, height: height)
+        if pts.count > 1 {
+            if isArea {
+                Path { p in
+                    p.move(to: CGPoint(x: pts[0].x, y: height))
+                    pts.forEach { p.addLine(to: $0) }
+                    p.addLine(to: CGPoint(x: pts[pts.count - 1].x, y: height))
+                    p.closeSubpath()
+                }
+                .fill(color.opacity(0.12))
+            }
+            Path { p in
+                p.move(to: pts[0])
+                pts.dropFirst().forEach { p.addLine(to: $0) }
+            }
+            .stroke(color, style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+        }
+    }
+
+    private func points(_ values: [Double], width: CGFloat, height: CGFloat) -> [CGPoint] {
+        guard values.count > 1 else { return [] }
+        let step = width / CGFloat(values.count - 1)
+        return values.enumerated().map { idx, v in
+            CGPoint(
+                x: CGFloat(idx) * step,
+                y: height - (CGFloat(v / peak) * height * 0.92) - 2
+            )
+        }
+    }
+}
+
+// MARK: - Wrap flow legend
+
+private struct WrapFlowLegend: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+    let series: [(label: String, values: [Double], color: Color)]
+
+    var body: some View {
+        VStack(spacing: 4) {
+            let columns = 2
+            let rowCount = (series.count + columns - 1) / columns
+            
+            ForEach(0..<rowCount, id: \.self) { row in
+                HStack {
+                    ForEach(0..<columns, id: \.self) { col in
+                        let idx = row * columns + col
+                        if idx < series.count {
+                            legendItem(series[idx])
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func legendItem(_ s: (label: String, values: [Double], color: Color)) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(s.color).frame(width: 6, height: 6)
+            Text(s.label)
+                .scaledFont(10, weight: .medium)
+                .foregroundStyle(theme.label)
+            if !s.values.isEmpty {
+                Text(Rate.bits(s.values.max() ?? 0))
+                    .scaledFont(9, design: .monospaced)
+                    .foregroundStyle(theme.labelFaint)
+            }
+        }
+    }
+}
+
+// Extension to clamp an integer to a range.
+private extension Int {
+    func clamped(to range: ClosedRange<Int>) -> Int {
+        Swift.max(range.lowerBound, Swift.min(range.upperBound, self))
     }
 }

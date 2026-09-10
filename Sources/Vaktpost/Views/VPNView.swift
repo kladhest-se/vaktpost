@@ -109,7 +109,7 @@ struct VPNView: View {
 struct OpenVPNCard: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     let server: OpenVPNServerStatus
-    @ObservedObject var vpnThroughput: ThroughputTracker
+    let vpnThroughput: ThroughputTracker
 
     var body: some View {
         NavigationLink {
@@ -148,7 +148,7 @@ struct OpenVPNCard: View {
 struct OpenVPNDetailView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     let server: OpenVPNServerStatus
-    @ObservedObject var vpnThroughput: ThroughputTracker
+    let vpnThroughput: ThroughputTracker
 
     var body: some View {
         ScrollView {
@@ -244,7 +244,7 @@ struct WireGuardCard: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     let tunnel: WireGuardTunnel
     let peers: [WireGuardPeer]
-    @ObservedObject var vpnThroughput: ThroughputTracker
+    let vpnThroughput: ThroughputTracker
 
     private var connected: Int {
         peers.filter { $0.health == .ok }.count

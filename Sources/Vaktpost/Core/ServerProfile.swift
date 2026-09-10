@@ -1,5 +1,4 @@
 import Foundation
-import Combine
 import Security
 import os.log
 
@@ -7,7 +6,7 @@ private let keychainLog = OSLog(subsystem: "se.kladhest.vaktpost", category: "Ke
 
 // MARK: - Profile
 
-struct ServerProfile: Codable, Identifiable, Equatable, Hashable {
+struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     var id: UUID = UUID()
     /// Scheme + host + optional port, e.g. "https://fw01.example.se" or "https://10.0.0.1:8443"
     var baseURL: String = ""
@@ -50,13 +49,13 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable {
 
 /// Holds every configured firewall and which one is on screen.
 @MainActor
-final class ServerRegistry: ObservableObject {
+final class ServerRegistry: Observable {
 
     private static let listKey = "servers.list"
     private static let activeKey = "servers.active"
 
-    @Published private(set) var servers: [ServerProfile] = []
-    @Published private(set) var activeID: UUID?
+    private(set) var servers: [ServerProfile] = []
+    private(set) var activeID: UUID?
 
     var active: ServerProfile? {
         guard let activeID else { return servers.first }
@@ -220,7 +219,6 @@ enum KeychainError: LocalizedError {
 
 /// One keychain item per firewall, keyed by profile UUID. Accessible after
 /// first unlock so a background refresh on a locked device still works.
-/// One keychain item per firewall, holding a webConfigurator password.
 ///
 /// This is a heavier secret than the API key it replaced. A key was scoped to
 /// the REST API and revocable on its own; this password also opens the

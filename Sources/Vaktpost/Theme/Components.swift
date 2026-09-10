@@ -45,7 +45,7 @@ enum Health {
 /// leading edge. The rail carries the semantic state so colour is never the
 /// only cue — the rail's presence and the label text both carry meaning.
 struct Slab<Content: View>: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
 
     var rail: Health = .info
     var title: String?
@@ -89,7 +89,7 @@ struct Slab<Content: View>: View {
 // MARK: - Status pill
 
 struct StatusPill: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let text: String
     var health: Health = .idle
 
@@ -109,7 +109,7 @@ struct StatusPill: View {
 
 /// A thin capsule meter. `value` is 0...1.
 struct Meter: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let label: String
     let value: Double
     let readout: String
@@ -142,7 +142,7 @@ struct Meter: View {
 // MARK: - Rows
 
 struct FieldRow: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let key: String
     let value: String
     var mono: Bool = true
@@ -162,7 +162,7 @@ struct FieldRow: View {
 }
 
 struct Hairline: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     var body: some View {
         Rectangle().fill(theme.hairline.opacity(0.5)).frame(height: 1)
     }
@@ -170,7 +170,7 @@ struct Hairline: View {
 
 /// Section heading used above groups of slabs.
 struct GroupHeading: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let text: String
 
     var body: some View {
@@ -190,7 +190,7 @@ struct GroupHeading: View {
 // MARK: - Empty / error states
 
 struct Notice: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let symbol: String
     let title: String
     var detail: String?
@@ -270,7 +270,7 @@ enum Fmt {
 
 /// A two-series sparkline with time axis, gridlines, and tap tooltips.
 struct Sparkline: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
 
     let inSeries: [Double]
     let outSeries: [Double]
@@ -467,7 +467,7 @@ private extension Int {
 
 /// Legend + current values shown under a sparkline.
 struct RateLegend: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let inBps: Double?
     let outBps: Double?
 
@@ -502,24 +502,8 @@ struct RateLegend: View {
 /// parameter controls the "Derived from counter deltas …" caption shown in
 /// Overview but omitted from NetworkView.
 struct ThroughputChart: View {
-    @EnvironmentObject private var theme: ThemeManager
-
-    /// Observed, not held.
-    ///
-    /// This was `let store: DashboardStore`, and a plain `let` on a reference
-    /// type is why the chart never drew: SwiftUI compares a view's stored
-    /// properties to decide whether to re-render, the reference never changes,
-    /// so the body ran once and kept whatever it saw. A card created before
-    /// the first sample said "none yet" for the rest of the session while the
-    /// tracker filled up behind it — which is exactly what the diagnostics
-    /// screen showed, three points recorded against a card reporting none.
-    ///
-    /// Observing the tracker rather than the store also narrows the
-    /// invalidation to the thing being drawn.
+    @Environment(\.themeManager) private var theme: ThemeManager
     let tracker: ThroughputTracker
-    /// Observed for the same reason: the caption reads whether the firewall
-    /// reports counters at all, and a stale answer there is the difference
-    /// between "waiting" and "will never arrive".
     let store: DashboardStore
     let device: String
     let height: CGFloat
@@ -585,7 +569,7 @@ struct ThroughputChart: View {
 
 /// A horizontal scrollable row of pill buttons for switching between firewalls.
 struct ServerSwitcher: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let servers: [ServerProfile]
     let activeID: UUID?
     let onSwitch: (ServerProfile) -> Void
@@ -616,7 +600,7 @@ struct ServerSwitcher: View {
 // MARK: - State trend line
 
 struct StateTrendLine: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let values: [Int]
     let max: Int
 
@@ -686,7 +670,7 @@ struct StateTrendLine: View {
 // MARK: - Single-metric sparkline
 
 struct SingleMetricSparkline: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let values: [Double]
     let label: String
     var height: CGFloat = 32
@@ -826,9 +810,6 @@ struct SingleMetricSparkline: View {
                     .scaledFont(10, design: .monospaced)
                     .foregroundStyle(theme.labelFaint)
                 Spacer()
-                Text("\(values.count) samples")
-                    .scaledFont(10)
-                    .foregroundStyle(theme.labelFaint)
             }
         }
     }
@@ -862,7 +843,7 @@ struct SingleMetricSparkline: View {
 // MARK: - Gateway trend
 
 struct GatewayTrend: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let delayPoints: [Double]
     let lossPoints: [Double]
     let latestDelay: Double?
@@ -943,7 +924,7 @@ struct GatewayTrend: View {
 // MARK: - VPN sparkline row
 
 struct VPNSparklineRow: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let name: String
     let inPoints: [ThroughputTracker.Point]
     let outPoints: [ThroughputTracker.Point]
@@ -1045,7 +1026,7 @@ struct VPNSparklineRow: View {
 /// Collapsed by default: shown whole, a PHP backtrace fills the screen and
 /// buries everything below it. Tapping expands.
 struct NoticeText: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let notice: SystemNotice
     @State private var expanded = false
 
@@ -1081,7 +1062,7 @@ struct NoticeText: View {
 // MARK: - Page Header
 
 struct PageHeader: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
     let title: String
     let subtitle: String?
 
@@ -1109,7 +1090,7 @@ struct PageHeader: View {
 /// came first and the title second, which reads backwards. This one goes where
 /// it is placed.
 struct InlineSearchField: View {
-    @EnvironmentObject private var theme: ThemeManager
+    @Environment(\.themeManager) private var theme: ThemeManager
 
     @Binding var text: String
     let prompt: String

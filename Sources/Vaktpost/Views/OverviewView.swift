@@ -15,13 +15,7 @@ struct OverviewView: View {
     /// or refuse to move. Each row reports its own height and the drag walks
     /// the real geometry.
     @State private var sectionHeights: [OverviewSection: CGFloat] = [:]
-
-    var isEditingBinding: Binding<Bool> {
-        Binding(
-            get: { self.store.isOverviewEditing },
-            set: { self.store.isOverviewEditing = $0 }
-        )
-    }
+    @State private var isEditing = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -35,9 +29,9 @@ struct OverviewView: View {
                             connectionBannerContent(for: msg)
                         }
 
-                        if store.criticalAlertCount > 0 {
+                        if store.alertManager.criticalAlertCount > 0 {
                             alertsTeaser
-                                .wobble(isEditingBinding.wrappedValue)
+                                .wobble(isEditing)
                         }
 
                         let indexedSections = Array(visibleSections.enumerated())
@@ -45,7 +39,7 @@ struct OverviewView: View {
                             SectionView(
                                 section: section,
                                 title: section.displayName,
-                                isEditing: isEditingBinding,
+                                isEditing: $isEditing,
                                 visibleSections: $visibleSections,
                                 registry: registry,
                                 content: { sectionContentView(section) },
@@ -55,11 +49,11 @@ struct OverviewView: View {
                             )
                         }
 
-                        if isEditingBinding.wrappedValue {
+                        if isEditing {
                             hiddenSectionsPicker
                         }
                         
-                        if visibleSections.isEmpty && !isEditingBinding.wrappedValue {
+                        if visibleSections.isEmpty && !isEditing {
                             Spacer(minLength: 200)
                         }
                     }
@@ -74,13 +68,20 @@ struct OverviewView: View {
             .onChange(of: registry.active?.id) { _, _ in loadVisibleSections() }
             .onChange(of: registry.active?.overviewVisibleSections) { _, _ in loadVisibleSections() }
             .onAppear { loadVisibleSections() }
+            .onChange(of: store.isOverviewEditing) { _, isEditing in
+                self.isEditing = isEditing
+                if isEditing { loadVisibleSections() }
+            }
+            .onChange(of: registry.active?.overviewVisibleSections) { _, _ in
+                if isEditing { loadVisibleSections() }
+            }
         }
     }
 
     private var longPressGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.3)
             .onEnded { _ in
-                isEditingBinding.wrappedValue.toggle()
+                store.isOverviewEditing.toggle()
             }
     }
 
@@ -135,6 +136,9 @@ struct OverviewView: View {
     }
     
     private func addSection(_ section: OverviewSection) {
+        if !visibleSections.contains(section) {
+            visibleSections.append(section)
+        }
         guard let active = registry.active else { return }
         registry.setOverviewSectionVisibility(active, section, visible: true)
     }
@@ -155,15 +159,19 @@ struct OverviewView: View {
             return AnyView(servicesSlab.sectionFreshness([.services]))
         case .firewall:
             return AnyView(firewallSlab.sectionFreshness([.firewallLog]))
+        case .vpn:
+            return AnyView(vpnSlab)
+        case .clients:
+            return AnyView(topTalkersSlab)
         }
     }
 
     private var alertsTeaser: some View {
         NavigationLink { AlertsView() } label: {
-            Slab(rail: store.visibleAlerts.first?.severity ?? .warn, title: "Alerts",
-                 trailing: "\(store.criticalAlertCount)") {
+            Slab(rail: store.alertManager.visibleAlerts.first?.severity ?? .warn, title: "Alerts",
+                 trailing: "\(store.alertManager.criticalAlertCount)") {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(store.visibleAlerts.prefix(3)) { alert in
+                    ForEach(store.alertManager.visibleAlerts.prefix(3)) { alert in
                         HStack(spacing: 8) {
                             Image(systemName: alert.category.symbol)
                                 .scaledFont(12)
@@ -176,8 +184,8 @@ struct OverviewView: View {
                             Spacer()
                         }
                     }
-                    if store.visibleAlerts.count > 3 {
-                        Text("+\(store.visibleAlerts.count - 3) more")
+                    if store.alertManager.visibleAlerts.count > 3 {
+                        Text("+\(store.alertManager.visibleAlerts.count - 3) more")
                             .scaledFont(11)
                             .foregroundStyle(theme.labelFaint)
                     }
@@ -188,7 +196,7 @@ struct OverviewView: View {
     }
 
     private var statusSlab: some View {
-        Slab(rail: store.overallHealth) {
+        Slab(rail: store.overviewLayout.overallHealth) {
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Overall")
@@ -196,9 +204,9 @@ struct OverviewView: View {
                         .foregroundStyle(theme.labelFaint)
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(store.overallHealth.color(theme))
+                            .fill(store.overviewLayout.overallHealth.color(theme))
                             .frame(width: 8, height: 8)
-                        Text(store.overallHealth.name.uppercased())
+                        Text(store.overviewLayout.overallHealth.name.uppercased())
                             .scaledFont(14, weight: .semibold)
                             .foregroundStyle(theme.label)
                     }
@@ -225,7 +233,7 @@ struct OverviewView: View {
                     Text("Interfaces")
                         .scaledFont(11, weight: .semibold)
                         .foregroundStyle(theme.labelFaint)
-                    Text("\(store.interfacesUp) of \(store.interfaces.count)")
+                    Text("\(store.overviewLayout.interfacesUp) of \(store.interfaces.count)")
                         .scaledFont(14, weight: .medium)
                         .foregroundStyle(theme.label)
                 }
@@ -316,26 +324,18 @@ struct OverviewView: View {
                     if let cpu = sys.cpuUsage {
                         Meter(label: "CPU", value: cpu / 100, readout: Fmt.pct(cpu),
                               health: level(cpu, warn: HealthThresholds.cpuWarn, bad: HealthThresholds.cpuBad))
-                        SingleMetricSparkline(values: store.systemMetrics.points(for: "cpu").map(\.value),
-                                              label: "CPU", height: 24)
                     }
                     if let mem = sys.memUsage {
                         Meter(label: "Memory", value: mem / 100, readout: Fmt.pct(mem),
                               health: level(mem, warn: HealthThresholds.memWarn, bad: HealthThresholds.memBad))
-                        SingleMetricSparkline(values: store.systemMetrics.points(for: "mem").map(\.value),
-                                              label: "Memory", height: 24)
                     }
                     if let disk = sys.diskUsage {
                         Meter(label: "Disk", value: disk / 100, readout: Fmt.pct(disk),
                               health: level(disk, warn: HealthThresholds.diskWarn, bad: HealthThresholds.diskBad))
-                        SingleMetricSparkline(values: store.systemMetrics.points(for: "disk").map(\.value),
-                                              label: "Disk", height: 24)
                     }
                     if let swap = sys.swapUsage, swap > 0 {
                         Meter(label: "Swap", value: swap / 100, readout: Fmt.pct(swap),
                               health: level(swap, warn: HealthThresholds.swapWarn, bad: HealthThresholds.swapBad))
-                        SingleMetricSparkline(values: store.systemMetrics.points(for: "swap").map(\.value),
-                                              label: "Swap", height: 24)
                     }
                     if let mbuf = sys.mbufUsage {
                         Meter(label: "mbuf", value: mbuf / 100, readout: Fmt.pct(mbuf),
@@ -343,8 +343,19 @@ struct OverviewView: View {
                     }
                     Hairline()
                     FieldRow(key: "Load average", value: sys.loadDescription)
-                    if let t = sys.temperature {
-                        FieldRow(key: "Temperature", value: String(format: "%.1f °C", t))
+                    if !sys.coreTemps.isEmpty {
+                        FieldRow(key: "CPU", value: sys.coreTemps.map { String(format: "%d: %.1f °C", $0.core, $0.temp) }.joined(separator: " · "))
+                        if let t = sys.temperature, let source = sys.temperatureSource {
+                            let label = sys.temperatureLabel
+                            FieldRow(key: label, value: String(format: "%.1f °C (%@)", t, source as NSString))
+                        }
+                    } else if let t = sys.temperature {
+                        let label = sys.temperatureLabel
+                        if let source = sys.temperatureSource {
+                            FieldRow(key: label, value: String(format: "%.1f °C (%@)", t, source as NSString))
+                        } else {
+                            FieldRow(key: label, value: String(format: "%.1f °C", t))
+                        }
                     } else {
                         FieldRow(key: "Temperature",
                                  value: "no sensor loaded",
@@ -416,7 +427,7 @@ struct OverviewView: View {
     }
 
     private var servicesSlab: some View {
-        let down = store.servicesDown
+        let down = store.overviewLayout.servicesDown
         return Slab(
             rail: down.isEmpty ? .ok : .bad,
             title: "Service health",
@@ -446,7 +457,7 @@ struct OverviewView: View {
     }
 
     private var gatewaysSlab: some View {
-        if store.gateways.isEmpty {
+        if store.gatewayManager.gateways.isEmpty {
             return AnyView(Slab(rail: .idle) {
                 Text(store.errors[.gateways] ?? "No gateway status returned.")
                     .scaledFont(13)
@@ -454,8 +465,8 @@ struct OverviewView: View {
             })
         } else {
             return AnyView(VStack(alignment: .leading, spacing: 8) {
-                ForEach(store.gateways, id: \.name) { gw in
-                    GatewayRow(gateway: gw, gatewayMetrics: store.gatewayMetrics)
+                ForEach(store.gatewayManager.gateways, id: \.name) { gw in
+                    GatewayRow(gateway: gw, gatewayMetrics: store.gatewayManager.gatewayMetrics)
                 }
             })
         }
@@ -469,9 +480,9 @@ struct OverviewView: View {
             } else {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 18) {
-                        deltaCounter("Blocked", store.blockedRecently, store.blockedDelta, .bad)
-                        deltaCounter("Rejected", store.rejectedRecently, store.rejectedDelta, .warn)
-                        deltaCounter("Passed", store.passedRecently, store.passedDelta, .ok)
+                        deltaCounter("Blocked", store.overviewLayout.blockedRecently, store.overviewLayout.blockedDelta, .bad)
+                        deltaCounter("Rejected", store.overviewLayout.rejectedRecently, store.overviewLayout.rejectedDelta, .warn)
+                        deltaCounter("Passed", store.overviewLayout.passedRecently, store.overviewLayout.passedDelta, .ok)
                         Spacer()
                     }
                     Hairline()
@@ -489,6 +500,122 @@ struct OverviewView: View {
                 }
             }
         }
+    }
+
+    private var vpnSlab: some View {
+        Slab(rail: store.overviewLayout.vpnHealth, title: "VPN", trailing: vpnStatusText) {
+            if store.openvpnServers.isEmpty && store.openvpnClients.isEmpty && store.ipsecSAs.isEmpty && store.wireguardTunnels.isEmpty {
+                placeholder(.openvpn)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !store.openvpnServers.isEmpty {
+                        vpnSummaryRow("OpenVPN servers", store.openvpnServers)
+                    }
+                    if !store.openvpnClients.isEmpty {
+                        vpnSummaryRow("OpenVPN clients", store.openvpnClients)
+                    }
+                    if !store.ipsecSAs.isEmpty {
+                        HStack {
+                            Text("IPsec")
+                                .scaledFont(12, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                            Spacer()
+                            Text("\(store.ipsecSAs.count) association\(store.ipsecSAs.count == 1 ? "" : "s")")
+                                .scaledFont(12, design: .monospaced)
+                                .foregroundStyle(theme.label)
+                        }
+                    }
+                    if !store.wireguardTunnels.isEmpty {
+                        vpnSummaryRow("WireGuard tunnels", store.wireguardTunnels)
+                    }
+                    if !store.wireguardPeers.isEmpty {
+                        HStack {
+                            Text("WireGuard peers")
+                                .scaledFont(12, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                            Spacer()
+                            Text("\(store.wireguardPeers.count) peer\(store.wireguardPeers.count == 1 ? "" : "s")")
+                                .scaledFont(12, design: .monospaced)
+                                .foregroundStyle(theme.label)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var topTalkersSlab: some View {
+        Slab(rail: .info, title: "Top talkers", trailing: "\(store.overviewLayout.topTalkers.count) device\(store.overviewLayout.topTalkers.count == 1 ? "" : "s")") {
+            if store.overviewLayout.topTalkers.isEmpty {
+                Text("No client data yet")
+                    .scaledFont(12)
+                    .foregroundStyle(theme.labelFaint)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(store.overviewLayout.topTalkers) { talker in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(talker.ip)
+                                        .scaledFont(12, design: .monospaced)
+                                    if let name = talker.hostname {
+                                        Text(name)
+                                            .scaledFont(11)
+                                            .foregroundStyle(theme.labelMuted)
+                                    }
+                                }
+                                Text(talker.mac)
+                                    .scaledFont(10, design: .monospaced)
+                                    .foregroundStyle(theme.labelFaint)
+                            }
+                            Spacer()
+                            Text(talker.rankLabel)
+                                .scaledFont(10)
+                                .foregroundStyle(talker.sourceCount >= 3 ? theme.ok : theme.labelMuted)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func vpnSummaryRow<T: Identifiable>(_ label: String, _ items: [T]) -> some View {
+        let active = items.filter { isVpnActive($0) }.count
+        return HStack {
+            Text(label)
+                .scaledFont(12, weight: .semibold)
+                .foregroundStyle(theme.labelFaint)
+            Spacer()
+            Text("\(active) of \(items.count) active")
+                .scaledFont(12, design: .monospaced)
+                .foregroundStyle(isVpnHealthy(items) ? theme.label : theme.warn)
+        }
+    }
+
+    private func isVpnActive<T: Identifiable>(_ item: T) -> Bool {
+        if let server = item as? OpenVPNServerStatus {
+            return server.health == .ok || server.health == .idle || !server.connections.isEmpty
+        }
+        if let tunnel = item as? WireGuardTunnel {
+            return tunnel.isUp
+        }
+        return false
+    }
+
+    private func isVpnHealthy<T: Identifiable>(_ items: [T]) -> Bool {
+        guard !items.isEmpty else { return false }
+        return items.filter { isVpnActive($0) }.count > 0
+    }
+
+    private var vpnStatusText: String {
+        let total = store.openvpnServers.count + store.openvpnClients.count + store.ipsecSAs.count + store.wireguardTunnels.count + store.wireguardPeers.count
+        guard total > 0 else { return "" }
+        let active = (store.openvpnServers.filter { $0.health == .ok || $0.health == .idle || !$0.connections.isEmpty }.count) +
+                     (store.openvpnClients.filter { $0.health == .ok || $0.health == .idle || !$0.connections.isEmpty }.count) +
+                     store.ipsecSAs.count +
+                     (store.wireguardTunnels.filter(\.isUp).count) +
+                     (store.wireguardPeers.filter(\.hasLiveStatus).count)
+        return "\(active) active"
     }
 
     private func deltaCounter(_ label: String, _ value: Int, _ delta: Int?, _ health: Health) -> some View {
@@ -534,7 +661,7 @@ struct OverviewView: View {
 struct GatewayRow: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     let gateway: GatewayStatus
-    @ObservedObject var gatewayMetrics: GatewayMetricTracker
+    let gatewayMetrics: GatewayMetricTracker
 
     private var delayPoints: [Double] {
         gatewayMetrics.readings(for: gateway.name).compactMap { $0.delayMS }
@@ -697,6 +824,7 @@ private struct SectionView: View {
                 // Saved once, at the end. Persisting on every swap would write
                 // the profile a dozen times during one gesture.
                 persistOrder(visibleSections)
+                HapticFeedback.sectionReorder()
 
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                     isDragging = false
@@ -777,6 +905,7 @@ private struct SectionView: View {
     }
 
     private func hideSection() {
+        visibleSections.removeAll { $0 == section }
         guard let active = registry.active else { return }
         registry.setOverviewSectionVisibility(active, section, visible: false)
     }

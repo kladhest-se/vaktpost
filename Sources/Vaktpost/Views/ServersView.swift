@@ -250,7 +250,7 @@ struct ServerEditView: View {
                     }
                 }
 
-                if let message {
+                if message != nil {
                     messageView
                 }
 
@@ -351,10 +351,10 @@ struct ServerEditView: View {
 
     private var messageView: some View {
         Group {
-            if let message {
+            if message != nil {
                 let healthColor = messageHealth.color(theme)
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(message)
+                    Text(message ?? "")
                         .scaledFont(12)
                         .foregroundStyle(healthColor)
                     if messageHealth == .warn, !isExisting {

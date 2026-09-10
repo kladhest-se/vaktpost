@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// Maximum elapsed time between samples before a throughput reading is discarded.
 ///
@@ -15,7 +16,8 @@ private let maxThroughputElapsed: TimeInterval = 7 * 86_400
 /// interface bounces or the box reboots, so a negative delta is treated as a
 /// reset and dropped rather than rendered as a spike.
 @MainActor
-final class ThroughputTracker: ObservableObject {
+@Observable
+final class ThroughputTracker {
 
     struct Point: Identifiable {
         let id = UUID()
@@ -51,7 +53,7 @@ final class ThroughputTracker: ObservableObject {
     }
 
     private var last: [String: Reading] = [:]
-    @Published private(set) var series: [String: [Point]] = [:]
+    private(set) var series: [String: [Point]] = [:]
 
     private let bitsMultiplier: Double
 
@@ -155,6 +157,14 @@ enum Rate {
         var v = bps
         var i = 0
         while v >= 1000, i < units.count - 1 { v /= 1000; i += 1 }
+        return String(format: i == 0 ? "%.0f %@" : "%.1f %@", v, units[i])
+    }
+    
+    static func bytes(_ b: Double) -> String {
+        let units = ["B", "KB", "MB", "GB", "TB"]
+        var v = b
+        var i = 0
+        while v >= 1024, i < units.count - 1 { v /= 1024; i += 1 }
         return String(format: i == 0 ? "%.0f %@" : "%.1f %@", v, units[i])
     }
 }

@@ -104,22 +104,20 @@ struct AlertButton: View {
 
     var body: some View {
         NavigationLink { AlertsView() } label: {
-            Image(systemName: store.criticalAlertCount > 0 ? "bell.badge.fill" : "bell")
-                .foregroundStyle(store.criticalAlertCount > 0 ? theme.warn : theme.labelMuted)
+            Image(systemName: store.alertManager.criticalAlertCount > 0 ? "bell.badge.fill" : "bell")
+                .foregroundStyle(store.alertManager.criticalAlertCount > 0 ? theme.warn : theme.labelMuted)
         }
     }
 }
 
 @main
 struct VaktpostApp: App {
-    @State private var theme = ThemeManager()
-    @State private var registry: ServerRegistry
-    @State private var store: DashboardStore
+    private let theme = ThemeManager()
+    private let registry = ServerRegistry()
+    private let store: DashboardStore
 
     init() {
-        let reg = ServerRegistry()
-        _registry = State(wrappedValue: reg)
-        _store = State(wrappedValue: DashboardStore(registry: reg))
+        self.store = DashboardStore(registry: registry)
     }
 
     var body: some Scene {
@@ -127,7 +125,8 @@ struct VaktpostApp: App {
             RootView()
                 .environment(theme)
                 .environment(registry)
-                .environment(store)
+                .environment(\.dashboardStore, store)
+                .environment(\.store, store)
         }
     }
 }
@@ -137,6 +136,8 @@ struct RootView: View {
     @Environment(\.dashboardStore) private var store: DashboardStore
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.scenePhase) private var scenePhase
+    @State private var showLockScreen = false
+    @State private var wentToBackground = false
 
     var body: some View {
         Group {
@@ -192,7 +193,7 @@ struct RootView: View {
                                 .appToolbar()
                         }
                         .tabItem { Label("More", systemImage: "ellipsis.circle") }
-                        .badge(store.criticalAlertCount)
+                        .badge(store.alertManager.criticalAlertCount)
                     }
 
                     // No refresh indicator here at all.
@@ -212,10 +213,8 @@ struct RootView: View {
             theme.systemScheme = systemScheme
             store.themeName = theme.selection.storageValue
             guard store.isConfigured else { return }
-            Task {
-                await store.refresh()
-                store.startAutoRefresh()
-            }
+            Task { await store.refresh() }
+            store.startAutoRefresh()
         }
         .onChange(of: systemScheme) { _, newValue in
             theme.systemScheme = newValue
@@ -227,17 +226,36 @@ struct RootView: View {
             switch phase {
             case .active:
                 guard store.isConfigured else { return }
-                guard let last = store.lastRefresh,
-                      Date().timeIntervalSince(last) > Double(store.profile.refreshSeconds) / 2
-                else { store.startAutoRefresh(); return }
-                Task {
-                    await store.refresh()
-                    store.startAutoRefresh()
+                print("[Biometric] scenePhase=.active, wentToBackground=\(wentToBackground), isEnabled=\(BiometricAuth.isEnabled), canUse=\(BiometricAuth.canUseBiometrics())")
+                if wentToBackground && BiometricAuth.isEnabled && BiometricAuth.canUseBiometrics() {
+                    print("[Biometric] Showing lock screen")
+                    showLockScreen = true
                 }
+                wentToBackground = false
             case .background, .inactive:
                 store.stopAutoRefresh()
+                print("[Biometric] scenePhase=\(phase), setting wentToBackground=true")
+                wentToBackground = true
             @unknown default:
                 break
+            }
+        }
+        .fullScreenCover(isPresented: $showLockScreen) {
+            BiometricLockView {
+                showLockScreen = false
+            }
+        }
+        .onAppear {
+            if BiometricAuth.isEnabled && BiometricAuth.canUseBiometrics() && store.isConfigured {
+                showLockScreen = true
+            }
+            guard store.isConfigured else { return }
+            guard let last = store.lastRefresh,
+                  Date().timeIntervalSince(last) > Double(store.profile.refreshSeconds) / 2
+            else { store.startAutoRefresh(); return }
+            Task {
+                await store.refresh()
+                store.startAutoRefresh()
             }
         }
     }

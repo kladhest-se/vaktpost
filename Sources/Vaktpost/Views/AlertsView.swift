@@ -7,22 +7,22 @@ struct AlertsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                if !store.acknowledgedButPresent.isEmpty {
+                if !store.alertManager.acknowledgedButPresent.isEmpty {
                     Slab(rail: .idle) {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text("\(store.acknowledgedButPresent.count) acknowledged")
+                                Text("\(store.alertManager.acknowledgedButPresent.count) acknowledged")
                                     .scaledFont(13, weight: .semibold)
                                     .foregroundStyle(theme.labelMuted)
                                 Spacer()
-                                Button("Show again") { store.unacknowledgeAll() }
+                                Button("Show again") { store.alertManager.unacknowledgeAll() }
                                     .scaledFont(13, weight: .medium)
                                     .foregroundStyle(theme.accentColor)
                             }
                             // Named rather than counted: "3 acknowledged" tells
                             // you nothing about whether you would still stand
                             // by having acknowledged them.
-                            ForEach(store.acknowledgedButPresent) { alert in
+                            ForEach(store.alertManager.acknowledgedButPresent) { alert in
                                 Text(alert.title)
                                     .scaledFont(11)
                                     .foregroundStyle(theme.labelFaint)
@@ -31,24 +31,24 @@ struct AlertsView: View {
                     }
                 }
 
-                if store.silencedAlertCount > 0 {
+                if store.alertManager.silencedAlertCount > 0 {
                     // Said plainly. A silenced alert that vanishes without
                     // trace is indistinguishable from a condition that cleared.
-                    Text(store.alertsSilenced
+                    Text(store.alertManager.alertsSilenced
                          ? "All alerts are silenced in Settings."
-                         : "\(store.silencedAlertCount) hidden by silenced categories.")
+                         : "\(store.alertManager.silencedAlertCount) hidden by silenced categories.")
                         .scaledFont(12)
                         .foregroundStyle(theme.labelFaint)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                if store.visibleAlerts.isEmpty {
+                if store.alertManager.visibleAlerts.isEmpty {
                     Notice(symbol: "checkmark.seal", title: "Nothing to report",
                            detail: "No gateway, service, capacity, certificate, HA or VPN condition is currently outside its threshold.",
                            health: .ok)
                 } else {
                     HStack {
-                        Text("\(store.visibleAlerts.count) condition\(store.visibleAlerts.count == 1 ? "" : "s")")
+                        Text("\(store.alertManager.visibleAlerts.count) condition\(store.alertManager.visibleAlerts.count == 1 ? "" : "s")")
                             .scaledFont(12, design: .monospaced)
                             .foregroundStyle(theme.labelFaint)
                         Spacer()
@@ -56,7 +56,7 @@ struct AlertsView: View {
                     // Long press to silence the kind. Settings has the same
                     // switches, but nobody goes looking in Settings for a way
                     // to stop something they are looking at right now.
-                    ForEach(store.visibleAlerts) { alert in
+                    ForEach(store.alertManager.visibleAlerts) { alert in
                         alertRow(alert)
                     }
 
@@ -107,12 +107,13 @@ struct AlertsView: View {
             // usually want: "I have seen this" rather than "never tell me
             // about certificates again".
             Button {
-                store.acknowledge(alert)
+                store.alertManager.acknowledge(alert)
+                HapticFeedback.alertDismiss()
             } label: {
                 Label("Acknowledge this", systemImage: "checkmark.circle")
             }
             Button {
-                store.mutedAlertCategories.insert(alert.category.rawValue)
+                store.alertManager.mutedAlertCategories.insert(alert.category.rawValue)
             } label: {
                 Label("Silence all \(alert.category.displayName.lowercased())",
                       systemImage: "bell.slash")

@@ -13,7 +13,7 @@ struct ClientsView: View {
     @State private var query = ""
 
     private var rows: [NetworkClient] {
-        var list = store.clients
+        var list = store.overviewLayout.clients
         switch filter {
         case .all: break
         case .online: list = list.filter { $0.seenInARP || $0.online == true }
@@ -47,7 +47,7 @@ struct ClientsView: View {
                 // Looked up again rather than captured: a stored copy would
                 // show the device as it was at the moment it was tapped, and
                 // the list behind it refreshes every thirty seconds.
-                if let client = store.clients.first(where: { $0.id == id }) {
+                if let client = store.overviewLayout.clients.first(where: { $0.id == id }) {
                     ClientDetailView(client: client).id(store.bindingID)
                 } else {
                     Notice(symbol: "questionmark.circle",
@@ -68,7 +68,7 @@ struct ClientsView: View {
 
     private var listColumn: some View {
         ScrollView {
-            PageHeader(title: "Clients", subtitle: store.clients.count > 0 ? "\(store.clients.count) devices" : nil)
+            PageHeader(title: "Clients", subtitle: store.overviewLayout.clients.count > 0 ? "\(store.overviewLayout.clients.count) devices" : nil)
             VStack(spacing: 0) {
                 FreshnessView(sections: [.leases, .arp, .statics, .hostOverrides, .aliases], showNames: true)
                     .padding(.horizontal, 16)
@@ -111,7 +111,7 @@ struct ClientsView: View {
                         )
                     } else {
                         HStack {
-                            Text("\(rows.count) shown · \(store.clients.count) known")
+                            Text("\(rows.count) shown · \(store.overviewLayout.clients.count) known")
                                 .scaledFont(12, design: .monospaced)
                                 .foregroundStyle(theme.labelFaint)
                             Spacer()
