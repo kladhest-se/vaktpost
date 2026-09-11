@@ -1,5 +1,105 @@
 # Changelog
 
+## Host traffic
+
+Per-interface host traffic — the table under Status > Traffic Graph in the
+webConfigurator — now works. It never had.
+
+- The snippet behind the Traffic screen read `ifhosttraffic` off
+  `get_interface_info()`. pfSense has no such key in 2.6, 2.7 or current, and
+  as far as the source history goes it never has, so the screen was blank on
+  every firewall it was ever pointed at. Replaced with a call to pfSense's own
+  `printBandwidth()`, which is what `status_graph.php` polls to fill that
+  table.
+- The screen is now per interface, with the same Local / Remote / All filter
+  and Bandwidth In / Out sort the webConfigurator offers. Addresses are resolved
+  to names from the ARP, DHCP, static mapping and DNS override tables the app
+  already holds — pfSense can name hosts itself, but only by replacing the
+  address in the same column.
+- It lives in the Clients tab, as a Devices / Traffic switch above the list,
+  rather than behind More. "Which devices are on this network" and "which of
+  them is using it" get asked in the same breath, and three taps apart meant
+  the second one mostly went unasked. The device list keeps its own All / Seen
+  / Static filter underneath.
+- The host list updates continuously with no button, refreshing every three
+  seconds, as does the per-client trace. Both are periods measured start to
+  start rather than pauses between captures, so the interval holds steady
+  instead of drifting with how busy the firewall is, and the trace's time axis
+  means something. Changing the interface, the filter or the sort cancels the
+  capture in flight and starts a new run, so a result from the previous
+  question never sits under a changed control.
+- The interval is a control rather than a constant: 2, 5, 10 or 15 seconds,
+  defaulting to 15, stored and shared with the per-client trace so one firewall
+  is never polled on two schedules at once. The right number depends on what is
+  being watched for and on what else the firewall is doing, which is not
+  something the app can decide. The floor is not a preference — below about a
+  second and a half the captures queue faster than they complete — so two
+  seconds is the shortest offered, and on a busy firewall that setting is
+  effectively continuous polling rather than a two-second interval.
+- Busiest by In / Out is a control rather than a re-ordering, because pfSense
+  truncates to ten hosts *after* sorting — switching it can return a different
+  set of devices, not the same ones in a different order. The rows are sorted
+  locally as well, on the same column with a stable tie-break, so the list
+  cannot disagree with the control above it and rows stop swapping places
+  between captures for no reason. The column being sorted on is emphasised.
+- A failed capture no longer blanks the screen. The last good reading stays
+  visible with the error above it, and the loop backs off — four seconds, then
+  eight, capped at fifteen — rather than either giving up or hammering a
+  firewall that is already struggling.
+- The proportion bar is gone from the host rows. It was scaled against the
+  busiest row in the capture, and pfSense returns whichever ten hosts happened
+  to be busiest, so its full width meant a different rate every three seconds
+  and a row could shrink while its own throughput rose. The numbers are the
+  measurement.
+- The Traffic pane takes the full width rather than sitting in the split view's
+  list column, so on iPad it is not a narrow sampler beside an empty pane
+  advising you to choose a device.
+- Still reachable from each interface's detail screen, which pushes it as a
+  screen of its own with a title and a back button rather than switching tabs
+  underneath the person.
+- A client's investigation page now has a Traffic now card. It resolves the
+  device's interface from the client list, the ARP table or its lease, samples
+  that interface, and looks for the device in the result — sorted the other way
+  as well when the first capture does not find it, because the sort decides
+  which hosts survive pfSense's truncation. The second capture is only paid
+  when the first came up short.
+  It updates continuously while the card is on screen and draws a live trace,
+  with no button to press.
+- The floor on that interval is set by the measurement rather than chosen.
+  `rate` needs a full second of wall clock to produce one report and each poll
+  is an `exec_php` that pfSense serialises against its own webConfigurator, so
+  asking much faster would queue requests faster than they can complete.
+- A device that is not in the returned list plots as zero, which is the honest
+  shape for a live trace. What that zero cannot distinguish is idleness from
+  ten busier neighbours, since pfSense returns ten addresses, so the card says
+  so in a line beneath the trace whenever the last sample did not find the
+  device.
+
+**This costs the firewall a one-second packet capture per sample.** There is no
+per-host counter on pfSense; `printBandwidth` shells out to `/usr/local/bin/rate`
+and asks for one report. So nothing is sampled until it is asked for, automatic
+refresh starts switched off and runs at five seconds rather than the web UI's
+three, and the interface detail screen links to this rather than embedding it.
+
+`printBandwidth` reports its own two failures — an interface it cannot resolve,
+and a capture that found nothing — by echoing a translated phrase into the
+output it otherwise fills with rows. Nothing matches on those phrases. Every
+condition the app acts on is established before the call instead, including
+whether the interface has a device behind it at all, and whatever pfSense wrote
+is shown verbatim rather than parsed.
+
+Two limits are pfSense's rather than the app's, and are stated on screen:
+at most ten hosts per sample, and a sort that decides which hosts survive the
+truncation rather than only their order.
+
+`printBandwidth` is the one entry on `allowedFunctions` that is not a counter
+read. The branch it takes only reads; the branch that kills processes and
+unlinks files is reachable only through a `mode` argument the snippet never
+passes, and there is a test asserting it stays that way. The interface is
+chosen by clamped index into `get_configured_interface_with_descr()` rather than
+by name, so no runtime string reaches the PHP, and the resolved key comes back
+in the result and is checked against the interface that was asked for.
+
 ## Offline MAC vendor lookup
 
 - Added a bundled 1.6 MB index built from the official IEEE MA-L, MA-M, MA-S and legacy IAB public listings.

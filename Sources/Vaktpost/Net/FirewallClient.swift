@@ -77,8 +77,19 @@ actor FirewallClient {
         try await rpc.runList(.interfaceCounters).map(InterfaceStat.init)
     }
 
-    func hostTraffic() async throws -> [HostTraffic] {
-        try await rpc.runList(.hostTraffic).map(HostTraffic.init)
+    /// Per-host rates for one interface, sampled now.
+    ///
+    /// Unlike every other call here this one costs the firewall a one-second
+    /// packet capture — see `PHPSnippet.hostTraffic`. It is never on the
+    /// refresh timer; something has to ask for it.
+    ///
+    /// The timeout allows for that second plus the webConfigurator lock the
+    /// call queues behind, which on a busy firewall is the larger of the two.
+    func hostTraffic(slot: Int,
+                     filter: PHPSnippet.HostFilter,
+                     sort: PHPSnippet.HostSort) async throws -> HostTrafficSample {
+        HostTrafficSample(try await rpc.runObject(
+            PHPSnippet.hostTraffic(slot: slot, filter: filter, sort: sort), timeout: 60))
     }
 
     func gateways() async throws -> [GatewayStatus] {

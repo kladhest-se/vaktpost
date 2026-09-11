@@ -401,21 +401,105 @@ struct DNSAnswer {
     }
 }
 
-/// Per-host traffic data from pfSense's Status > Traffic page.
+/// One host's share of an interface, as `status_graph.php` would show it.
+///
+/// The rates arrive as text with SI prefixes rather than as numbers, because
+/// pfSense invokes `rate` without its exact-values flag. Both forms are kept:
+/// the parsed value drives sorting and the bar, and the original text is what
+/// gets displayed, so a row this parser does not understand still shows the
+/// firewall's own answer rather than a zero.
 struct HostTraffic: Identifiable {
     var id: String { "\(interface)|\(ip)" }
     var interface: String
     var ip: String
     var hostname: String?
+    var inText: String
+    var outText: String
     var bandwidthIn: Double
     var bandwidthOut: Double
-    
-    init(_ d: JSONDict) {
-        interface = d.string("interface", "if") ?? "—"
+
+    var total: Double { bandwidthIn + bandwidthOut }
+
+    init(_ d: JSONDict, interface: String) {
+        self.interface = interface
         ip = d.string("ip", "host") ?? "—"
-        hostname = d.string("hostname")
-        bandwidthIn = d.double("bandwidthIn", "inbytes", "in_bytes") ?? 0
-        bandwidthOut = d.double("bandwidthOut", "outbytes", "out_bytes") ?? 0
+        hostname = nil
+        inText = d.string("in_text") ?? "0"
+        outText = d.string("out_text") ?? "0"
+        bandwidthIn = HostTraffic.bitsPerSecond(inText)
+        bandwidthOut = HostTraffic.bitsPerSecond(outText)
+    }
+
+    /// Turns one of `rate`'s printed values into bits per second.
+    ///
+    /// The shapes seen are a bare number ("842"), a decimal with an SI prefix
+    /// ("1.20M"), and occasionally a prefix with no decimal ("13k"). The base
+    /// is 1000, not 1024 — these are bits on a wire, and `rate` documents SI
+    /// prefixes rather than binary ones.
+    ///
+    /// Anything unparseable becomes zero. That is deliberate: the caller keeps
+    /// the original text and displays that, so a zero here only ever affects
+    /// sort order, never what the person is shown.
+    static func bitsPerSecond(_ text: String) -> Double {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+
+        var digits = ""
+        var multiplier = 1.0
+        for character in trimmed {
+            if character.isNumber || character == "." {
+                digits.append(character)
+                continue
+            }
+            switch character {
+            case "k", "K": multiplier = 1e3
+            case "M": multiplier = 1e6
+            case "G": multiplier = 1e9
+            case "T": multiplier = 1e12
+            default: break
+            }
+            break
+        }
+        guard let value = Double(digits) else { return 0 }
+        return value * multiplier
     }
 }
 
+/// One sample of one interface, with the reasons an empty one might be empty.
+///
+/// A blank host list has four causes and they want four different sentences on
+/// screen: the slot resolved to no interface, this pfSense has no
+/// `bandwidth_by_ip.inc`, the include is there but has no `printBandwidth`, or
+/// the capture ran and saw nothing. `reason` carries whichever applies, and
+/// `interface` carries the key the firewall actually resolved so the caller
+/// can check it matches the interface the person selected.
+struct HostTrafficSample {
+    var available: Bool
+    var interface: String
+    var descr: String
+    var device: String
+    var slot: Int
+    var reason: String?
+    /// Whatever pfSense wrote when it wrote no rows.
+    ///
+    /// Kept, and never parsed. `printBandwidth` reports its own two failures
+    /// by echoing a translated phrase into the output, so this is diagnostic
+    /// text for a person rather than a value to branch on — every condition
+    /// the app acts on is established before the call instead.
+    var raw: String
+
+    var hosts: [HostTraffic]
+
+    init(_ d: JSONDict) {
+        available = d.bool("available") ?? false
+        interface = d.string("interface") ?? ""
+        descr = d.string("descr") ?? ""
+        device = d.string("device") ?? ""
+        slot = d.int("slot") ?? 0
+        raw = d.string("raw") ?? ""
+        let text = d.string("reason") ?? ""
+        reason = text.isEmpty ? nil : text
+        let key = interface
+        hosts = d.list("data").compactMap { JSONDict($0) }.map { HostTraffic($0, interface: key) }
+    }
+}

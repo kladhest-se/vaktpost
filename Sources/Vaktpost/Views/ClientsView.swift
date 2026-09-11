@@ -9,6 +9,20 @@ struct ClientsView: View {
         var id: String { rawValue }
     }
 
+    /// The two halves of the same question.
+    ///
+    /// "Which devices are on this network" and "which of them is using it" are
+    /// asked in the same breath, and having the second one three taps away
+    /// under More meant the answer to the first was usually where the looking
+    /// stopped. Deliberately plain words: this is the screen somebody opens
+    /// when the internet is slow, and a clever label is a thing to decode at
+    /// the moment they least want to.
+    enum Pane: String, CaseIterable, Identifiable {
+        case devices = "Devices", traffic = "Traffic"
+        var id: String { rawValue }
+    }
+
+    @State private var pane: Pane = .devices
     @State private var filter: Filter = .all
     @State private var query = ""
 
@@ -39,6 +53,40 @@ struct ClientsView: View {
     @State private var selection: String?
 
     var body: some View {
+        Group {
+            switch pane {
+            case .devices: devicesPane
+            // Full width rather than inside the split view: on iPad the
+            // sampler would otherwise sit in a narrow list column with an
+            // empty detail pane beside it saying "choose a device", which is
+            // advice about a screen the person is not looking at.
+            case .traffic: trafficPane
+            }
+        }
+        .onChange(of: store.bindingID) { _, _ in selection = nil }
+    }
+
+    private var paneSwitcher: some View {
+        Picker("", selection: $pane) {
+            ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 4)
+    }
+
+    private var trafficPane: some View {
+        ScrollView {
+            PageHeader(title: "Clients", subtitle: "Who is using the network")
+            paneSwitcher
+            HostTrafficPanel()
+                .padding(.top, 6)
+                .padding(.bottom, 28)
+        }
+        .background(theme.bg.ignoresSafeArea())
+    }
+
+    private var devicesPane: some View {
         MasterDetail(
             selection: $selection,
             emptyMessage: "Choose a device to see its leases, names and filter log.",
@@ -55,7 +103,6 @@ struct ClientsView: View {
                 }
             }
         )
-        .onChange(of: store.bindingID) { _, _ in selection = nil }
     }
 
     /// Whichever of the client sections failed, if any.
@@ -69,6 +116,7 @@ struct ClientsView: View {
     private var listColumn: some View {
         ScrollView {
             PageHeader(title: "Clients", subtitle: store.overviewLayout.clients.count > 0 ? "\(store.overviewLayout.clients.count) devices" : nil)
+            paneSwitcher
             VStack(spacing: 0) {
                 FreshnessView(sections: [.leases, .arp, .statics, .hostOverrides, .aliases], showNames: true)
                     .padding(.horizontal, 16)
@@ -264,6 +312,10 @@ struct ClientDetailView: View {
                             .scaledFont(12).foregroundStyle(theme.labelMuted)
                     }.textSelection(.enabled)
                 }
+                // Every other card on this screen reads from data the refresh
+                // already fetched. This one asks the firewall to measure
+                // something, so it is a button rather than a value.
+                ClientTrafficCard(client: client, addresses: investigation.addresses)
                 records
                 GroupHeading(text: "Matching firewall log")
                 FreshnessView(sections: [.firewallLog], showNames: true)

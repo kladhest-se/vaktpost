@@ -95,6 +95,9 @@ struct PHPSnippet: Sendable {
         "system_get_serial", "system_get_uniqueid", "system_identify_specific_platform",
         "system_get_arp_table", "system_get_dhcpleases",
         "get_configured_interface_with_descr", "get_interface_info",
+        // Resolving an interface to its device, and asking whether that device
+        // is there. Both are lookups; neither brings an interface up or down.
+        "get_real_interface", "does_interface_exist",
         "return_gateways_status", "return_gateways_array",
         "get_services", "get_service_status",
         "get_carp_status", "get_carp_interface_status",
@@ -109,6 +112,21 @@ struct PHPSnippet: Sendable {
         "rrd_fetch",
         // Probed with function_exists before use; see `pfTables`.
         "pfSense_get_pf_table", "pfr_get_table_addrs",
+        // Output buffering, so a pfSense function that echoes can be called
+        // without its output landing in the XML-RPC response body.
+        "ob_start", "ob_get_clean",
+        // The one entry on this list that is not a counter read.
+        //
+        // `printBandwidth` shells out to `/usr/local/bin/rate` for a
+        // one-second packet capture. Nothing in the branch this app takes
+        // writes, deletes or reconfigures anything — the branch that does
+        // (`mode == "iftop"`, which kills PIDs and unlinks logs) is reachable
+        // only by passing a mode string the snippet never passes. But it is a
+        // process spawn rather than a value read, it is the heaviest thing
+        // this app asks of a firewall, and it should be argued for rather than
+        // buried: it is exactly what status_graph.php does when that page is
+        // open, and there is no other source for per-host rates on pfSense.
+        "printBandwidth",
     ]
 
     // MARK: - System
@@ -397,44 +415,182 @@ struct PHPSnippet: Sendable {
     $toreturn = ["data" => $rows];
     """)
 
-    static let hostTraffic = PHPSnippet("host_traffic", """
-    require_once '/etc/inc/interfaces.inc';
-    require_once '/etc/inc/system.inc';
-    $rows = [];
-    foreach (get_configured_interface_with_descr() as $ifdescr => $ifname) {
-      $data = get_interface_info($ifdescr);
-      if (!is_array($data)) { continue; }
-      $arp = system_get_arp_table(false);
-      $arpMap = [];
-      if (is_array($arp) && is_array($arp["entry"])) {
-        foreach ($arp["entry"] as $entry) {
-          if (is_array($entry) && isset($entry["ip"])) {
-            $arpMap[$entry["ip"]] = $entry;
+    // MARK: - Host traffic
+    //
+    // What Status > Traffic Graph shows under the graph, taken from the same
+    // place that page takes it.
+
+    /// Which hosts to keep, matching the webConfigurator's own Filter control.
+    ///
+    /// The filter is not cosmetic. pfSense passes the interface's own subnet
+    /// to `rate` for "local" and the whole of 0.0.0.0/0 otherwise, then keeps
+    /// or drops each row by subnet membership. Local and remote are two
+    /// different measurements, not two views of one.
+    enum HostFilter: String, CaseIterable, Identifiable {
+        case local, remote, all
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .local: return "Local"
+            case .remote: return "Remote"
+            case .all: return "All"
+            }
+        }
+    }
+
+    /// Which column pfSense sorts on before it truncates the list.
+    ///
+    /// This decides *which* hosts survive, not just their order — the sort
+    /// happens inside `rate`, and only the top rows are printed. Sorting by
+    /// outbound can therefore return a different set of hosts entirely.
+    enum HostSort: String, CaseIterable, Identifiable {
+        case inbound = "in", outbound = "out"
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .inbound: return "Bandwidth In"
+            case .outbound: return "Bandwidth Out"
+            }
+        }
+    }
+
+    /// Per-host traffic for one interface.
+    ///
+    /// The previous version of this snippet read `ifhosttraffic` out of
+    /// `get_interface_info()`. That key does not exist in pfSense 2.6, 2.7 or
+    /// current, and by the look of it never did, which is why the screen was
+    /// blank on every firewall it was ever pointed at and why `vaktpost-tools`
+    /// accumulated six probes asking where the data was.
+    ///
+    /// It is in `printBandwidth()`, in `/usr/local/pfSense/include/www/
+    /// bandwidth_by_ip.inc`, which is what `status_graph.php` polls every
+    /// three seconds to fill its Host IP table. pfSense split that function
+    /// into an include specifically so other processes could call it, and the
+    /// signature has been unchanged since 2.6.
+    ///
+    /// Three things about it are worth knowing before reading the rest:
+    ///
+    ///   1. **It costs a one-second packet capture.** `printBandwidth` shells
+    ///      out to `/usr/local/bin/rate`, a pcap-based analyser, and asks for
+    ///      one report. There is no counter to read here the way there is for
+    ///      interface bytes — the measurement has to be taken, and taking it
+    ///      occupies the firewall for a second. This is the heaviest thing the
+    ///      app asks of a firewall, and the reason the screen samples on
+    ///      demand rather than on a timer.
+    ///
+    ///   2. **It is capped at ten rows**, by a loop bound inside pfSense. The
+    ///      webConfigurator table has the same cap; this is not the app
+    ///      truncating something the web UI shows in full.
+    ///
+    ///   3. **The numbers arrive as text with SI prefixes** — "1.20M", "842" —
+    ///      because `rate` is invoked without its exact-values flag. They are
+    ///      bits per second. Both the text and a parsed value are returned, so
+    ///      a row that the parser does not understand can still be displayed
+    ///      exactly as the firewall wrote it.
+    ///
+    /// `mode` is passed empty and must stay that way. The "iftop" branch of
+    /// `printBandwidth` kills processes and unlinks files; the branch this
+    /// takes only reads.
+    ///
+    /// The interface is chosen by position in `get_configured_interface_with_descr()`
+    /// rather than by name. A name would mean interpolating a runtime string
+    /// into PHP, which is the one thing this file promises not to do; an index
+    /// is a clamped integer and the vocabulary is entirely pfSense's own
+    /// interface list. The resolved key comes back in the result so the caller
+    /// can check it got the interface it asked for — the `interfaces` snippet
+    /// walks the same function in the same order, so the positions line up,
+    /// but "should line up" is not a thing to rely on silently.
+    static func hostTraffic(slot: Int, filter: HostFilter, sort: HostSort) -> PHPSnippet {
+        // Clamped here rather than trusted. Sixty-four is well past any real
+        // interface count and keeps the value a plain integer either way.
+        let index = max(0, min(slot, 63))
+        return PHPSnippet("host_traffic_\(filter.rawValue)_\(sort.rawValue)", """
+        require_once '/etc/inc/interfaces.inc';
+        $vaktpost_rows = [];
+        $vaktpost_key = "";
+        $vaktpost_descr = "";
+        $vaktpost_raw = "";
+        $vaktpost_device = "";
+        $vaktpost_available = false;
+        $vaktpost_reason = "";
+        $vaktpost_slot = \(index);
+
+        $vaktpost_map = get_configured_interface_with_descr();
+        $vaktpost_keys = is_array($vaktpost_map) ? array_keys($vaktpost_map) : [];
+        if (count($vaktpost_keys) > $vaktpost_slot) {
+          $vaktpost_key = strval($vaktpost_keys[$vaktpost_slot]);
+          $vaktpost_descr = strval($vaktpost_map[$vaktpost_key]);
+        }
+
+        if ($vaktpost_key !== "") {
+          $vaktpost_device = strval(get_real_interface($vaktpost_key));
+        }
+
+        // Every failure gets its own sentence, and none of them is pfSense's.
+        //
+        // printBandwidth reports its two failures by echoing a phrase into the
+        // output it otherwise fills with rows: one for an interface it could
+        // not resolve, one for a capture that saw nothing. Both go through
+        // gettext, so matching on them would work until somebody set the
+        // webConfigurator to another language. Every condition that can be
+        // established before the call is therefore established before the
+        // call, and whatever the phrase turns out to be is left in "raw" for a
+        // person to read rather than parsed for a decision.
+        if ($vaktpost_key === "") {
+          $vaktpost_reason = "This firewall has no interface in that position.";
+        } else {
+          if ($vaktpost_device === "" || !does_interface_exist($vaktpost_device)) {
+            $vaktpost_reason = "pfSense has no device behind this interface at the moment, so there is nothing to capture on.";
+          } else {
+            if (!file_exists("/usr/local/pfSense/include/www/bandwidth_by_ip.inc")) {
+              $vaktpost_reason = "This pfSense has no bandwidth_by_ip.inc, so per-host traffic cannot be sampled.";
+            } else {
+              require_once '/usr/local/pfSense/include/www/bandwidth_by_ip.inc';
+              if (!function_exists("printBandwidth")) {
+                $vaktpost_reason = "bandwidth_by_ip.inc is present but defines no printBandwidth.";
+              } else {
+                $vaktpost_available = true;
+                // printBandwidth writes to standard output. Left unbuffered it
+                // would land in the middle of the XML-RPC response body, and
+                // the failure would read as a parse error rather than as
+                // output.
+                ob_start();
+                printBandwidth($vaktpost_key, "\(filter.rawValue)", "\(sort.rawValue)", "", "");
+                $vaktpost_raw = strval(ob_get_clean());
+              }
+            }
           }
         }
-      }
-      if (isset($data["ifhosttraffic"]) && is_array($data["ifhosttraffic"])) {
-        foreach ($data["ifhosttraffic"] as $host) {
-          if (!is_array($host)) { continue; }
-          $ip = isset($host["host"]) ? strval($host["host"]) : "";
-          $inbps = isset($host["inbytes"]) ? floatval($host["inbytes"]) : 0;
-          $outbps = isset($host["outbytes"]) ? floatval($host["outbytes"]) : 0;
-          $hostname = "";
-          if (isset($arpMap[$ip]) && isset($arpMap[$ip]["name"]) && !empty($arpMap[$ip]["name"])) {
-            $hostname = $arpMap[$ip]["name"];
-          }
-          $rows[] = [
-            "interface" => $ifname,
-            "ip" => $ip,
-            "hostname" => $hostname,
-            "bandwidthIn" => $inbps,
-            "bandwidthOut" => $outbps,
+
+        // host;in;out|host;in;out| ... with a trailing separator.
+        foreach (explode("|", $vaktpost_raw) as $vaktpost_part) {
+          $vaktpost_part = trim($vaktpost_part);
+          if ($vaktpost_part === "") { continue; }
+          $vaktpost_fields = explode(";", $vaktpost_part);
+          if (count($vaktpost_fields) < 3) { continue; }
+          $vaktpost_rows[] = [
+            "ip" => trim($vaktpost_fields[0]),
+            "in_text" => trim($vaktpost_fields[1]),
+            "out_text" => trim($vaktpost_fields[2]),
           ];
         }
-      }
+
+        $toreturn = [
+          "available" => $vaktpost_available,
+          "interface" => $vaktpost_key,
+          "descr" => $vaktpost_descr,
+          "device" => $vaktpost_device,
+          "slot" => $vaktpost_slot,
+          "reason" => $vaktpost_reason,
+          "raw" => $vaktpost_raw,
+          "data" => array_values($vaktpost_rows),
+        ];
+        """)
     }
-    $toreturn = ["data" => $rows];
-    """)
 
     static let gateways = PHPSnippet("gateways", """
     require_once '/etc/inc/gwlb.inc';
@@ -2060,5 +2216,6 @@ struct PHPSnippet: Sendable {
          batchCore, batchClients, batchVpn, batchSystem]
         + LogSource.allCases.map { log($0, limit: 100) }
         + RRDWindow.allCases.map { rrdTraffic($0) }
+        + HostFilter.allCases.map { hostTraffic(slot: 0, filter: $0, sort: .inbound) }
     }
 }

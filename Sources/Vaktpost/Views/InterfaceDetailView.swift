@@ -32,6 +32,7 @@ struct InterfaceDetailView: View {
                 header
                 chart
                 rates
+                hosts
                 history.sectionFreshness([.rrd])
                 counters
                 note
@@ -129,6 +130,39 @@ struct InterfaceDetailView: View {
                 )
             }
         }
+    }
+
+    /// A way through to the per-host breakdown for this interface.
+    ///
+    /// A link rather than an inline section, because the answer costs the
+    /// firewall a one-second packet capture and this screen is already the
+    /// most expensive one in the app. Opening it should not quietly double
+    /// that; asking for it should be a decision.
+    private var hosts: some View {
+        NavigationLink {
+            TrafficView(preselect: iface.internalName)
+        } label: {
+            Slab(rail: .info) {
+                HStack(spacing: 10) {
+                    Image(systemName: "person.2")
+                        .scaledFont(14)
+                        .foregroundStyle(theme.accentColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Host traffic")
+                            .scaledFont(13, weight: .semibold)
+                            .foregroundStyle(theme.label)
+                        Text("Which hosts are using this interface, sampled on request")
+                            .scaledFont(11)
+                            .foregroundStyle(theme.labelFaint)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .scaledFont(11, weight: .semibold)
+                        .foregroundStyle(theme.labelFaint)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private func rateColumn(label: String, value: String,

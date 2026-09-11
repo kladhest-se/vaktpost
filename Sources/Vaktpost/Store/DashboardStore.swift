@@ -61,6 +61,7 @@ final class DashboardStore: Observable {
 
     private enum UDKey: String {
         case temperatureWarn = "alerts.tempWarn"
+        case hostTrafficInterval = "traffic.interval"
         case favouriteInterfaces = "interfaces.favourites"
         case favouritesSeeded = "interfaces.favouritesSeeded"
         case mutedAlerts = "alerts.hidden.v2"
@@ -300,8 +301,39 @@ final class DashboardStore: Observable {
     private var lastCPUTicks: (total: Int, idle: Int)?
     private var refreshCount = 0
 
+    /// How often the host-traffic screens take a capture, in seconds.
+    ///
+    /// A stored preference rather than a constant, because the right number is
+    /// not a property of the app. It depends on what the firewall is doing and
+    /// on what the person is watching for: catching the moment a transfer
+    /// starts wants a few seconds, leaving the screen open while something
+    /// else is diagnosed wants half a minute or more, and the cost of being
+    /// wrong lands on the webConfigurator rather than here.
+    ///
+    /// The floor is enforced where it is used, not here. Below roughly a
+    /// second and a half the captures queue faster than they complete, and
+    /// that is a fact about `rate` rather than a preference to be overridden.
+    var hostTrafficInterval: TimeInterval = 15 {
+        didSet { defaults.set(hostTrafficInterval, forKey: UDKey.hostTrafficInterval.rawValue) }
+    }
+
+    /// What the interval picker offers.
+    ///
+    /// Two seconds is the edge of what the measurement allows, not a
+    /// comfortable setting: a capture is a second of wall clock and the round
+    /// trip is on top of that, so on a busy firewall a two-second period is
+    /// effectively continuous polling — the loop will find its time already
+    /// spent and start the next capture immediately. It is offered because
+    /// watching a transfer begin wants that, and the cost is visible while it
+    /// is happening rather than later.
+    static let hostTrafficIntervals: [TimeInterval] = [2, 5, 10, 15]
+
     init(registry: ServerRegistry, defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        let storedInterval = defaults.double(forKey: UDKey.hostTrafficInterval.rawValue)
+        // A zero means nothing was ever stored, which is different from
+        // somebody choosing the fastest option.
+        hostTrafficInterval = storedInterval > 0 ? storedInterval : 15
         let tempWarn = defaults.double(forKey: "alerts.tempWarn")
         alertManager.temperatureWarnOverride = tempWarn > 0 ? tempWarn : nil
         overviewLayout.alertManager = alertManager
@@ -1423,6 +1455,27 @@ final class DashboardStore: Observable {
             if iface.name.lowercased() == lowered { return iface.name }
         }
         return raw
+    }
+
+    /// Where an interface sits in the list the host-traffic sampler indexes.
+    ///
+    /// Matches the way `interfaceLabel` does — a device name, pfSense's
+    /// internal handle, or the description — because the hint arrives from
+    /// whichever table happened to know about the device. The ARP table spells
+    /// it `lagg0.100`; a DHCP lease spells the same interface `lan`.
+    ///
+    /// Nil when nothing matches, and the caller has to handle that rather than
+    /// fall back to a default. Sampling the wrong interface would attribute
+    /// one network's traffic to a device on another, which is a more
+    /// misleading answer than no answer.
+    func interfaceSlot(for raw: String?) -> Int? {
+        guard let raw, !raw.isEmpty, !raw.contains(",") else { return nil }
+        let lowered = raw.lowercased()
+        return interfaces.firstIndex { iface in
+            iface.device.lowercased() == lowered
+                || iface.internalName?.lowercased() == lowered
+                || iface.name.lowercased() == lowered
+        }
     }
 
     /// What an alias actually contains, with nested aliases flattened.

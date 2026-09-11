@@ -21,7 +21,6 @@ struct MoreView: View {
                 link("Incident timeline", "point.3.connected.trianglepath.dotted", badge: 0) { IncidentTimelineView() }
                 link("Alerts", "bell.badge", badge: store.alertManager.criticalAlertCount) { AlertsView() }
                 link("VPN", "lock.shield", badge: 0) { VPNView() }
-                link("Traffic", "chart.line.uptrend.xyaxis", badge: 0) { TrafficView() }
                 link("Firewall", "shield.lefthalf.filled", badge: 0) { FirewallView() }
                 link("Dynamic DNS", "globe", badge: store.overviewLayout.staleDyndns.count) { DyndnsView() }
                 link("HAProxy", "arrow.triangle.swap", badge: store.unmonitoredBackends.count) { HAProxyView() }
