@@ -281,6 +281,111 @@ struct InterfaceStat: Identifiable {
         collisions = d.double("collisions")
     }
 
+    /// What kind of thing this interface is, for the purpose of asking about
+    /// the hosts on it.
+    ///
+    /// pfSense does not record this — every interface is just an interface —
+    /// but the three kinds behave differently enough under a per-host capture
+    /// that treating them alike makes two of them look broken.
+    enum Kind {
+        /// A point-to-point tunnel. It has no local subnet to speak of, so a
+        /// capture scoped to one returns nothing however busy the tunnel is.
+        case tunnel
+        /// An interface with a gateway. Its "local" subnet is the link to the
+        /// ISP, so a local capture returns the provider's side rather than
+        /// anything on the network.
+        case wan
+        /// Everything else: a LAN, a VLAN, a bridge.
+        case local
+    }
+
+    var kind: Kind {
+        // Device prefix first, and before the gateway test: a tunnel usually
+        // has a gateway too, and being a tunnel is the stronger fact.
+        let device = self.device.lowercased()
+        for prefix in ["ovpn", "tun", "wg", "ipsec", "enc", "gif", "gre", "l2tp", "ppp"]
+        where device.hasPrefix(prefix) {
+            return .tunnel
+        }
+
+        // A gateway is what makes an interface a WAN in pfSense's own terms,
+        // and it is the only structural signal available. The description is
+        // deliberately not consulted: "WAN_2" is a convention, not a fact, and
+        // a LAN somebody named badly should not be classified by its label.
+        // When the gateway is absent this falls through to `.local`, which is
+        // the behaviour there was before any of this existed.
+        if internalName?.lowercased() == "wan" { return .wan }
+        if let gateway, !gateway.isEmpty, gateway.lowercased() != "none" { return .wan }
+
+        return .local
+    }
+
+    /// Which hosts to ask for first on this interface.
+    ///
+    /// Not a preference, a starting point: opening a WAN or a tunnel and being
+    /// shown an empty list reads as a broken screen, and on both of those the
+    /// empty list is what Local correctly returns.
+    var suggestedHostFilter: PHPSnippet.HostFilter {
+        switch kind {
+        case .tunnel: return .all
+        case .wan: return .remote
+        case .local: return .local
+        }
+    }
+
+    /// Why that filter, in one clause, or nil where the default needs no
+    /// explaining.
+    var hostFilterRationale: String? {
+        switch kind {
+        case .tunnel:
+            return "A tunnel has no local subnet, so Local returns nothing on it however busy it is."
+        case .wan:
+            return "On an interface with a gateway, Local is the link to the ISP rather than anything on your network."
+        case .local:
+            return nil
+        }
+    }
+
+    /// One kind of interface, with the positions its members occupy in the
+    /// list the host-traffic sampler indexes.
+    ///
+    /// The position is carried rather than recomputed. Grouping reorders what
+    /// is shown and must not reorder what is sent: slot 3 is slot 3 whether it
+    /// appears first in the menu or last.
+    struct Group: Identifiable {
+        var id: String { title }
+        let title: String
+        let entries: [Entry]
+
+        struct Entry: Identifiable {
+            /// The interface's index in the original list. This is the slot.
+            let id: Int
+            let interface: InterfaceStat
+        }
+    }
+
+    /// Interfaces sorted into uplinks, networks and tunnels.
+    ///
+    /// pfSense returns them in config order, which on a firewall with fifteen
+    /// interfaces interleaves two WANs, five tunnels and eight VLANs into one
+    /// flat list you have to read every entry of. The kinds answer different
+    /// questions and belong apart.
+    ///
+    /// Order within a group is left as pfSense gave it. Sorting by name would
+    /// look tidier and would mean the menu reordered itself whenever somebody
+    /// renamed an interface.
+    ///
+    /// Empty groups are dropped, so a firewall with no tunnels does not get a
+    /// heading for them.
+    static func grouped(_ interfaces: [InterfaceStat]) -> [Group] {
+        let indexed = interfaces.enumerated().map { Group.Entry(id: $0.offset, interface: $0.element) }
+        let order: [(Kind, String)] = [(.wan, "Uplinks"), (.local, "Networks"), (.tunnel, "Tunnels")]
+        return order.compactMap { kind, title in
+            let entries = indexed.filter { $0.interface.kind == kind }
+            return entries.isEmpty ? nil : Group(title: title, entries: entries)
+        }
+    }
+
     /// Renders a subnet as a prefix length whichever way it arrives.
     ///
     /// `status/interfaces` returns a dotted netmask ("255.255.255.224") where

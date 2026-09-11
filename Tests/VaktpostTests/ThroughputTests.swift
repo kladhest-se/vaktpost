@@ -24,6 +24,38 @@ final class ThroughputTests: XCTestCase {
         return InterfaceStat(JSONDict(value)!)
     }
 
+    // MARK: Units
+
+    /// The tracker is built twice with different multipliers, and the unit has
+    /// to travel with it. It did not: `ThroughputChart` fed the interface
+    /// tracker's bits into `Sparkline`, which labelled its axis and tooltip as
+    /// bytes, over a `RateLegend` saying bits — a factor of 8.4 between two
+    /// numbers on the same card.
+    func testTheInterfaceTrackerReportsBits() {
+        XCTAssertEqual(ThroughputTracker().unit, .bits)
+        XCTAssertEqual(ThroughputTracker(bitsMultiplier: 8).unit, .bits)
+    }
+
+    func testTheVPNTrackerReportsBytes() {
+        XCTAssertEqual(ThroughputTracker(bitsMultiplier: 1).unit, .bytes)
+    }
+
+    func testTheTwoUnitsFormatDifferently() {
+        // 8000 bits per second is 1 KiB/s of payload on the wire. If these two
+        // ever produce the same string, the bug is back.
+        XCTAssertNotEqual(RateUnit.bits.format(8_000), RateUnit.bytes.format(8_000))
+        XCTAssertEqual(RateUnit.bits.format(8_000), Rate.bits(8_000))
+        XCTAssertEqual(RateUnit.bytes.format(8_000), Fmt.bytesPerSec(8_000))
+    }
+
+    func testBitsUseADecimalBaseAndBytesABinaryOne() {
+        // Not cosmetic: the two conventions differ by 2.4% at kilo and 4.9% at
+        // mega, which is small enough to look plausible on a chart and wrong
+        // enough to matter when somebody is checking a line rate.
+        XCTAssertTrue(RateUnit.bits.format(1_000).contains("kbit"))
+        XCTAssertTrue(RateUnit.bytes.format(1_024).contains("KiB"))
+    }
+
     func testFirstSampleProducesNoPoint() {
         let tracker = ThroughputTracker()
         tracker.ingest([iface("igb0", inBytes: 1000, outBytes: 500)], at: Date())

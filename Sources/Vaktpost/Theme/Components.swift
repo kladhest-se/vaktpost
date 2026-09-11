@@ -276,6 +276,14 @@ struct Sparkline: View {
     let outSeries: [Double]
     var height: CGFloat = 44
 
+    /// What the values are in.
+    ///
+    /// The tooltip used to format everything as bytes per second while its one
+    /// caller passed bits, so the tooltip and the `RateLegend` directly beneath
+    /// it disagreed by a factor of 8.4 about the same sample. Pass
+    /// `tracker.unit` and the two cannot drift apart again.
+    var unit: RateUnit = .bits
+
     private var peak: Double {
         max(inSeries.max() ?? 0, outSeries.max() ?? 0, 1)
     }
@@ -299,10 +307,10 @@ struct Sparkline: View {
                         tooltipMarker(at: x, in: geo.size, color: theme.info, value: vals.out)
                         
                         if let inVal = vals.in {
-                            tooltipLabel(text: "\(Fmt.bytesPerSec(inVal)) IN", at: x, in: geo.size, color: theme.ok, value: inVal)
+                            tooltipLabel(text: "\(unit.format(inVal)) IN", at: x, in: geo.size, color: theme.ok, value: inVal)
                         }
                         if let outVal = vals.out {
-                            tooltipLabel(text: "\(Fmt.bytesPerSec(outVal)) OUT", at: x, in: geo.size, color: theme.info, value: outVal)
+                            tooltipLabel(text: "\(unit.format(outVal)) OUT", at: x, in: geo.size, color: theme.info, value: outVal)
                         }
                     }
                 }
@@ -337,7 +345,9 @@ struct Sparkline: View {
 
     private var yAxisLabels: some View {
         HStack(spacing: 0) {
-            Text(Fmt.bytesPerSec(peak))
+            // The third mislabelled site on this card: the axis said bytes,
+            // the tooltip said bytes, and the legend below said bits.
+            Text(unit.format(peak))
                 .scaledFont(8, design: .monospaced)
                 .foregroundStyle(theme.labelFaint.opacity(0.6))
                 .lineLimit(1)
@@ -540,7 +550,8 @@ struct ThroughputChart: View {
                 Sparkline(
                     inSeries: points.map(\.inBps),
                     outSeries: points.map(\.outBps),
-                    height: height
+                    height: height,
+                    unit: tracker.unit
                 )
                 RateLegend(inBps: points.last?.inBps, outBps: points.last?.outBps)
                 if showExplanatoryText {

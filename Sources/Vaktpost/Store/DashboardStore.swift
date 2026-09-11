@@ -15,7 +15,7 @@ final class DashboardStore: Observable {
         case openvpn, openvpnClients, ipsec, wireguard
         case firewall, aliases, portForwards
         case carp, configHistory, certificates, packages, packageUpdates, tables
-        case notices, filesystems, dyndns, hostOverrides, haproxy, acme, rrd
+        case notices, filesystems, dyndns, hostOverrides, haproxy, acme, rrd, pfblocker, dnsbl
 
         var displayName: String {
             switch self {
@@ -53,6 +53,8 @@ final class DashboardStore: Observable {
             case .haproxy: return "HAProxy"
             case .acme: return "ACME"
             case .rrd: return "Historical traffic"
+            case .pfblocker: return "pfBlockerNG"
+            case .dnsbl: return "DNSBL statistics"
             }
     }
     }
@@ -87,6 +89,22 @@ final class DashboardStore: Observable {
     // MARK: Managers
 
     let alertManager = AlertManager()
+
+    /// Both take the store's `defaults` rather than reaching for `.standard`.
+    ///
+    /// The store is careful to accept an injected `UserDefaults` so a test can
+    /// have its own; these two ignored it and wrote to the real one, so a test
+    /// touching the notification setting changed it for the person running the
+    /// tests. Declared `let` and assigned in `init` for that reason.
+    let expiryNotifier: ExpiryNotifier
+    let topTalkers: TopTalkerRecorder
+
+    /// Whether interface error counters are moving, refresh over refresh.
+    ///
+    /// The totals have always been on screen; what they could not say is
+    /// whether anything is happening now. This is the difference between
+    /// readings, which is the part worth looking at.
+    var interfaceErrors = InterfaceErrorTracker()
     let gatewayManager = GatewayManager()
     let overviewLayout = OverviewLayout()
 
@@ -219,6 +237,29 @@ final class DashboardStore: Observable {
     var haproxyInstalled = false
     private var hasLoadedHAProxy = false
 
+    /// pfBlockerNG, loaded when its screen opens rather than on the timer. The
+    /// feed counts come from pf tables, which is a handful of lookups, but most
+    /// firewalls do not have the package and every one of them would pay for
+    /// the question on every refresh.
+    var pfBlocker: PFBlockerStatus?
+    var pfBlockerInstalled = false
+    private var hasLoadedPFBlocker = false
+
+    /// DNSBL statistics, loaded alongside pfBlockerNG.
+    ///
+    /// Kept separate from `pfBlocker` because they answer different questions
+    /// from different places — one is what pf has loaded, the other is what
+    /// the resolver has been refusing — and because this one reads a megabyte
+    /// of log and should not be paid for by a screen that only wants the feed
+    /// counts.
+    var dnsblStats: DNSBLStats?
+    private var hasLoadedDNSBL = false
+
+    /// Whether the DNSBL screen is worth offering at all.
+    var dnsblAvailable: Bool {
+        pfBlockerInstalled && (pfBlocker?.dnsblEnabled ?? false)
+    }
+
     var acmeCertificates: [ACMECertificate] = []
     var acmeAccounts: [ACMEAccount] = []
     var acmeInstalled = false
@@ -330,6 +371,8 @@ final class DashboardStore: Observable {
 
     init(registry: ServerRegistry, defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.expiryNotifier = ExpiryNotifier(defaults: defaults)
+        self.topTalkers = TopTalkerRecorder()
         let storedInterval = defaults.double(forKey: UDKey.hostTrafficInterval.rawValue)
         // A zero means nothing was ever stored, which is different from
         // somebody choosing the fastest option.
@@ -412,12 +455,17 @@ final class DashboardStore: Observable {
         store.wireguardTunnels = []; store.wireguardPeers = []
         store.rules = []; store.aliases = []; store.portForwards = []
         store.configHistory = []; store.certificates = []; store.packages = []; store.tables = []
+        store.pfBlocker = nil; store.pfBlockerInstalled = false
+        store.dnsblStats = nil
+        store.interfaceErrors.reset()
         store.notices = []; store.filesystems = []; store.dyndns = []
         store.isLoadingTables = false
         store.isLoadingFirewallObjects = false
         store.hasLoadedFirewallObjects = false
         store.hasLoadedHAProxy = false
         store.hasLoadedACME = false
+        store.hasLoadedPFBlocker = false
+        store.hasLoadedDNSBL = false
         store.acmeCertificates = []; store.acmeAccounts = []
         store.haproxyFrontends = []; store.haproxyBackends = []
         store.alertManager.alerts = []; store.errors = [:]; store.connectionError = nil; store.lastRefresh = nil
@@ -797,6 +845,29 @@ final class DashboardStore: Observable {
         alertManager.alerts = VaktpostAlert.build(from: self)
         alertManager.pruneAcknowledgements()
         overviewLayout.sync(from: self)
+        interfaceErrors.record(interfaces)
+        scheduleExpiryNotifications()
+    }
+
+    /// Keep the pending expiry notifications in step with what was just read.
+    ///
+    /// On every refresh rather than only when the certificate list changes:
+    /// comparing two lists of certificates to decide whether to reconcile is
+    /// more code than reconciling, and the reconcile is a local operation with
+    /// nothing on the wire.
+    ///
+    /// Skipped when the certificate section failed. An empty list from a
+    /// failed fetch looks exactly like a firewall with no certificates, and
+    /// acting on it would cancel every pending notification for this server
+    /// because one request timed out.
+    func scheduleExpiryNotifications() {
+        guard errors[.certificates] == nil, !certificates.isEmpty else { return }
+        let certificates = self.certificates
+        let id = profile.id.uuidString
+        let name = profile.displayName
+        Task { await expiryNotifier.reconcile(certificates: certificates,
+                                              serverID: id,
+                                              serverName: name) }
     }
 
     /// Fetches the pf tables. Called when the System screen appears, not by
@@ -930,7 +1001,9 @@ final class DashboardStore: Observable {
             try await assign(binding, [section], fetcher: { try await client.notices() }) { self.notices = $0 }
         case .dyndns:
             try await assign(binding, [section], fetcher: { try await client.dyndns() }) { self.dyndns = $0 }
-        case .haproxy, .acme, .rrd, .configHistory, .tables, .packageUpdates:
+        // Loaded when their own screen opens, not by section fetch. Retrying
+        // one of these from Diagnostics goes through its loader instead.
+        case .haproxy, .acme, .pfblocker, .dnsbl, .rrd, .configHistory, .tables, .packageUpdates:
             break
         }
     }
@@ -1059,6 +1132,53 @@ final class DashboardStore: Observable {
             guard isCurrent(binding) else { return }
             hasLoadedHAProxy = false   // let a pull-to-refresh try again
             errors[.haproxy] = error.localizedDescription
+        }
+    }
+
+    func loadPFBlocker(force: Bool = false) async {
+        let binding = bindingID
+        let client = client
+        if force { hasLoadedPFBlocker = false }
+        guard isConfigured, !hasLoadedPFBlocker else { return }
+        hasLoadedPFBlocker = true
+        do {
+            let result = try await checked(binding, sections: [.pfblocker], { try await client.pfBlocker() })
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            pfBlockerInstalled = result != nil
+            pfBlocker = result
+            errors[.pfblocker] = nil
+        } catch {
+            guard isCurrent(binding) else { return }
+            hasLoadedPFBlocker = false   // let a pull-to-refresh try again
+            errors[.pfblocker] = error.localizedDescription
+        }
+    }
+
+    /// DNSBL statistics.
+    ///
+    /// Gated on pfBlockerNG being installed with DNSBL enabled, which means
+    /// `loadPFBlocker` has to have run first — it is called here rather than
+    /// assumed, so opening this screen directly works as well as arriving at
+    /// it from the package screen.
+    func loadDNSBLStats(force: Bool = false) async {
+        let binding = bindingID
+        let client = client
+        if force { hasLoadedDNSBL = false }
+        guard isConfigured, !hasLoadedDNSBL else { return }
+
+        await loadPFBlocker(force: force)
+        guard isCurrent(binding), dnsblAvailable else { return }
+
+        hasLoadedDNSBL = true
+        do {
+            let result = try await checked(binding, sections: [.dnsbl], { try await client.dnsblStats() })
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            dnsblStats = result
+            errors[.dnsbl] = nil
+        } catch {
+            guard isCurrent(binding) else { return }
+            hasLoadedDNSBL = false
+            errors[.dnsbl] = error.localizedDescription
         }
     }
 
@@ -1251,7 +1371,12 @@ final class DashboardStore: Observable {
                 // Merge rather than replace: the repository knows versions, the
                 // configuration knows what is installed, and a package the
                 // repository has dropped should not vanish from the list.
-                let byName = Dictionary(uniqueKeysWithValues: checked.map { ($0.name, $0) })
+                // `uniquingKeysWith`, not `uniqueKeysWithValues`: this is
+                // built from whatever the firewall's repository returned, and
+                // the trapping initialiser would turn two entries of one
+                // package name into a crash rather than a duplicate row.
+                let byName = Dictionary(checked.map { ($0.name, $0) },
+                                        uniquingKeysWith: { _, latest in latest })
                 packages = packages.map { byName[$0.name] ?? $0 }
                 for extra in checked where !packages.contains(where: { $0.name == extra.name }) {
                     packages.append(extra)
@@ -1455,6 +1580,74 @@ final class DashboardStore: Observable {
             if iface.name.lowercased() == lowered { return iface.name }
         }
         return raw
+    }
+
+    /// The client list's entry for an address, if it has one.
+    ///
+    /// A capture reports addresses; the client list is keyed by device. Most of
+    /// the time the address the capture saw is the one the client list shows
+    /// and a direct match is the answer.
+    ///
+    /// When it is not — a device holding several addresses, or one whose
+    /// client-list entry came from a lease while the capture caught it on a
+    /// second address — the ARP and DHCP tables know which MAC is behind the
+    /// address, and the MAC is what identifies a device. Matching that way
+    /// rather than giving up means a second address does not become a row that
+    /// mysteriously will not open.
+    ///
+    /// Nil for anything the firewall does not recognise as a client, which on
+    /// a WAN is most of what a capture returns.
+    func client(matching address: String) -> NetworkClient? {
+        guard let key = ClientAddress.key(address) else { return nil }
+
+        if let direct = overviewLayout.clients.first(where: { ClientAddress.key($0.ip) == key }) {
+            return direct
+        }
+
+        let mac = arp.first(where: { ClientAddress.key($0.ip) == key })?.mac
+            ?? leases.first(where: { ClientAddress.key($0.ip) == key })?.mac
+        guard let mac, !mac.isEmpty, mac != "—" else { return nil }
+        return overviewLayout.clients.first { $0.mac == mac }
+    }
+
+    /// Load the tables the investigation screen searches.
+    ///
+    /// Several of them load only when their own screen is first opened, which
+    /// made the search quietly incomplete: the answer to "which rules apply to
+    /// this device" was "none" until somebody had happened to visit the
+    /// Firewall screen first. A search screen that depends on where you have
+    /// been is worse than one that takes a moment to open.
+    ///
+    /// Each loader already guards against repeating itself, so this is cheap
+    /// on every open after the first. They run one after another rather than
+    /// together because pfSense serialises `exec_php` against its own web UI
+    /// anyway — starting three at once would not make them finish sooner, and
+    /// would take the webConfigurator down with them if they did.
+    ///
+    /// DNSBL is not forced. It is the only one that reads a megabyte of log,
+    /// and it declines by itself when pfBlockerNG is absent or its DNSBL
+    /// component is off — which on most firewalls is always.
+    func loadInvestigationData() async {
+        await loadFirewallObjects()
+        await loadDNSBLStats()
+    }
+
+    /// Interfaces reporting new errors since the last refresh.
+    var interfacesWithRisingErrors: [InterfaceStat] {
+        interfaceErrors.rising(among: interfaces)
+    }
+
+    /// How many contradictions the client tables currently hold.
+    ///
+    /// Only the ones that break traffic, so the badge on More means "something
+    /// is wrong now" rather than "there is a list to read". A duplicate
+    /// hostname is worth showing on the screen and is not worth a badge.
+    var conflictCount: Int {
+        ConflictDetector.find(arp: arp, leases: leases,
+                              staticMappings: staticMappings,
+                              hostOverrides: hostOverrides)
+            .filter { $0.kind.severity == .bad }
+            .count
     }
 
     /// Where an interface sits in the list the host-traffic sampler indexes.

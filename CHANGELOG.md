@@ -1,5 +1,716 @@
 # Changelog
 
+## Sections are independent, and there are tests that say so
+
+- The fix for the linked sections was a one-time rewrite of the stored layout,
+  which is the right fix and an invisible one: it is impossible to tell from
+  the outside whether the sections are genuinely independent now or whether
+  another coupling is waiting.
+- So the guarantee is asserted end to end through the registry rather than only
+  over the migration function. Hiding VPN servers leaves VPN clients. Hiding
+  one and then unhiding Status does not bring the hidden one back — the exact
+  reported symptom. A legacy layout migrates once and then behaves like any
+  other pair, and nothing reintroduces the old name afterwards. Hiding
+  everything and adding one back adds one.
+- These go through `ServerRegistry` and real `UserDefaults`, because the bug
+  was never in the section enum — it was in what storage kept.
+
+## Overview sections appeared to be linked together
+
+- Unhiding Status also unhid both VPN sections. They are not linked; the stored
+  layout was.
+- Splitting `vpn` into two sections expanded the old name at *read* time and
+  left it in storage, which is half a migration. So hiding VPN servers removed
+  `vpnServers` — a name that was never stored — while `vpn` stayed behind, and
+  the next load expanded it again. Anything that touched the layout brought
+  both VPN sections back with it.
+- The migration now rewrites storage once, on the first load that finds an old
+  name, and writes nothing when there is nothing to change. It is idempotent,
+  which matters because it runs on every appearance.
+- A name this build does not recognise is kept rather than deleted. It cannot
+  be displayed, but it belongs to whoever stored it, and a build that knows
+  about it should still find it after this one has run.
+
+## An internal hostname in a test fixture
+
+- `ConflictDetectorTests` used a real internal domain for its DNS override
+  fixture. Replaced with `example.se`. A fixture is as public as the source
+  around it, which is the lesson the secrets suite already learned once when a
+  real WAN address turned up in a test.
+- The same habit, one word short of being caught: the expiry notification
+  fixtures named a real firewall as their server. Now "firewall".
+
+## Investigate fetches what it searches
+
+- Firewall rules, aliases, port forwards and DNSBL load only when their own
+  screens are first opened, so the search was quietly incomplete: "which rules
+  apply to this device" answered "none" until somebody had happened to visit
+  the Firewall screen. A search screen whose answers depend on where you have
+  been is worse than one that takes a moment to open.
+- They are fetched on open, and on pull to refresh. Each loader already guards
+  against repeating itself, so every open after the first costs nothing.
+- Sequentially, not together. pfSense serialises `exec_php` against its own web
+  UI, so starting three at once would not finish sooner — it would only make
+  the webConfigurator unusable while they queued.
+- DNSBL is not forced. It is the only one that reads a megabyte of log, and it
+  declines by itself when pfBlockerNG is absent or its DNSBL component is off.
+- The coverage note stopped telling the reader to go and open other screens —
+  work the screen can do itself. It now says either that the tables are
+  arriving, or which of them this firewall has nothing for. An empty alias list
+  is a real answer, and calling it "not searched" would send somebody looking
+  for a screen that would tell them the same thing.
+
+## Link errors say whether they are happening now
+
+- The counters were already fetched and already on screen, as a field row under
+  "Since boot" reading "in 4211 · out 12". That is the number that cannot be
+  acted on: four thousand errors on a link that has been up for two hundred
+  days is noise, four thousand in the last minute is a cable about to fail, and
+  they render identically.
+- `InterfaceErrorTracker` keeps the previous reading and reports the
+  difference. Errors get their own section on the interface screen — in, out
+  and collisions, with whether anything is new since the last refresh and
+  roughly how fast.
+- **The counters are not guaranteed to only go up**, and everything careful
+  about this follows from that. A reboot, an interface bounce or a driver
+  reload resets them; subtracting anyway gives a negative, and re-baselining
+  wrongly gives a large positive on the reading after. A backwards step is
+  reported as a restart and rebaselines, and the reading after it measures from
+  the new baseline.
+- No rate under ten seconds. Two errors across a two-second poll is "sixty a
+  minute", which is a projection rather than a measurement and reads as far
+  more alarming than what was seen. It still says errors are rising; it just
+  does not invent a rate.
+- The first reading reports nothing. A total since boot is not a change, and
+  treating it as one would flag every interface on the first refresh after
+  launch — the fastest way to make somebody stop reading the warning.
+- Interfaces are tracked by device, not description. A description can be
+  edited on the firewall and renaming one should not look like a counter reset.
+- The interface list shows a warning triangle only while errors are moving, and
+  a static total says so in words rather than being left to look like a live
+  fault.
+
+## Conflicts: where the firewall's own tables disagree
+
+- A screen under More, badged with the count that breaks traffic. Seven checks
+  across ARP, DHCP leases, static mappings and DNS overrides: two MACs on one
+  address, ARP disagreeing with an active lease, two static mappings for one
+  address, one device with two mappings, a reservation for an address somebody
+  else currently holds, one name resolving to two addresses, and two devices
+  answering to one name.
+- Nothing is fetched. Every check is a comparison between tables the client
+  refresh already pulled, so it costs nothing to look at, and it can be wrong
+  in only one direction — it can miss something, but anything it reports is two
+  records the firewall is holding at once.
+- Each conflict says what it means rather than only what it is. "Duplicate
+  address" names the fault; "traffic will reach whichever device answered ARP
+  most recently, and will move between them" explains the symptom somebody came
+  here about.
+- Severity is graded, and only the ones that break traffic now are red. A
+  duplicate hostname is untidy and frequently deliberate — two leases both
+  called `localhost` is not an incident — and grading it the same would teach
+  people to skim past both. Only the red ones reach the badge.
+- Most of the tests are that nothing fires. A missed conflict costs somebody
+  the debugging they were doing anyway; an invented one costs them a hunt for a
+  problem that does not exist. So: one device with several addresses, the same
+  MAC in different case, an expired lease naming another device, a static
+  mapping matching its own static lease, a laptop that changed subnet, and a
+  missing MAC — where `DHCPLease` substitutes an em dash, and two absences
+  would otherwise read as two devices.
+- Each conflict links through to Investigate with its subject filled in.
+- The limit is stated on the screen: it only sees what the firewall records, so
+  a device with a hardcoded address that has never spoken is not in the ARP
+  table and nothing here will know about it. A clean result is not proof of a
+  healthy network.
+
+## Investigate: one box, everything that references an address
+
+- A screen under More, and a link from any client's page with the address
+  already filled in. Type an address, a MAC or part of a name and get the
+  client, its ARP entries and leases, static mappings, DNS overrides, VPN
+  connections, aliases, firewall rules, port forwards and DNSBL counts — in
+  one list, grouped in reading order.
+- **It asks the firewall nothing new.** All of this was already fetched and
+  already searchable, just behind six separate search boxes on six screens, so
+  the question people actually ask took five visits and a good memory.
+- **The answer nothing else in the app gives**: which firewall rules apply to a
+  device. A rule names an alias, the alias holds the address, and no single
+  screen makes that connection. Aliases are resolved first and their names
+  carried into the rule and NAT walk, and every such result says "via alias
+  SERVERS" — a result somebody cannot account for is one they have to go and
+  verify, which is the work this was meant to save.
+- **Addresses are matched exactly, never as substrings.** Both sides are
+  normalised, so equivalent IPv6 spellings match and "10.0.0.1" does not match
+  "10.0.0.100". Fields are split into tokens first, because firewall fields
+  hold lists; a `/32` or `/128` is treated as the host it names, which is how
+  WireGuard writes its allowed IPs.
+- No subnet arithmetic, and the tests pin that: a `/24` rule is not reported as
+  applying to a host inside it. Claiming otherwise would be a guess dressed as
+  a result.
+- The screen says which tables have not been fetched yet. Several load only
+  when their own screen is first opened, so an empty result can mean "nothing
+  references this" or "the app has never asked", and a search that cannot tell
+  those apart is worse than one that admits it.
+
+## VPN cards: servers stop counting clients, clients stop listing absentees
+
+- A server row said "2 connected". `statusLabel` falls back to a count of
+  connections when the endpoint reports no status field, which is what 26.07
+  does — so the servers card was answering the clients card's question. A
+  server that appears in `status/openvpn/servers` is running, and that is what
+  it says now.
+- Client rows are one line: a health dot, the name, where it sits on the
+  tunnel, and the bytes each way. The endpoint and the connect time are gone —
+  four connected devices at three lines each was most of a screen, and a
+  dashboard card is a glance rather than a report. Both are on the VPN screen,
+  a tap away, which is where somebody looking for them is going anyway.
+- The address yields before the transfer figures when the row is tight. A
+  truncated address is still recognisable; a truncated byte count is wrong.
+- WireGuard peers now need a handshake inside five minutes to count as
+  connected, not merely to have handshaken once. A laptop that closed its lid
+  yesterday keeps its timestamp, so the card was listing peers last seen
+  eighteen hours and a day ago under a heading about who is connected. Five
+  minutes is the right threshold because WireGuard rehandshakes roughly every
+  two while traffic flows. The VPN screen still lists them with last-seen
+  times.
+
+## The two VPN sections now answer their own questions
+
+The first split was wrong. Servers showed peer and connection counts — the
+clients' question wearing the servers' title — and clients listed OpenVPN
+*client instances*, the outbound tunnels a firewall dials, which most firewalls
+have none of. So one section said what the other should and the other said
+nothing at all.
+
+- **VPN servers** is about the servers: name, state, listen port, and the bytes
+  that have gone through. One row per OpenVPN server, WireGuard tunnel and
+  IPsec association.
+- RX and TX are summed from the connections for OpenVPN, because the server
+  endpoint reports no totals of its own; WireGuard reports the tunnel's own
+  counters. Both are totals since the daemon started, not rates, and are
+  labelled as such rather than left to be mistaken for throughput.
+- IPsec carries its remote host and state instead of the same columns filled
+  with dashes. It reports neither a listen port nor byte counters here, and
+  padding a row to match its neighbours implies a reading that does not exist.
+- **VPN clients** is now who is connected, across every server, busiest first:
+  common name, tunnel address, where they came from, what they have moved, and
+  how long they have been on.
+- WireGuard peers appear there only once they have handshaken. A configured
+  peer that has never connected is not a client, and listing them would put a
+  row for every key ever issued above the people actually on the VPN.
+- Nobody connected is `info`, not `warn`. A remote-access VPN with no one on it
+  at four in the morning is working exactly as intended, and a card that goes
+  amber for that teaches people to ignore the colour.
+
+## VPN on the dashboard is two sections now
+
+- **VPN servers** — what this firewall hosts and who is connected to it:
+  OpenVPN servers, WireGuard tunnels and peers, IPsec associations.
+- **VPN clients** — what it dials out to. Each OpenVPN client is named with its
+  own status rather than counted, because on a firewall that routes traffic
+  over a provider, *which* tunnel is down is the whole answer. "1 of 2 active"
+  makes you open another screen to learn nothing more.
+- They answer different questions and were sharing a card. One is "can people
+  reach me", the other is "is my own tunnel still up", and the second used to
+  be three lines down inside the first.
+- Health is per section. A combined figure meant one down outbound client
+  turned the whole card amber and a perfectly healthy server could not say so.
+- IPsec and WireGuard sit under servers. Neither has a server and a client in
+  pfSense's own terms — both are peer to peer, both terminate on this firewall,
+  and both are things it provides rather than things it dials out to.
+- The stored layout is a list of raw names, and an unknown one is silently
+  dropped, so `vpn` maps to both replacements on load. Without that, splitting
+  the section would have removed VPN from the dashboard of everybody who had it
+  and put the two new sections in the hidden list to be found by hand.
+
+## A donut for the DNSBL breakdown
+
+- On the DNSBL screen and on the Overview card: the share each domain took of
+  everything blocked, six slices on the screen and four on the dashboard, with
+  the total in the hole.
+- A donut rather than a pie because the hole is where the total goes, and the
+  total is what makes the slices mean anything — 33% of nine requests and 33%
+  of nine thousand are the same wedge and not the same fact.
+- **The remainder slice is the part that makes it honest.** The counts are a
+  top-twenty and the total is every event, so a chart built only from the rows
+  would describe the top twenty while looking like it described the whole. The
+  total is passed in separately and anything unaccounted for becomes "Other".
+- Hand-drawn with `Path`, like `Sparkline` and `RowTrace`, rather than pulling
+  in Swift Charts for one shape. Colours come from the flavour's own accents,
+  ordered to keep neighbouring hues apart, so it looks right in all four
+  themes.
+- Slices under about four degrees keep their hairline gap rather than being
+  swallowed by it — a thin wedge beats a missing one.
+- The chart is one accessibility element reading the top five as percentages.
+  A screen reader gets the reading rather than a description of a circle, and
+  the legend beside it is hidden so it is not read twice.
+
+## pfBlockerNG was wrong about two things at once
+
+- **DNSBL always reported as switched off**, on a firewall whose `dnsbl.log`
+  was 52 KB and being written to that minute. `pfb_dnsbl` was read from the
+  main pfblockerng settings, where it does not exist. It lives in a separate
+  package section, `pfblockerngdnsblsettings`, which is where pfBlockerNG's own
+  code looks for it. The DNSBL mode comes back with it now.
+- **Every list reported "not loaded"**, on a firewall where every list was
+  loaded and working. The counts asked pf directly through
+  `pfSense_get_pf_table` or `pfr_get_table_addrs`, and on pfSense Plus neither
+  function exists — so the screen said no list could be counted and meant it.
+- Counts now fall back to where pfSense's own alias screens get them. A
+  `urltable` alias keeps its addresses in `/var/db/aliastables/<name>.txt`,
+  which is the file pf is loaded from; other types keep theirs inline in the
+  configuration. A port alias such as `DNSBL_Ports` has neither a pf table nor
+  a table file, so "not loaded" was describing something that never exists for
+  that type.
+- Each count says which of the three answered — the running firewall, the file
+  it loads from, or the configuration — because they are not the same claim. A
+  list written but not yet applied counts from the file and would not count
+  from pf, and the screen says which it is looking at rather than implying the
+  stronger one.
+- The pf accessor is still preferred where it exists. Its absence is no longer
+  a warning: it is the normal case on Plus.
+
+## The lock screen asked for a face at the wrong moment
+
+- Returning from the background showed "The operation couldn't be completed.
+  (com.apple.LocalAuthentication error 6.)" with two buttons, instead of
+  prompting.
+- The prompt was fired the instant the lock became required, and that is
+  `.background` — the app is on its way out, nothing can be presented, and
+  `evaluatePolicy` fails immediately with an error about the *request* rather
+  than about the person. By the time the app came back, the prompt had already
+  failed; the screen was showing the result of an attempt made while it was
+  off-screen.
+- Face ID has to be asked for while the app is frontmost. The prompt now waits
+  for `.active` and nothing else.
+- `hasPrompted` guards against the second half of that: presenting the system
+  sheet makes the app inactive and dismissing it makes it active again, so
+  "became active" fires more than once per unlock. It is cleared on a real
+  backgrounding, so the next foreground is a new unlock.
+- `LAError.invalidContext` and `.notInteractive` join `systemCancel` and
+  `appCancel` as outcomes that are not failures. They mean the request was
+  made at the wrong time, not that a face was rejected, and they were landing
+  in the default branch and being reported as a failed attempt — which is what
+  put that error on screen rather than something a person could act on.
+- A cancelled outcome now clears the message and re-arms the prompt, so a lock
+  screen cannot end up sitting there having given up.
+
+## DNSBL block statistics
+
+- A screen behind pfBlockerNG, and a section on the Overview dashboard: how
+  many requests DNSBL refused, the busiest domains, which clients asked for
+  them, which feeds and groups matched, and an hourly bar chart. The same
+  numbers as the package's own DNSBL Block Stats page.
+- Computed from the same file that page uses, `/var/log/pfblockerng/dnsbl.log`,
+  whose format is documented in pfBlockerNG's own source. That page shells out
+  to `cut | sort | uniq -c`; this reads the tail of the log and counts in PHP,
+  which needs no process and no allowlist entry beyond a sort.
+- **Only the tail.** A busy DNSBL log runs to tens of megabytes and reading it
+  whole would die on PHP's memory limit, which is indistinguishable from an
+  empty log. The window is the last megabyte, and the screen says when the log
+  is bigger than that — a total that silently means "some of it" is worse than
+  no total.
+- Hour labels stay as text. pfBlockerNG writes its timestamps with no year, so
+  anything building a date from "Sep 3 01" would be inventing one, and would
+  invent the wrong one for a log spanning New Year. They are kept in the order
+  the log has them, which is chronological because the file is append-only —
+  sorting them by name would put "Sep 9" after "Sep 10".
+- Clients are named from the ARP, lease and override tables, the way every
+  other address in this app is.
+- Gated at three levels, saying something different at each: the package is not
+  installed, the package is installed and DNSBL is off, and DNSBL is on with an
+  empty log. The link from the package screen appears only when DNSBL is
+  enabled, because a link to a screen that can only say "this is switched off"
+  is worse than no link.
+- The Overview section is always in the list rather than appearing with the
+  package. Somebody installing pfBlockerNG later should not have to find a
+  hidden section to turn it on; the card explains itself instead.
+
+## Less prose under the traffic list
+
+- The four explanatory paragraphs are gone — the capture interval, the ten-host
+  cap, what a row's trace means, and what Local means on a WAN. All true, all
+  read once, and then sitting under a live screen forever.
+- The constraints they described are still documented where they are of use to
+  somebody changing the code rather than somebody watching a graph: the capture
+  and its limits in `PHPSnippets.hostTraffic`, the rest in `TrafficView`'s own
+  header.
+- What stays is the line carrying whatever pfSense wrote when it returned no
+  rows. It only appears when the list is empty, and when the list is empty it
+  is the only thing on screen that says why.
+- The one-line reason under the filter control also stays. It appears only on a
+  WAN or a tunnel, where the default is not the obvious one.
+
+## Two things found while reviewing this session's own code
+
+- The store accepts an injected `UserDefaults` so a test can have its own, and
+  then handed neither of its two new children one — both reached for
+  `.standard`. A test touching the notification setting changed it for the
+  person running the tests. They take the store's now.
+- The top-talker record encoded and wrote itself on the main actor every five
+  seconds. It is a dictionary of value types, so a copy goes to a detached task
+  and is encoded there. The moment this cost the most was the moment the app is
+  drawing a live trace, which is the worst possible time to stall the main
+  thread.
+- Retention was seven days and nothing else, which is not a bound: seven days
+  across fifteen interfaces is thousands of hourly buckets, all re-encoded on
+  every save. There is a ceiling of 600 hours now, oldest dropped first.
+
+## What is actually scheduled
+
+- The notification count in Settings is now a link to the list behind it:
+  every pending notification, grouped by firewall, with its title, the
+  certificate it is about, how many days before expiry it fires, and the exact
+  date and a relative one.
+- Read back from iOS rather than from anything the app remembers. A list built
+  from the app's own intentions would agree with itself and tell nobody
+  anything — and iOS silently drops requests past its 64-per-app limit, which
+  is exactly the disagreement worth being able to see. Over about 56 pending,
+  the screen says so.
+- Grouped by firewall, and the grouping is parsed out of the identifier rather
+  than remembered, so a notification is still attributable after its firewall
+  stops being the active one or is removed entirely.
+- A trigger that will not resolve to a delivery date is called out rather than
+  shown as a dash. It is the one entry worth chasing.
+- A "Reschedule from this firewall" button forces the reconcile that normally
+  happens on refresh, and the screen says what it does and does not touch: a
+  certificate renewed since its notifications were scheduled keeps the old
+  dates until something reconciles them, and reconciling one firewall must
+  never cancel another's.
+- Reconciling is the part of that feature most likely to be quietly wrong — it
+  runs on every refresh, removes by identifier prefix, and until now there was
+  no way to see what it had done.
+
+## Crash fix: top talkers trapped on the third capture
+
+- The recorder put entries into its dictionary under a normalised address key
+  and rebuilt that dictionary from storage under the raw address. The two never
+  matched, so every lookup missed, every capture added a second entry for a
+  host that was already there, and the third capture handed
+  `Dictionary(uniqueKeysWithValues:)` two entries of the same address — which
+  traps. A crash on the third capture of any interface with anything on it: six
+  seconds at a two-second interval, forty-five at fifteen.
+- The key is now a property of the record, computed one way and used on both
+  sides.
+- Both uses of `Dictionary(uniqueKeysWithValues:)` are gone. That initialiser
+  traps on a duplicate key, which is fine over a literal somebody wrote and a
+  crash waiting to happen over anything else — and both of these were over data
+  the app does not control: its own stored file, and whatever a firewall's
+  package repository returns. They merge now, so a bad file costs accuracy
+  rather than the app.
+- The quieter half of the same bug: because every lookup missed, each capture
+  replaced a talker's stats rather than folding into them, so every entry read
+  as a single sample however long a screen had been open. Peaks and means are
+  real now.
+- The traffic list deduplicates rows by identity before drawing them. `ForEach`
+  over duplicate ids is undefined behaviour and the identity comes from an
+  address the firewall chose, which this app does not get to assume is unique.
+
+## Build fix
+
+- `fetchSection` did not handle `Section.pfblocker`. It joins the other
+  sections that are loaded when their own screen opens rather than by the
+  refresh — HAProxy, ACME, RRD — and does nothing there.
+
+## Build fix
+
+- Reconciling expiry notifications used a nested `contains` whose inner closure
+  named its own argument, leaving a `$0` in it with nothing to refer to. It is
+  a set lookup now, which compiles and is also the right shape: this runs once
+  per refresh over every pending notification on the device.
+
+## The lock screen asked for nothing, and asked too late
+
+Three faults, compounding into one symptom: returning to the app showed the
+dashboard, then a Face ID sheet that flashed up and let you straight in.
+
+- **The `LAContext` was shared.** It was a `static let` reused by every call,
+  and an `LAContext` holds the result of a successful evaluation — evaluate the
+  same policy on the same context again and it returns success immediately
+  without prompting. The system sheet still appears for an instant as it is
+  created and torn down, which is exactly what it looked like. There is now a
+  fresh context per evaluation, as Apple's guidance says, with reuse duration
+  pinned to zero.
+- **Locking was driven off `.active`, which is too late.** iOS takes the
+  app-switcher snapshot at `.inactive`, so by the time a lock screen appeared
+  on `.active` the dashboard had already been photographed and shown. The cover
+  now goes up at `.inactive`.
+- **`.inactive` was treated as backgrounding, and presenting a Face ID sheet
+  makes the app inactive.** So authenticating set the "went to background"
+  flag, and succeeding immediately re-armed the lock: authenticate, go
+  inactive, authenticate again. Covering and locking are now separate states —
+  `.inactive` covers the screen and asks nothing, `.background` locks.
+
+Alongside those:
+
+- A re-entrancy guard, because two evaluations at once produce two system
+  sheets and the second tearing down the first is another route to a prompt
+  that flashes and vanishes.
+- `LAError.systemCancel` and `.appCancel` are no longer reported as failures.
+  They mean iOS took the sheet away, not that a face was rejected, and saying
+  "authentication failed" to somebody whose face was never looked at is both
+  wrong and alarming.
+- A passcode fallback, which the failure message had been promising and the
+  code never offered. Biometry locks out after five failed attempts and stays
+  locked until a passcode unlock, so a lock screen offering only biometrics
+  could shut somebody out of this app entirely. The unused `usingPasscode`
+  state is now reachable.
+- Auto-refresh restarts on `.active`. It was stopped on `.inactive` and never
+  started again, so pulling down the control centre silently ended automatic
+  refreshing until the app was relaunched.
+- The four `print` statements left in the scene-phase handler are gone.
+
+Not verifiable outside a device: biometry needs real hardware and a real
+enrolment, so this is reasoned from the LocalAuthentication contract rather than
+observed. Worth testing the interrupted cases specifically — background the app
+while the sheet is up, and fail Face ID five times to reach the passcode path.
+
+## Search in the traffic list
+
+- The same `InlineSearchField` the Clients list uses, matching on the address
+  and on every name the firewall knows the device by rather than only the one
+  that won the title — a device shown as its DNS override stays findable by the
+  description on its static mapping.
+- Ten rows do not need searching for their own sake. What it is for is the
+  question the list cannot answer by being read: whether one particular device
+  is in the ten right now. Typing its name and watching the row appear and
+  disappear across captures says that; scanning ten changing rows for it does
+  not.
+- A search that matches nothing gets its own sentence rather than falling
+  through to "nothing measured", which would be false — something was measured,
+  it just was not this. The sentence carries the same ambiguity the list always
+  has: absent from the ten is usually idle and is sometimes crowded out, and a
+  search cannot tell which.
+- It narrows what is shown and never what is measured. The captures, the row
+  traces and the hourly record are all unaffected, and the firewall's own
+  output is only surfaced when the capture itself came back empty rather than
+  when a search filtered it away.
+
+## pfBlockerNG
+
+- A screen under More, following the same installed / not-installed shape as
+  HAProxy and ACME: enabled state, DNSBL state, every `pfB_` alias, and how
+  many addresses pf currently holds for each.
+- **Counted from pf, not from the package's files.** A feed file on disk says
+  what was downloaded; a pf table says what is loaded into the running
+  firewall, and those differ whenever an update has been fetched and not
+  applied. The app already had an accessor for pf tables, so the headline
+  number needs nothing new on the firewall.
+- A list with no pf table reads as "not loaded", never as zero. Both look the
+  same on any screen that prints a number and only one of them means traffic is
+  getting through, so unloaded lists are called out separately and left out of
+  the blocked total.
+- Installed is decided on the filesystem, not on the config section. A removed
+  package leaves its settings behind and a screen reading those as installed
+  would show zeros indefinitely.
+- Paths are probed rather than assumed. pfBlockerNG and pfBlockerNG-devel keep
+  their logs and databases in different places, and the result reports which
+  were found so the screen can say what it is looking at.
+- Logs are described, not read — name, size, and when they were last written.
+  A busy firewall's block log runs to hundreds of megabytes, and pulling it
+  across the wire to count lines would cost more than the count is worth. A log
+  untouched for days is a component that is not running, which is the question
+  somebody actually has.
+- Loaded when the screen opens rather than on the refresh timer. Most firewalls
+  do not have the package and every one of them would otherwise pay for the
+  question every thirty seconds.
+
+## Top talkers, hour by hour
+
+- Every capture the traffic screens take is now folded into a rolling record of
+  the busiest addresses per interface per hour, reachable from History on the
+  traffic screen. Kept for seven days, at most 20 addresses an hour, persisted
+  so it survives a relaunch.
+- **It only knows what it was watching, and the screen says so.** Captures come
+  from screens that run while they are open: iOS does not let an app poll a
+  firewall in the background, and a one-second packet capture is not something
+  to ask of a background refresh even if it did. So the gaps are hours nothing
+  was watching rather than hours nothing happened, and coming back in the
+  morning to ask what saturated the line at 3am is the one thing this cannot
+  answer unless the app was open at 3am. The screen points at pfSense's own
+  Monitoring for interface totals and at ntopng for unattended per-host work.
+- Coverage is carried per hour and shown under each summary — how many captures
+  and the span between the first and last. Three captures at 2:05 and three
+  hundred spread across the hour produce the same list and are not the same
+  claim. It is stated in captures and span rather than as a percentage, which
+  would imply the gaps between captures were measured.
+- An address missing from a capture is not folded in as a zero. pfSense returns
+  ten addresses and a different ten each time, so a device crowded out was not
+  necessarily idle and counting it as silent would drag its mean down for being
+  unlucky.
+- Names are resolved at record time. Resolved at display time, a device that
+  has since left the network would lose its name exactly when somebody is
+  looking it up.
+- Rates are what an address was doing at the moment of a capture. They are not
+  totals transferred, and the screen says so — multiplying instantaneous rates
+  by elapsed time would produce a number this app cannot support.
+- The per-client trace feeds the same record. It takes the same capture and
+  gets the interface's whole top ten back, so there was no reason to discard
+  the rest of it.
+- Clearing is offered on the screen. A record of which devices were busy and
+  when is the most personal thing this app keeps.
+
+## Certificate expiry as a notification
+
+- Certificates now schedule local notifications 30, 14, 7, 3 and 1 days before
+  they expire, at 9am local time, each naming the firewall it belongs to.
+- This is the only alert this app can deliver while it is not running, and the
+  reason is worth stating: everything else on the Alerts screen is derived from
+  status the app has to ask the firewall for, and an app that is not running
+  cannot ask. A certificate says months in advance exactly when it becomes a
+  problem, so the notification is scheduled for that date and arrives whether
+  or not the app is ever opened again.
+- Off until switched on, and permission is requested at that moment rather than
+  at launch. A prompt on first run, before the app has shown what it would use
+  it for, is the reliable way to be refused permanently. If permission was
+  refused later in iOS Settings the toggle says so, because a switch that is on
+  and does nothing is worse than one that is off.
+- Thresholds already passed are not scheduled. Otherwise every known expiry
+  would arrive at once the first time this was enabled, which is how somebody
+  learns to dismiss these without reading them.
+- Pending notifications are reconciled on every refresh, scoped to the active
+  firewall's identifier prefix. A renewed certificate has a new expiry and its
+  old schedule is now a lie; without the removal, renewing would leave an
+  "expires in 7 days" pending that arrived on time for a certificate replaced a
+  month earlier. Namespacing by firewall means reconciling one never cancels
+  another's.
+- Skipped when the certificate fetch failed. An empty list from a failed
+  request looks exactly like a firewall with no certificates, and acting on it
+  would cancel every pending notification because one call timed out.
+- Identity is the reference ID, not the description. pfSense does not stop
+  anybody calling two certificates the same thing, and one silently replacing
+  the other's schedule would mean the second expiring unannounced.
+
+## Build fix
+
+- The traffic row's name and address are selectable only where the row does not
+  navigate, and that was written as one modifier taking a ternary between
+  `.disabled` and `.enabled`. Those are two types, not two cases, so it did not
+  compile. Split into two branches applying the modifier or not.
+
+## Throughput was labelled in two units at once
+
+- `ThroughputTracker` is built twice: for interfaces it multiplies byte
+  counters by eight and holds bits per second, and for VPN tunnels the
+  multiplier is one and it holds bytes per second. Nothing carried which was
+  which, so it had to be remembered at every call site, and it was not.
+- `ThroughputChart` fed the interface tracker's bits into `Sparkline`, which
+  labelled both its y-axis and its tooltip as bytes — directly above a
+  `RateLegend` reading the same sample as bits. Two numbers on one card, 8.4x
+  apart: eight for bits against bytes, and again 1024 against 1000.
+  `InterfaceComparisonView` had the same fault, with a bytes tooltip over a
+  bits legend in the same file.
+- The unit now travels with the data. `ThroughputTracker` exposes it, derived
+  from the multiplier so the two cannot disagree, and `Sparkline` takes it as a
+  parameter. A caller passing `tracker.unit` cannot get it wrong.
+- The VPN row was already correct and is unchanged; it reads a bytes tracker
+  and formats bytes.
+
+## The interface picker is grouped
+
+- Uplinks, Networks and Tunnels, instead of fifteen entries in pfSense's config
+  order with two uplinks, five tunnels and eight VLANs interleaved into a list
+  you had to read all of. The three kinds answer different questions.
+- The slot travels with the entry rather than being recomputed from the
+  grouped order. Grouping changes what is shown and must not change what is
+  sent — otherwise the app samples one interface and labels it with another's
+  name, which is the failure the result already carries a check against.
+- Order within a group is pfSense's. Sorting by name would look tidier and
+  would mean the menu rearranged itself whenever an interface was renamed.
+- Empty groups are dropped, so a firewall with no tunnels gets no heading for
+  them.
+
+## Each interface starts on a filter that returns something
+
+- Opening a WAN or a tunnel used to show an empty list, and an empty list reads
+  as a broken screen. On both of those the empty list is exactly what Local
+  correctly returns: a tunnel is point to point and has no local subnet for the
+  capture to scope to, and a WAN's local subnet is the link to the ISP rather
+  than anything on the network. Tunnels now start on All and interfaces with a
+  gateway start on Remote.
+- Classified structurally, not by name. A tunnel is recognised by its device
+  prefix — `ovpn`, `tun`, `wg`, `ipsec`, `gif`, `gre` and so on — and a WAN by
+  having a gateway, which is what makes an interface a WAN in pfSense's own
+  terms. The description is deliberately not consulted: "WAN_2" is a
+  convention, not a fact, and a LAN somebody named badly should not be
+  classified by its label. Where the gateway is absent this falls through to
+  Local, which is what the screen did before.
+- The device prefix is checked before the gateway, because a tunnel usually has
+  a gateway too and being a tunnel is the stronger fact.
+- A one-line reason appears under the control where the default is not the
+  obvious one, and nothing at all on a VLAN, where a line explaining that Local
+  means local would be noise on every visit.
+- It is a default, not an override: applied when the interface changes, and a
+  filter chosen by hand afterwards survives until the interface changes again.
+- The per-client trace follows the same rule. It was hardcoded to Local, which
+  was right for a device on a VLAN and wrong everywhere else — a device reached
+  over a tunnel would never appear in a capture, and the card would report it
+  idle indefinitely.
+
+## A trace on every traffic row
+
+- Each row in the host traffic list carries the last twenty captures as a small
+  two-direction trace. A single instantaneous number cannot tell a device that
+  is winding down from one that is ramping up, and at a fifteen-second interval
+  two consecutive glances are a long way apart.
+- Scaled to the row's own peak rather than the list's, because the question a
+  row-sized trace answers is which way that one is heading. Against a shared
+  scale every row but the busiest would be a flat line along the bottom. The
+  two directions do share a scale with each other, so a device downloading at
+  5 Mbit and uploading at 3 kbit is not drawn as two similar lines.
+- A row that falls out of the top ten carries a zero rather than a gap, so it
+  is drawn winding down rather than vanishing, and is forgotten once its whole
+  window is zeros. Without that, a firewall left on this screen accumulates a
+  trace for every address that has ever been busy on the interface.
+- `RowTrace` is a new view rather than the existing `Sparkline`, which carries
+  axis labels, gridlines and a tap-to-inspect tooltip — right for a card, wrong
+  for a strip under two numbers, and its tap gesture would fight the link the
+  row now is.
+- Traces are keyed by normalised address and cleared when the interface, filter
+  or sort changes. Two spellings of one IPv6 address would otherwise be two
+  half-empty traces, and the previous run's history describes a different
+  question.
+
+## Host traffic rows open their device
+
+- A row in the traffic list is now a link to that device's investigation page,
+  where the firewall recognises the address. Both screens live in the Clients
+  tab and describe the same devices, so "172.16.1.10 is pulling 5.63M" and that
+  device's leases, names and filter log were one tap apart in principle and
+  several in practice.
+- The lookup goes through the MAC when a direct address match fails. The client
+  list shows one address per device and a capture can catch it on another, which
+  would otherwise be a row that looks tappable and refuses to open.
+- Rows the firewall does not recognise stay as they were, with no chevron. On a
+  WAN that is most of what a capture returns, and a link to nothing is worse
+  than no link. Those rows keep selectable text; linked rows do not, because
+  text selection swallows the tap.
+
+## Housekeeping
+
+- The `interfaces` snippet had two lines assigning `inbytes` and `outbytes` to
+  themselves, under a comment claiming they were being set from the same call
+  the counters snippet uses. It is the same call, so the assignments did
+  nothing and the comment described an intent the code never had. Both gone;
+  `counters_present`, which distinguishes "this interface has no counters" from
+  "no second sample yet", is the part that was doing the work.
+- SECURITY.md now accounts for `printBandwidth`. That file is the honest
+  account of what the XML-RPC transport gives up against the REST build, and it
+  was one entry out of date: the allowlist had gained something that spawns a
+  packet capture. It gets its own paragraph — what bounds it, and what somebody
+  weighing this app against a production firewall should know. Two other claims
+  there had quietly gone stale: snippets are no longer all `static let`, and the
+  log reader is no longer the only one taking parameters.
+- The five working-note markdown files moved out of the repository root into
+  `docs/`, with a README saying what each is and pointing at CHANGELOG.md
+  first. `layout.sh` had been warning about them on every run, and a warning
+  nobody acts on teaches people to skim the suite output — which is how a
+  switched-off gate went unnoticed for months.
+- `swiftlint.yml` is now `.swiftlint.yml`, the name SwiftLint actually looks
+  for. Without the dot it was only ever found because the Makefile passed it
+  with `--config`; anything else invoking SwiftLint in this tree silently
+  linted with defaults.
+
 ## Host traffic
 
 Per-interface host traffic — the table under Status > Traffic Graph in the

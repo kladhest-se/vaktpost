@@ -166,6 +166,22 @@ actor FirewallClient {
         )
     }
 
+    /// pfBlockerNG, or nil when the package is not installed.
+    ///
+    /// Installed is decided on the filesystem rather than on the presence of
+    /// settings: a removed package leaves its configuration behind, and a
+    /// screen that read that as installed would show zeros indefinitely.
+    func pfBlocker() async throws -> PFBlockerStatus? {
+        let payload = try await rpc.runObject(.pfBlocker)
+        guard payload.bool("installed") == true else { return nil }
+        return PFBlockerStatus(payload)
+    }
+
+    /// DNSBL block statistics, counted from the tail of pfBlockerNG's log.
+    func dnsblStats() async throws -> DNSBLStats {
+        DNSBLStats(try await rpc.runObject(.dnsblStats))
+    }
+
     /// ACME configuration, or nil when the package is not installed.
     func acme() async throws -> (certificates: [ACMECertificate], accounts: [ACMEAccount])? {
         let payload = try await rpc.runObject(.acme)

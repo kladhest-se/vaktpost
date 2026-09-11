@@ -4,6 +4,9 @@ struct SettingsView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
 
+    /// How many expiry notifications are pending, or nil while counting.
+    @State private var pending: Int?
+
     var body: some View {
         ScrollView {
             PageHeader(title: "Settings", subtitle: nil)
@@ -17,6 +20,9 @@ struct SettingsView: View {
 
                 GroupHeading(text: "Alerts")
                 alertsSlab
+
+                GroupHeading(text: "Notifications")
+                notificationsSlab
 
                 if BiometricAuth.canUseBiometrics() {
                     GroupHeading(text: "Lock screen")
@@ -77,6 +83,87 @@ struct SettingsView: View {
     /// Alerts are derived on the device, so silencing changes what is shown
     /// rather than what is measured — everything stays visible on the Alerts
     /// screen, it just stops driving the badge and the Overview banner.
+    /// The one alert this app can deliver while it is not running.
+    ///
+    /// Everything else on the Alerts screen is derived from status the app has
+    /// to ask the firewall for, and an app that is not running cannot ask. A
+    /// certificate is different: it says months in advance exactly when it
+    /// will become a problem, so the notification can be scheduled for that
+    /// date and arrives whether or not this app is ever opened again.
+    private var notificationsSlab: some View {
+        Slab(rail: .info) {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(isOn: Binding(
+                    get: { store.expiryNotifier.isEnabled },
+                    set: { on in
+                        store.expiryNotifier.isEnabled = on
+                        guard on else { return }
+                        Task {
+                            // Asked here rather than at launch. A permission
+                            // prompt on first run, before the app has shown
+                            // what it would use it for, is the reliable way to
+                            // be refused permanently.
+                            await store.expiryNotifier.requestPermission()
+                            store.scheduleExpiryNotifications()
+                        }
+                    }
+                )) {
+                    Text("Certificate expiry")
+                        .scaledFont(14)
+                        .foregroundStyle(theme.label)
+                }
+                .tint(theme.accentColor)
+
+                Text("Scheduled 30, 14, 7, 3 and 1 days before a certificate expires, at 9am. Each notification names the firewall.")
+                    .scaledFont(12)
+                    .foregroundStyle(theme.labelMuted)
+
+                if store.expiryNotifier.isEnabled, store.expiryNotifier.permission == .denied {
+                    // A toggle that is on and does nothing is worse than one
+                    // that is off. The app cannot re-ask once refused; only
+                    // iOS Settings can grant it back.
+                    Text("Notifications are turned off for Vaktpost in iOS Settings, so nothing will be delivered until they are turned back on there.")
+                        .scaledFont(12)
+                        .foregroundStyle(theme.warn)
+                }
+
+                if store.expiryNotifier.isEnabled, store.expiryNotifier.permission == .granted {
+                    Hairline()
+                    // A count says something is scheduled and nothing about
+                    // whether it is still true. The list behind this is the
+                    // only way to see what reconciling actually did.
+                    NavigationLink {
+                        ScheduledNotificationsView()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(pendingDescription)
+                                .scaledFont(11, design: .monospaced)
+                                .foregroundStyle(theme.labelFaint)
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .scaledFont(10, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .task {
+            await store.expiryNotifier.refreshPermission()
+            pending = await store.expiryNotifier.pendingCount()
+        }
+    }
+
+    private var pendingDescription: String {
+        switch pending {
+        case nil: return "Counting what is scheduled…"
+        case 0: return "Nothing scheduled — no certificate on this firewall expires within 30 days."
+        case 1: return "1 notification scheduled."
+        default: return "\(pending ?? 0) notifications scheduled."
+        }
+    }
+
     private var alertsSlab: some View {
         Slab(rail: .info) {
             VStack(alignment: .leading, spacing: 10) {

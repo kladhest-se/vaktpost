@@ -33,28 +33,49 @@ comes instead from the contents of one file,
 `Sources/Vaktpost/Net/PHPSnippets.swift`, and from the checks that hold it
 there:
 
-- Every snippet is a `static let` constant. None is assembled at runtime, so
-  every line of PHP that can reach a firewall is in the repository and has been
-  reviewed.
+- Every snippet is a constant. The three that take parameters build themselves
+  from a closed enum and a clamped integer and nothing else, so every line of
+  PHP that can reach a firewall is in the repository and has been reviewed.
 - No snippet may contain `write_config`, `mwexec`, `exec`, `shell_exec`,
   `system`, `passthru`, `popen`, `proc_open`, `unlink`, `file_put_contents`,
   `rename`, `mkdir`, `rmdir`, `chmod`, `chown` or `eval`.
 - Every PHP function called must appear on the allowlist in that file.
 - `pfsense.exec_php` is the only XML-RPC method used. pfSense also exposes
   `restore_config_section` and `merge_config_section`, which write.
-- Two snippets call pfSense functions that shell out internally —
-  `wg_get_status()` runs `wg show`, `get_pkg_info()` runs pkg. That is
-  deliberate and worth stating: the rules forbid *this app* from sending
-  `exec`, `mwexec` or a shell, not pfSense from using one inside its own
-  functions. What the rules protect is that every line of PHP this app sends is
-  reviewable and cannot write, which holds for both.
+- Three snippets call pfSense functions that shell out internally —
+  `wg_get_status()` runs `wg show`, `get_pkg_info()` runs pkg, and
+  `printBandwidth()` runs `/usr/local/bin/rate`. That is deliberate and worth
+  stating: the rules forbid *this app* from sending `exec`, `mwexec` or a
+  shell, not pfSense from using one inside its own functions. What the rules
+  protect is that every line of PHP this app sends is reviewable and cannot
+  write, which holds for all three.
+- `printBandwidth()` deserves its own paragraph, because it is the weakest
+  entry on the allowlist and the only one that is not a value read. It is how
+  `status_graph.php` fills its Host IP table, and there is no other source of
+  per-host rates on pfSense — there is no counter to read, so the firewall
+  takes a one-second packet capture to answer. Three things bound it. The
+  branch this app reaches only reads; the branch that kills processes and
+  unlinks logs is reachable only through a `mode` argument the snippet never
+  passes, and `Tests/VaktpostTests/HostTrafficTests.swift` asserts it stays
+  empty. The interface is chosen by an index clamped to 0...63 into pfSense's
+  own interface list, so no runtime string reaches the PHP. And it runs only
+  while a screen asking for it is open, never on the refresh timer.
+
+  It is still a process spawn rather than a counter read, and it is the
+  heaviest thing this app asks of a firewall. Anybody weighing whether to run
+  Vaktpost against a production box should know that opening its traffic
+  screens makes pfSense capture packets for a second at a time, on an interval
+  the person chooses, for as long as the screen is open.
 - No snippet copies a secret. `wg_get_status()` returns the private key of
   every WireGuard tunnel and the preshared key of every peer alongside the
   status the app wants; snippets copy the fields they need by name and never
   return a structure whole. Checked, and checked again on the output of
   `check-snippets.sh --save`, which writes payloads to disk.
-- The one snippet taking parameters — the log reader — draws its path from a
-  closed enum and clamps its line count. Nothing a person types reaches PHP.
+- The three snippets taking parameters are constrained at the source. The log
+  reader draws its path from a closed enum and clamps its line count; the RRD
+  reader renders a span from an enum as an integer; the host-traffic sampler
+  takes two closed enums and an index clamped to 0...63. Nothing a person types
+  reaches PHP.
 
 `vaktpost-tools/tests/readonly.sh` enforces all of it and runs before every
 publish. `Tests/VaktpostTests/XMLRPCTests.swift` covers the same rules in Xcode.

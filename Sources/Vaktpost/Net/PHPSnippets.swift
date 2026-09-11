@@ -112,6 +112,9 @@ struct PHPSnippet: Sendable {
         "rrd_fetch",
         // Probed with function_exists before use; see `pfTables`.
         "pfSense_get_pf_table", "pfr_get_table_addrs",
+        // Sorts an array this snippet built itself, in place, by value. It
+        // reads nothing and reaches nothing.
+        "arsort",
         // Output buffering, so a pfSense function that echoes can be called
         // without its output landing in the XML-RPC response body.
         "ob_start", "ob_get_clean",
@@ -370,16 +373,18 @@ struct PHPSnippet: Sendable {
       $data = get_interface_info($ifdescr);
       $data["descr"] = $ifname;
       $data["name"] = $ifdescr;
-      // Counters, explicitly.
+      // Whether the counters are there at all, said out loud.
       //
-      // get_interface_info() is documented to include these and the throughput
-      // chart has never charted anything, which points at them arriving under
-      // a name the app does not read or not arriving at all. Setting them from
-      // the same call the counters snippet uses removes the question: if they
-      // are absent here they are absent everywhere, and the chart can say so
-      // instead of waiting forever for a sample.
-      $data["inbytes"] = $data["inbytes"];
-      $data["outbytes"] = $data["outbytes"];
+      // "No counters on this interface" and "no second sample yet" produce the
+      // same empty chart, and the app spent a long session showing the second
+      // message for the first condition. This flag is what tells them apart.
+      //
+      // There were two lines above this one assigning inbytes and outbytes to
+      // themselves, under a comment about setting them from the same call the
+      // counters snippet uses. It is the same call — get_interface_info() —
+      // so the assignments did nothing whatsoever, and the comment described
+      // an intent the code never had. Both are gone; the flag below is the
+      // part that was doing the work.
       $data["counters_present"] = (isset($data["inbytes"]) && isset($data["outbytes"]));
       $rows[] = $data;
     }
@@ -851,6 +856,339 @@ struct PHPSnippet: Sendable {
       "available" => ($accessor !== ""),
       "accessor" => $accessor,
       "data" => $tables,
+    ];
+    """)
+
+    /// pfBlockerNG: what it is blocking, and how much of it.
+    ///
+    /// The headline number a person wants from pfBlockerNG is how many
+    /// addresses are currently blocked and which feed they came from. That is
+    /// reachable without parsing anything the package writes: pfBlockerNG
+    /// creates firewall aliases named `pfB_*`, and pf holds their contents as
+    /// tables, which the app already has an accessor for.
+    ///
+    /// Counting from pf rather than from the package's own files is also the
+    /// more honest number. A feed file on disk says what was downloaded; a pf
+    /// table says what is actually loaded into the running firewall, and those
+    /// differ whenever an update has been fetched but not applied.
+    ///
+    /// Everything else here is deliberately shallow. pfBlockerNG and
+    /// pfBlockerNG-devel keep their logs and databases in different places
+    /// under different names, and this app cannot tell which is installed
+    /// without looking. So the paths are probed rather than assumed, and the
+    /// result says which were found — enough for a screen to report the state
+    /// of the package, and enough for `vaktpost-tools/bin/pfblocker-probe.sh`
+    /// to establish what a particular firewall actually has before anything
+    /// here starts parsing it.
+    static let pfBlocker = PHPSnippet("pfblocker", """
+    global $config;
+    $installed = $config["installedpackages"];
+    $pfb = is_array($installed) ? $installed["pfblockerng"] : "";
+
+    // pfSense package settings live under a "config" list with one element.
+    $settings = [];
+    if (is_array($pfb)) {
+      $list = $pfb["config"];
+      if (is_array($list) && is_array($list[0])) { $settings = $list[0]; }
+    }
+
+    // DNSBL is a different package section entirely.
+    //
+    // `pfb_dnsbl` was read out of the main pfblockerng settings, where it does
+    // not exist, so DNSBL always read as switched off — on a firewall whose
+    // dnsbl.log was 52 KB and being written to that minute. pfBlockerNG keeps
+    // it under `pfblockerngdnsblsettings`, which is where its own code looks:
+    // `$pfb["dnsblconfig"] = config_get_path("installedpackages/pfblockerngdnsblsettings/config/0")`.
+    $dnsblSettings = [];
+    $dnsblSection = is_array($installed) ? $installed["pfblockerngdnsblsettings"] : "";
+    if (is_array($dnsblSection)) {
+      $dnsblList = $dnsblSection["config"];
+      if (is_array($dnsblList) && is_array($dnsblList[0])) { $dnsblSettings = $dnsblList[0]; }
+    }
+
+    // Installed is a question about the filesystem, not the config: a removed
+    // package can leave its settings behind, and a screen that reported it
+    // installed on that basis would show zeros forever.
+    $paths = [
+      "pkg" => "/usr/local/pkg/pfblockerng/pfblockerng.inc",
+      "logs" => "/var/log/pfblockerng",
+      "db" => "/var/db/pfblockerng",
+      "deny" => "/var/db/pfblockerng/deny",
+      "dnsbl" => "/var/db/pfblockerng/dnsbl",
+    ];
+    $found = [];
+    foreach ($paths as $label => $path) {
+      $found[$label] = file_exists($path);
+    }
+
+    $logs = [];
+    foreach (["pfblockerng.log", "ip_block.log", "dnsbl.log", "dns_reply.log", "unified.log"] as $name) {
+      $path = "/var/log/pfblockerng/" . $name;
+      if (!file_exists($path)) { continue; }
+      $logs[] = [
+        "name" => $name,
+        "bytes" => filesize($path),
+        // When it was last written. A DNSBL log that has not been touched in
+        // a week is a DNSBL that is not running, and no count of its contents
+        // says so as plainly.
+        "updated" => filemtime($path),
+      ];
+    }
+
+    // How many addresses each of pfBlockerNG's aliases holds.
+    //
+    // This asked pf directly, through `pfSense_get_pf_table` or
+    // `pfr_get_table_addrs`, and on pfSense Plus neither function exists — so
+    // every list reported "not loaded" on a firewall where every list was
+    // loaded and working. The accessor is still tried, because where it does
+    // exist it is the running state rather than a file on disk.
+    //
+    // Where it does not, the count comes from the same place pfSense's own
+    // alias screens get it. A `urltable` alias keeps its addresses in
+    // /var/db/aliastables/<name>.txt, which is the file pf is loaded from; the
+    // other types keep theirs inline in the configuration. Neither is quite
+    // "what pf holds" — a file written but not applied still counts — so the
+    // result says which source answered, and the screen says so too.
+    $accessor = "";
+    if (function_exists("pfSense_get_pf_table")) { $accessor = "pfSense_get_pf_table"; }
+    elseif (function_exists("pfr_get_table_addrs")) { $accessor = "pfr_get_table_addrs"; }
+
+    $feeds = [];
+    $aliases = $config["aliases"];
+    $items = is_array($aliases) ? $aliases["alias"] : "";
+    if (is_iterable($items)) {
+      foreach ($items as $alias) {
+        if (!is_array($alias)) { continue; }
+        $name = strval($alias["name"]);
+        if (substr($name, 0, 4) !== "pfB_") { continue; }
+
+        $type = strval($alias["type"]);
+        $count = -1;
+        $source = "";
+
+        if ($accessor === "pfSense_get_pf_table") {
+          $entries = pfSense_get_pf_table($name);
+          if (is_array($entries)) { $count = count($entries); $source = "pf"; }
+        } elseif ($accessor === "pfr_get_table_addrs") {
+          $entries = pfr_get_table_addrs($name);
+          if (is_array($entries)) { $count = count($entries); $source = "pf"; }
+        }
+
+        if ($count < 0 && substr($type, 0, 8) === "urltable") {
+          // The file pf is loaded from. One address per line, with comments.
+          $file = "/var/db/aliastables/" . $name . ".txt";
+          if (file_exists($file)) {
+            $body = file_get_contents($file);
+            if ($body !== false) {
+              $n = 0;
+              foreach (explode(PHP_EOL, $body) as $entry) {
+                $entry = trim($entry);
+                if ($entry === "") { continue; }
+                if (substr($entry, 0, 1) === "#") { continue; }
+                $n = $n + 1;
+              }
+              $count = $n;
+              $source = "file";
+            }
+          }
+        }
+
+        if ($count < 0) {
+          // Host, network and port aliases keep their members inline, space
+          // separated. There is no table file and no pf table for a port
+          // alias at all, so this is the only count there has ever been.
+          $inline = trim(strval($alias["address"]));
+          if ($inline !== "") {
+            $n = 0;
+            foreach (explode(" ", $inline) as $entry) {
+              if (trim($entry) !== "") { $n = $n + 1; }
+            }
+            $count = $n;
+            $source = "config";
+          }
+        }
+
+        $feeds[] = [
+          "name" => $name,
+          "descr" => strval($alias["descr"]),
+          "type" => $type,
+          // Minus one where nothing could answer, which is different from a
+          // list that holds nothing. A list configured but never downloaded
+          // and a feed that legitimately matched nothing look the same as a
+          // zero and are not the same thing.
+          "entries" => $count,
+          // Which of the three answered: the running firewall, the file it
+          // loads from, or the configuration.
+          "source" => $source,
+        ];
+      }
+    }
+
+    $toreturn = [
+      "installed" => $found["pkg"] || $found["db"],
+      "enabled" => strval($settings["enable_cb"]) === "on",
+      "dnsbl" => strval($dnsblSettings["pfb_dnsbl"]) === "on",
+      "dnsbl_mode" => strval($dnsblSettings["dnsbl_mode"]),
+      "mode" => strval($settings["pfb_keep"]),
+      "accessor" => $accessor,
+      "paths" => $found,
+      "logs" => $logs,
+      "feeds" => $feeds,
+    ];
+    """)
+
+    /// pfBlockerNG's DNSBL block statistics.
+    ///
+    /// The same numbers as `pfblockerng_alerts.php?view=dnsbl_stat`, computed
+    /// from the same file. That page shells out to `cut | sort | uniq -c` over
+    /// `/var/log/pfblockerng/dnsbl.log`; this reads the tail of the log and
+    /// counts in PHP, which needs no process and no allowlist entry beyond a
+    /// sort.
+    ///
+    /// The format is fixed and documented in pfBlockerNG's own source, as
+    /// comma-separated fields written by `pfb_dnsbl_log`:
+    ///
+    ///     [0] prefix   DNSBL-python, DNSBL-Full, DNSBL-1x1, DNSBL-HTTPS
+    ///     [1] date     `M j H:i:s` — "Sep 3 01:02:03", with no year
+    ///     [2] domain   the name that was blocked
+    ///     [3] source   the client that asked for it
+    ///     [6] group    the group the feed belongs to
+    ///     [8] feed     the list that matched
+    ///
+    /// Only the tail is read, for the reason the log snippet documents at
+    /// length: a busy DNSBL log runs to tens of megabytes and `file()` would
+    /// die on PHP's memory limit, which is indistinguishable from an empty
+    /// log. So these counts are "the last megabyte of the log", not "today" —
+    /// `truncated` says which, and the screen says so rather than implying a
+    /// completeness it does not have.
+    ///
+    /// The date carries no year, so nothing here tries to build a `Date` from
+    /// it. Hours are bucketed by their text and kept in the order the log has
+    /// them, which is chronological because the file is append-only.
+    static let dnsblStats = PHPSnippet("dnsbl_stats", """
+    $path = "/var/log/pfblockerng/dnsbl.log";
+    $window = 1048576;
+    $total = 0;
+    $skipped = 0;
+    $read = 0;
+    $byDomain = [];
+    $byClient = [];
+    $byGroup = [];
+    $byFeed = [];
+    $byHour = [];
+    $first = "";
+    $last = "";
+
+    $size = file_exists($path) ? filesize($path) : -1;
+    if ($size > 0) {
+      $read = min($size, $window);
+      $chunk = file_get_contents($path, false, null, -$read);
+      if ($chunk !== false) {
+        $lines = explode(PHP_EOL, $chunk);
+        // Only a mid-file read starts on a fragment.
+        if ($read < $size) { $lines = array_slice($lines, 1); }
+
+        foreach ($lines as $line) {
+          $line = trim($line);
+          if ($line === "") { continue; }
+          $f = explode(",", $line);
+          // Nine fields is what a complete record has. Anything shorter is a
+          // line still being written or a format this does not know, and it is
+          // counted rather than guessed at.
+          if (count($f) < 9) { $skipped = $skipped + 1; continue; }
+
+          $total = $total + 1;
+          $when = trim($f[1]);
+          if ($first === "") { $first = $when; }
+          $last = $when;
+
+          $domain = trim($f[2]);
+          if ($domain !== "") {
+            $byDomain[$domain] = isset($byDomain[$domain]) ? $byDomain[$domain] + 1 : 1;
+          }
+          $client = trim($f[3]);
+          if ($client !== "") {
+            $byClient[$client] = isset($byClient[$client]) ? $byClient[$client] + 1 : 1;
+          }
+          $group = trim($f[6]);
+          if ($group !== "") {
+            $byGroup[$group] = isset($byGroup[$group]) ? $byGroup[$group] + 1 : 1;
+          }
+          $feed = trim($f[8]);
+          if ($feed !== "") {
+            $byFeed[$feed] = isset($byFeed[$feed]) ? $byFeed[$feed] + 1 : 1;
+          }
+
+          // "Sep 3 01:02:03" to "Sep 3 01". Built from the text rather than
+          // parsed: the timestamp has no year, so anything that turned it into
+          // a date would be inventing one.
+          $parts = explode(" ", $when);
+          if (count($parts) >= 3) {
+            $hour = $parts[0] . " " . $parts[1] . " " . substr($parts[2], 0, 2);
+            $byHour[$hour] = isset($byHour[$hour]) ? $byHour[$hour] + 1 : 1;
+          }
+        }
+      }
+    }
+
+    arsort($byDomain);
+    arsort($byClient);
+    arsort($byGroup);
+    arsort($byFeed);
+
+    $domains = [];
+    $n = 0;
+    foreach ($byDomain as $k => $v) {
+      if ($n >= 20) { break; }
+      $domains[] = ["name" => $k, "count" => $v];
+      $n = $n + 1;
+    }
+    $clients = [];
+    $n = 0;
+    foreach ($byClient as $k => $v) {
+      if ($n >= 12) { break; }
+      $clients[] = ["name" => $k, "count" => $v];
+      $n = $n + 1;
+    }
+    $groups = [];
+    $n = 0;
+    foreach ($byGroup as $k => $v) {
+      if ($n >= 12) { break; }
+      $groups[] = ["name" => $k, "count" => $v];
+      $n = $n + 1;
+    }
+    $feeds = [];
+    $n = 0;
+    foreach ($byFeed as $k => $v) {
+      if ($n >= 12) { break; }
+      $feeds[] = ["name" => $k, "count" => $v];
+      $n = $n + 1;
+    }
+
+    // Insertion order, which is the order the log has them, which is
+    // chronological. Sorting these by name would put "Sep 9" before "Sep 10".
+    $hours = [];
+    foreach ($byHour as $k => $v) {
+      $hours[] = ["label" => $k, "count" => $v];
+    }
+    $hours = array_slice($hours, -24);
+
+    $toreturn = [
+      "available" => $size > 0,
+      "bytes" => $size,
+      "scanned" => $read,
+      // True when the log is larger than the window, so the screen can say
+      // these counts are the recent tail rather than everything.
+      "truncated" => $size > $window,
+      "events" => $total,
+      "unparsed" => $skipped,
+      "first" => $first,
+      "last" => $last,
+      "domains" => $domains,
+      "clients" => array_values($clients),
+      "groups" => array_values($groups),
+      "feeds" => array_values($feeds),
+      "hours" => array_values($hours),
     ];
     """)
 
@@ -2211,7 +2549,7 @@ struct PHPSnippet: Sendable {
     static var all: [PHPSnippet] {
         [telemetry, firmware, packages, packageUpdates, notices, interfaces, interfaceCounters, gateways, arpTable, dhcpLeases,
          staticMappings, hostOverrides, services, openvpnServers, openvpnClients, ipsecSAs,
-         wireguard, pfTables, haproxy, acme, firewallRules, firewallAliases, portForwards, carp,
+         wireguard, pfTables, haproxy, acme, pfBlocker, dnsblStats, firewallRules, firewallAliases, portForwards, carp,
          certificates, dyndns, ping, rrdProbe, rrdTrace,
          batchCore, batchClients, batchVpn, batchSystem]
         + LogSource.allCases.map { log($0, limit: 100) }

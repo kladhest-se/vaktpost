@@ -100,8 +100,23 @@ struct OverviewView: View {
         // Filtering `allCases` returned declaration order and threw the saved
         // arrangement away, so a section dragged to the top came back in the
         // middle on the next appearance.
-        visibleSections = active.overviewVisibleSections
+        // Migrate the stored names first, and write them back.
+        //
+        // Expanding an old name at read time and leaving it in storage was
+        // half a migration. Hiding VPN servers removed `vpnServers`, which was
+        // never stored; `vpn` stayed, and the next load expanded it again — so
+        // both VPN sections reappeared as soon as anything else was added,
+        // which looked exactly like the sections being linked together.
+        var names = active.overviewVisibleSections
+        if let migrated = OverviewSection.migrate(storedNames: names) {
+            names = migrated
+            registry.setOverviewSectionNames(active, migrated)
+        }
+
+        var seen = Set<OverviewSection>()
+        visibleSections = names
             .compactMap(OverviewSection.init(rawValue:))
+            .filter { seen.insert($0).inserted }
     }
     
     @ViewBuilder
@@ -159,11 +174,67 @@ struct OverviewView: View {
             return AnyView(servicesSlab.sectionFreshness([.services]))
         case .firewall:
             return AnyView(firewallSlab.sectionFreshness([.firewallLog]))
-        case .vpn:
-            return AnyView(vpnSlab)
+        case .vpnServers:
+            return AnyView(vpnServersSlab)
+        case .vpnClients:
+            return AnyView(vpnClientsSlab)
         case .clients:
             return AnyView(topTalkersSlab)
+        case .dnsbl:
+            return AnyView(dnsblSlab)
         }
+    }
+
+    /// DNSBL, when there is a DNSBL.
+    ///
+    /// The section is always in the list — it has to be, or somebody who
+    /// installs pfBlockerNG later would have to find a hidden section to turn
+    /// it on. What varies is what it says: a firewall without the package gets
+    /// one line explaining why there is nothing here, not an empty card and
+    /// not a spinner that never resolves.
+    private var dnsblSlab: some View {
+        NavigationLink { DNSBLStatsView() } label: {
+            Slab(rail: store.dnsblAvailable ? .ok : .idle, title: "DNSBL",
+                 trailing: store.dnsblStats.map { "\($0.events)" }) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !store.pfBlockerInstalled {
+                        Text("pfBlockerNG is not installed on this firewall.")
+                            .scaledFont(12)
+                            .foregroundStyle(theme.labelMuted)
+                    } else if !store.dnsblAvailable {
+                        Text("pfBlockerNG is installed, but DNSBL is switched off.")
+                            .scaledFont(12)
+                            .foregroundStyle(theme.labelMuted)
+                    } else if let stats = store.dnsblStats, stats.available {
+                        // A donut and four names. The shape is what a glance
+                        // is for: one wedge swallowing the circle is a device
+                        // that has started phoning somewhere new, and that is
+                        // legible before any of the labels are read.
+                        let slices = DonutChart.slices(stats.domains, total: stats.events,
+                                                       limit: 4, theme: theme)
+                        HStack(alignment: .center, spacing: 14) {
+                            DonutChart(slices: slices,
+                                       centerValue: "\(stats.events)",
+                                       centerCaption: "blocked",
+                                       thickness: 13)
+                                .frame(width: 104, height: 104)
+                            DonutLegend(slices: slices)
+                        }
+                        if let busiest = stats.busiestHour {
+                            Text("Busiest hour \(busiest.label) with \(busiest.count).")
+                                .scaledFont(11)
+                                .foregroundStyle(theme.labelFaint)
+                        }
+                    } else {
+                        Text("Nothing blocked in the log yet.")
+                            .scaledFont(12)
+                            .foregroundStyle(theme.labelMuted)
+                    }
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .task { await store.loadDNSBLStats() }
     }
 
     private var alertsTeaser: some View {
@@ -502,46 +573,244 @@ struct OverviewView: View {
         }
     }
 
-    private var vpnSlab: some View {
-        Slab(rail: store.overviewLayout.vpnHealth, title: "VPN", trailing: vpnStatusText) {
-            if store.openvpnServers.isEmpty && store.openvpnClients.isEmpty && store.ipsecSAs.isEmpty && store.wireguardTunnels.isEmpty {
+    /// The servers themselves: what is listening, on what, and how much has
+    /// gone through it.
+    ///
+    /// The first version of this card was a count of peers and connections,
+    /// which is the clients' question wearing the servers' title. A server
+    /// section should answer "is this thing up and working" — name, state,
+    /// port, and the traffic it has carried — and leave who is on it to the
+    /// section about who is on it.
+    ///
+    /// RX and TX are summed from the connections for OpenVPN, because the
+    /// server endpoint reports no totals of its own; WireGuard reports the
+    /// tunnel's own counters. Both are since the daemon last started, not a
+    /// rate, and are labelled as totals rather than left to be mistaken for
+    /// throughput.
+    private var vpnServersSlab: some View {
+        Slab(rail: vpnServersHealth, title: "VPN servers", trailing: vpnServersTrailing) {
+            if !hasVPNServers {
                 placeholder(.openvpn)
             } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    if !store.openvpnServers.isEmpty {
-                        vpnSummaryRow("OpenVPN servers", store.openvpnServers)
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(store.openvpnServers) { server in
+                        // Not `statusLabel`. With no status field — which is
+                        // what 26.07 returns — it falls back to "2 connected",
+                        // and a count of clients is the clients' section's
+                        // answer, not this one's. A server that appears in
+                        // `status/openvpn/servers` is running, so that is what
+                        // it says.
+                        serverRow(name: server.name,
+                                  health: server.status == nil ? .ok : server.health,
+                                  status: server.status ?? "listening",
+                                  port: server.port,
+                                  rx: server.connections.compactMap(\.bytesReceived).reduce(0, +),
+                                  tx: server.connections.compactMap(\.bytesSent).reduce(0, +))
                     }
-                    if !store.openvpnClients.isEmpty {
-                        vpnSummaryRow("OpenVPN clients", store.openvpnClients)
+                    ForEach(store.wireguardTunnels) { tunnel in
+                        serverRow(name: tunnel.descr ?? tunnel.name,
+                                  health: tunnel.health,
+                                  status: tunnel.statusLabel,
+                                  port: tunnel.listenPort,
+                                  rx: tunnel.bytesReceived ?? 0,
+                                  tx: tunnel.bytesSent ?? 0)
                     }
-                    if !store.ipsecSAs.isEmpty {
-                        HStack {
-                            Text("IPsec")
+                    ForEach(store.ipsecSAs) { sa in
+                        // IPsec reports no byte counters here and no listen
+                        // port, so the row carries what it does have rather
+                        // than padding the same columns with dashes.
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(sa.connectionName)
                                 .scaledFont(12, weight: .semibold)
-                                .foregroundStyle(theme.labelFaint)
-                            Spacer()
-                            Text("\(store.ipsecSAs.count) association\(store.ipsecSAs.count == 1 ? "" : "s")")
-                                .scaledFont(12, design: .monospaced)
                                 .foregroundStyle(theme.label)
-                        }
-                    }
-                    if !store.wireguardTunnels.isEmpty {
-                        vpnSummaryRow("WireGuard tunnels", store.wireguardTunnels)
-                    }
-                    if !store.wireguardPeers.isEmpty {
-                        HStack {
-                            Text("WireGuard peers")
-                                .scaledFont(12, weight: .semibold)
-                                .foregroundStyle(theme.labelFaint)
-                            Spacer()
-                            Text("\(store.wireguardPeers.count) peer\(store.wireguardPeers.count == 1 ? "" : "s")")
-                                .scaledFont(12, design: .monospaced)
-                                .foregroundStyle(theme.label)
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text(sa.remoteHost ?? sa.state)
+                                .scaledFont(11, design: .monospaced)
+                                .foregroundStyle(sa.health.color(theme))
                         }
                     }
                 }
             }
         }
+    }
+
+    private func serverRow(name: String, health: Health, status: String,
+                           port: String?, rx: Double, tx: Double) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(name)
+                    .scaledFont(13, weight: .semibold)
+                    .foregroundStyle(theme.label)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Text(status)
+                    .scaledFont(11, design: .monospaced)
+                    .foregroundStyle(health.color(theme))
+            }
+            HStack(spacing: 10) {
+                if let port, !port.isEmpty {
+                    metric("PORT", port)
+                }
+                metric("RX", Fmt.bytes(rx))
+                metric("TX", Fmt.bytes(tx))
+            }
+        }
+    }
+
+    private func metric(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 3) {
+            Text(label)
+                .scaledFont(8, weight: .medium)
+                .foregroundStyle(theme.labelFaint)
+            Text(value)
+                .scaledFont(11, design: .monospaced)
+                .foregroundStyle(theme.labelMuted)
+        }
+    }
+
+    /// Who is connected, across every server, in one list.
+    ///
+    /// This said "this firewall does not connect out to any VPN" and showed
+    /// nothing, because it was listing OpenVPN *client instances* — the
+    /// outbound tunnels this firewall dials. That is a real thing and a rare
+    /// one, and it is not what somebody opening a section called VPN clients
+    /// wants: they want the people currently on the VPN.
+    ///
+    /// So this is every OpenVPN connection and every WireGuard peer that has
+    /// handshaken, named, with where they came from and what they have moved.
+    private var vpnClientsSlab: some View {
+        Slab(rail: vpnClientsHealth, title: "VPN clients", trailing: vpnClientsTrailing) {
+            if connectedClients.isEmpty && liveWireGuardPeers.isEmpty {
+                Text(hasVPNServers
+                     ? "Nobody is connected right now."
+                     : "No VPN is configured on this firewall.")
+                    .scaledFont(12)
+                    .foregroundStyle(theme.labelFaint)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(connectedClients) { client in
+                        clientRow(name: client.commonName,
+                                  where: client.virtualAddress ?? client.remoteHost,
+                                  rx: client.bytesReceived,
+                                  tx: client.bytesSent,
+                                  health: .ok)
+                    }
+                    ForEach(liveWireGuardPeers) { peer in
+                        clientRow(name: peer.descr ?? peer.shortKey,
+                                  where: peer.allowedIPs.first ?? peer.tunnel,
+                                  rx: peer.bytesReceived,
+                                  tx: peer.bytesSent,
+                                  health: peer.health)
+                    }
+                }
+            }
+        }
+    }
+
+    /// One line per client.
+    ///
+    /// Three lines each — name, endpoint, transfer, timestamp — turned four
+    /// connected devices into most of a screen, and a dashboard card is a
+    /// glance rather than a report. The endpoint and the connect time are on
+    /// the VPN screen, which is a tap away and is where somebody looking for
+    /// them is going anyway.
+    ///
+    /// What survives is what identifies the client and what says it is doing
+    /// something: who, where it sits on the tunnel, and how much has moved.
+    private func clientRow(name: String, where address: String?,
+                           rx: Double?, tx: Double?, health: Health) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(health.color(theme))
+                .frame(width: 6, height: 6)
+
+            Text(name)
+                .scaledFont(12, weight: .semibold)
+                .foregroundStyle(theme.label)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            if let address, !address.isEmpty {
+                Text(address)
+                    .scaledFont(10, design: .monospaced)
+                    .foregroundStyle(theme.labelFaint)
+                    .lineLimit(1)
+                    // Lower priority than the transfer figures: an address
+                    // that truncates is still recognisable, a byte count that
+                    // truncates is wrong.
+                    .layoutPriority(-1)
+            }
+
+            Spacer(minLength: 4)
+
+            Text("\(Fmt.bytes(rx ?? 0)) / \(Fmt.bytes(tx ?? 0))")
+                .scaledFont(10, design: .monospaced)
+                .foregroundStyle(theme.labelMuted)
+                .lineLimit(1)
+                .layoutPriority(1)
+        }
+    }
+
+    /// Every OpenVPN connection on every server, busiest first.
+    private var connectedClients: [OpenVPNConnection] {
+        store.openvpnServers.flatMap(\.connections)
+            .sorted { ($0.bytesReceived ?? 0) + ($0.bytesSent ?? 0)
+                    > ($1.bytesReceived ?? 0) + ($1.bytesSent ?? 0) }
+    }
+
+    /// WireGuard peers that are connected now.
+    ///
+    /// Having ever handshaken was the wrong test. A laptop that closed its lid
+    /// yesterday still has a handshake timestamp, so the card listed peers
+    /// last seen eighteen hours and a day ago under a heading about who is
+    /// connected.
+    ///
+    /// `health == .ok` is a handshake inside five minutes, which for WireGuard
+    /// means the peer is up: it rehandshakes roughly every two minutes while
+    /// traffic flows. Anything older is somewhere else now, and the VPN screen
+    /// still lists it with its last-seen time.
+    private var liveWireGuardPeers: [WireGuardPeer] {
+        store.wireguardPeers.filter { $0.health == .ok }
+    }
+
+    private var hasVPNServers: Bool {
+        !store.openvpnServers.isEmpty || !store.wireguardTunnels.isEmpty
+            || !store.wireguardPeers.isEmpty || !store.ipsecSAs.isEmpty
+    }
+
+    /// Health per section rather than one figure for all of VPN.
+    ///
+    /// A combined health meant a down tunnel turned the whole card amber and a
+    /// healthy server could not say so. Each section now answers for itself.
+    private var vpnServersHealth: Health {
+        guard hasVPNServers else { return .info }
+        if store.wireguardTunnels.contains(where: { $0.health == .bad }) { return .bad }
+        if store.ipsecSAs.contains(where: { $0.health == .bad }) { return .warn }
+        let up = store.openvpnServers.count
+            + store.wireguardTunnels.filter(\.isUp).count
+            + store.ipsecSAs.filter { $0.health == .ok }.count
+        return up > 0 ? .ok : .warn
+    }
+
+    /// Nobody connected is not a fault.
+    ///
+    /// A remote-access VPN with no one on it at four in the morning is working
+    /// exactly as intended, and a card that goes amber for it teaches people
+    /// to ignore the colour.
+    private var vpnClientsHealth: Health {
+        connectedClients.isEmpty && liveWireGuardPeers.isEmpty ? .info : .ok
+    }
+
+    private var vpnServersTrailing: String? {
+        guard hasVPNServers else { return nil }
+        let total = store.openvpnServers.count + store.wireguardTunnels.count + store.ipsecSAs.count
+        return "\(total)"
+    }
+
+    private var vpnClientsTrailing: String? {
+        let count = connectedClients.count + liveWireGuardPeers.count
+        return count == 0 ? nil : "\(count)"
     }
 
     private var topTalkersSlab: some View {
@@ -579,33 +848,6 @@ struct OverviewView: View {
         }
     }
 
-    private func vpnSummaryRow<T: Identifiable>(_ label: String, _ items: [T]) -> some View {
-        let active = items.filter { isVpnActive($0) }.count
-        return HStack {
-            Text(label)
-                .scaledFont(12, weight: .semibold)
-                .foregroundStyle(theme.labelFaint)
-            Spacer()
-            Text("\(active) of \(items.count) active")
-                .scaledFont(12, design: .monospaced)
-                .foregroundStyle(isVpnHealthy(items) ? theme.label : theme.warn)
-        }
-    }
-
-    private func isVpnActive<T: Identifiable>(_ item: T) -> Bool {
-        if let server = item as? OpenVPNServerStatus {
-            return server.health == .ok || server.health == .idle || !server.connections.isEmpty
-        }
-        if let tunnel = item as? WireGuardTunnel {
-            return tunnel.isUp
-        }
-        return false
-    }
-
-    private func isVpnHealthy<T: Identifiable>(_ items: [T]) -> Bool {
-        guard !items.isEmpty else { return false }
-        return items.filter { isVpnActive($0) }.count > 0
-    }
 
     private var vpnStatusText: String {
         let total = store.openvpnServers.count + store.openvpnClients.count + store.ipsecSAs.count + store.wireguardTunnels.count + store.wireguardPeers.count

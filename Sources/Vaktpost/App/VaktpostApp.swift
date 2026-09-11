@@ -136,8 +136,31 @@ struct RootView: View {
     @Environment(\.dashboardStore) private var store: DashboardStore
     @Environment(\.colorScheme) private var systemScheme
     @Environment(\.scenePhase) private var scenePhase
-    @State private var showLockScreen = false
-    @State private var wentToBackground = false
+    /// Locked: the person has to authenticate before the dashboard is shown
+    /// again. Set when the app genuinely goes to the background.
+    @State private var isLocked = false
+
+    /// Obscured: the dashboard is covered but nothing is being asked. Set
+    /// while the app is merely inactive — a notification pulled down, the
+    /// control centre opened, the app switcher invoked.
+    ///
+    /// Separate from `isLocked` for two reasons. It has to go up on
+    /// `.inactive`, because that is when iOS takes the app-switcher snapshot
+    /// and a lock screen that appears on `.active` has already let the
+    /// dashboard be photographed. And it must not demand a face, because
+    /// presenting a Face ID sheet *itself* makes the app inactive — treating
+    /// that as a reason to authenticate is a loop that authenticates, goes
+    /// inactive, and authenticates again.
+    @State private var isObscured = false
+
+    /// Whether this app should be hiding itself at all.
+    ///
+    /// Checked at every transition rather than once: the setting can be turned
+    /// on while the app is running, and biometry can become unavailable
+    /// underneath it.
+    private var shouldLock: Bool {
+        store.isConfigured && BiometricAuth.isEnabled && BiometricAuth.canUseBiometrics()
+    }
 
     var body: some View {
         Group {
@@ -225,30 +248,40 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
+                // Uncover, but do not unlock. `isLocked` is cleared only by a
+                // successful authentication.
+                isObscured = false
                 guard store.isConfigured else { return }
-                print("[Biometric] scenePhase=.active, wentToBackground=\(wentToBackground), isEnabled=\(BiometricAuth.isEnabled), canUse=\(BiometricAuth.canUseBiometrics())")
-                if wentToBackground && BiometricAuth.isEnabled && BiometricAuth.canUseBiometrics() {
-                    print("[Biometric] Showing lock screen")
-                    showLockScreen = true
-                }
-                wentToBackground = false
-            case .background, .inactive:
+                store.startAutoRefresh()
+
+            case .inactive:
+                // Cover the screen before iOS photographs it for the app
+                // switcher, and ask for nothing. An interruption that turns
+                // out to be a real backgrounding becomes a lock a moment
+                // later, when `.background` arrives.
+                if shouldLock { isObscured = true }
+
+            case .background:
                 store.stopAutoRefresh()
-                print("[Biometric] scenePhase=\(phase), setting wentToBackground=true")
-                wentToBackground = true
+                if shouldLock { isLocked = true }
+
             @unknown default:
                 break
             }
         }
-        .fullScreenCover(isPresented: $showLockScreen) {
-            BiometricLockView {
-                showLockScreen = false
+        // One cover for both states. Presented while either flag is set, and
+        // it only prompts when the lock is the reason.
+        .fullScreenCover(isPresented: Binding(
+            get: { isLocked || isObscured },
+            set: { shown in if !shown { isLocked = false; isObscured = false } }
+        )) {
+            BiometricLockView(requiresAuthentication: isLocked) {
+                isLocked = false
+                isObscured = false
             }
         }
         .onAppear {
-            if BiometricAuth.isEnabled && BiometricAuth.canUseBiometrics() && store.isConfigured {
-                showLockScreen = true
-            }
+            if shouldLock { isLocked = true }
             guard store.isConfigured else { return }
             guard let last = store.lastRefresh,
                   Date().timeIntervalSince(last) > Double(store.profile.refreshSeconds) / 2

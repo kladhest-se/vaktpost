@@ -32,6 +32,7 @@ struct InterfaceDetailView: View {
                 header
                 chart
                 rates
+                errors
                 hosts
                 history.sectionFreshness([.rrd])
                 counters
@@ -132,6 +133,80 @@ struct InterfaceDetailView: View {
         }
     }
 
+    /// Link errors, and whether they are happening now.
+    ///
+    /// The totals were a field row under "Since boot", which is where a number
+    /// that cannot be acted on belongs. What makes them worth a section of
+    /// their own is the change between refreshes: a link that has collected
+    /// errors over months and a link collecting them this minute show the same
+    /// total and are not the same problem.
+    @ViewBuilder
+    private var errors: some View {
+        if let inErr = iface.inErrors, let outErr = iface.outErrors {
+            let change = store.interfaceErrors.change(for: iface)
+            let total = inErr + outErr + (iface.collisions ?? 0)
+
+            Slab(rail: change?.isRising == true ? .warn : (total > 0 ? .idle : .ok),
+                 title: "Link errors",
+                 trailing: change?.isRising == true ? "rising" : nil) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 14) {
+                        errorMetric("IN", inErr)
+                        errorMetric("OUT", outErr)
+                        if let collisions = iface.collisions {
+                            errorMetric("COLL", collisions)
+                        }
+                    }
+
+                    if let change, change.counterReset {
+                        // Counters go backwards on a reboot or an interface
+                        // bounce. Saying so beats reporting a difference that
+                        // is not one.
+                        Text("The counters went backwards since the last refresh, so this interface or the firewall restarted. Totals start again from there.")
+                            .scaledFont(11)
+                            .foregroundStyle(theme.labelFaint)
+                    } else if let change, change.isRising {
+                        Text(risingDescription(change))
+                            .scaledFont(11)
+                            .foregroundStyle(theme.warn)
+                    } else if total > 0 {
+                        // The distinction that makes the totals readable. A
+                        // count that is not moving is history.
+                        Text("No new errors since the last refresh. These accumulated earlier and are not evidence of a problem now.")
+                            .scaledFont(11)
+                            .foregroundStyle(theme.labelFaint)
+                    } else {
+                        Text("No errors since this interface came up.")
+                            .scaledFont(11)
+                            .foregroundStyle(theme.labelFaint)
+                    }
+                }
+            }
+        }
+    }
+
+    private func risingDescription(_ change: InterfaceErrorTracker.Change) -> String {
+        let count = Int(change.total)
+        let noun = count == 1 ? "error" : "errors"
+        guard let perMinute = change.perMinute else {
+            // Under ten seconds, a rate is a projection rather than a
+            // measurement and reads as far more alarming than what was seen.
+            return "\(count) new \(noun) since the last refresh."
+        }
+        return "\(count) new \(noun) since the last refresh — about \(Int(perMinute.rounded())) a minute."
+    }
+
+    private func errorMetric(_ label: String, _ value: Double) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .scaledFont(9, weight: .semibold)
+                .foregroundStyle(theme.labelFaint)
+            Text("\(Int(value))")
+                .scaledFont(16, weight: .semibold, design: .monospaced)
+                .foregroundStyle(value > 0 ? theme.label : theme.labelMuted)
+        }
+    }
+
     /// A way through to the per-host breakdown for this interface.
     ///
     /// A link rather than an inline section, because the answer costs the
@@ -192,9 +267,6 @@ struct InterfaceDetailView: View {
                 }
                 if let outBytes = iface.outBytes {
                     FieldRow(key: "Sent", value: Fmt.bytes(outBytes))
-                }
-                if let inErr = iface.inErrors, let outErr = iface.outErrors {
-                    FieldRow(key: "Errors", value: "in \(Int(inErr)) · out \(Int(outErr))")
                 }
                 if let mtu = iface.mtu { FieldRow(key: "MTU", value: mtu) }
                 if let mac = iface.mac { FieldRow(key: "MAC", value: mac) }

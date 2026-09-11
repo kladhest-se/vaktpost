@@ -57,6 +57,13 @@ final class ThroughputTracker {
 
     private let bitsMultiplier: Double
 
+    /// What this tracker's points are measured in.
+    ///
+    /// Derived from the multiplier rather than stored alongside it, so the two
+    /// cannot disagree. A multiplier of eight turns byte counters into bits; a
+    /// multiplier of one leaves them as bytes.
+    var unit: RateUnit { bitsMultiplier == 1 ? .bytes : .bits }
+
     func ingest(_ interfaces: [InterfaceStat], at now: Date = Date()) {
         for iface in interfaces {
             guard let inBytes = iface.inBytes, let outBytes = iface.outBytes else { continue }
@@ -148,6 +155,35 @@ final class ThroughputTracker {
     func reset() {
         last.removeAll()
         series.removeAll()
+    }
+}
+
+/// Which unit a series of rates is in.
+///
+/// This exists because the answer is not the same everywhere and remembering
+/// which is which at each call site does not work. `ThroughputTracker` is
+/// constructed twice: once for interfaces, where byte counters are multiplied
+/// by eight and the series is bits per second, and once for VPN tunnels, where
+/// the multiplier is one and it stays bytes per second.
+///
+/// `ThroughputChart` fed the interface tracker's bits into `Sparkline`, whose
+/// tooltip formatted them as bytes — so the tooltip read "1.4 MiB/s" over a
+/// legend reading "11.8 Mbit/s", for the same sample, a factor of 8.4 apart
+/// (eight for bits against bytes, and again 1024 against 1000). Both were
+/// drawn on the same card.
+///
+/// Carrying the unit with the tracker rather than at the call site is what
+/// stops that recurring: a caller that forgets to pass one gets the wrong
+/// label, but a caller that passes `tracker.unit` cannot.
+enum RateUnit {
+    case bits
+    case bytes
+
+    func format(_ value: Double) -> String {
+        switch self {
+        case .bits: return Rate.bits(value)
+        case .bytes: return Fmt.bytesPerSec(value)
+        }
     }
 }
 

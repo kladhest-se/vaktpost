@@ -165,6 +165,20 @@ final class ServerRegistry: Observable {
         persist()
     }
 
+    /// Replace the stored layout with a migrated one.
+    ///
+    /// Takes raw names rather than sections, so a name this build does not
+    /// recognise survives the rewrite instead of being deleted by the round
+    /// trip through `OverviewSection`.
+    func setOverviewSectionNames(_ server: ServerProfile, _ names: [String]) {
+        guard let idx = servers.firstIndex(where: { $0.id == server.id }) else { return }
+        var profile = servers[idx]
+        guard profile.overviewVisibleSections != names else { return }
+        profile.overviewVisibleSections = names
+        servers[idx] = profile
+        persist()
+    }
+
     func setOverviewSectionVisibility(_ server: ServerProfile, _ section: OverviewSection, visible: Bool) {
         guard let idx = servers.firstIndex(where: { $0.id == server.id }) else { return }
         var profile = servers[idx]

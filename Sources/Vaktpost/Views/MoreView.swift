@@ -24,6 +24,9 @@ struct MoreView: View {
                 link("Firewall", "shield.lefthalf.filled", badge: 0) { FirewallView() }
                 link("Dynamic DNS", "globe", badge: store.overviewLayout.staleDyndns.count) { DyndnsView() }
                 link("HAProxy", "arrow.triangle.swap", badge: store.unmonitoredBackends.count) { HAProxyView() }
+                link("Investigate", "magnifyingglass", badge: 0) { InvestigateView() }
+                link("Conflicts", "exclamationmark.triangle", badge: store.conflictCount) { ConflictsView() }
+                link("pfBlockerNG", "shield.lefthalf.filled.badge.checkmark", badge: 0) { PFBlockerView() }
                 link("Aliases", "tag", badge: 0) { AliasesView() }
                 link("System Certificates", "lock.doc", badge: store.expiringCertificateCount) { CertificatesView() }
                 link("ACME Certificates", "checkmark.seal", badge: store.stalledACME.count) { ACMEView() }

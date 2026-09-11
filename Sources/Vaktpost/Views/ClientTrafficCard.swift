@@ -77,6 +77,20 @@ struct ClientTrafficCard: View {
 
     private var slot: Int? { store.interfaceSlot(for: hint) }
 
+    private var selected: InterfaceStat? {
+        slot.flatMap { store.interfaces.indices.contains($0) ? store.interfaces[$0] : nil }
+    }
+
+    /// Which hosts to ask for on this device's interface.
+    ///
+    /// Hardcoded to Local until now, which was right for a device on a VLAN
+    /// and wrong everywhere else: a device reached over a tunnel would never
+    /// appear, because a tunnel has no local subnet for the capture to scope
+    /// to, and the card would report it idle forever.
+    private var filter: PHPSnippet.HostFilter {
+        selected?.suggestedHostFilter ?? .local
+    }
+
     private var interfaceName: String {
         slot.flatMap { store.interfaces.indices.contains($0) ? store.interfaces[$0].name : nil }
             ?? store.interfaceLabel(for: hint)
@@ -204,7 +218,7 @@ struct ClientTrafficCard: View {
 
             let startedAt = Date()
             do {
-                let result = try await store.client.hostTraffic(slot: slot, filter: .local, sort: sort)
+                let result = try await store.client.hostTraffic(slot: slot, filter: filter, sort: sort)
 
                 if !result.available {
                     status = .unavailable(result.reason
@@ -214,6 +228,19 @@ struct ClientTrafficCard: View {
 
                 status = .live
                 record(result)
+
+                // The same capture the traffic screen would have recorded. It
+                // returns the interface's whole top ten, not just this device,
+                // so there is no reason to throw the rest away.
+                if let selected {
+                    store.topTalkers.record(
+                        result.hosts,
+                        serverID: store.profile.id.uuidString,
+                        interface: result.interface,
+                        interfaceName: selected.name,
+                        names: { store.nameForAddress($0) }
+                    )
+                }
             } catch {
                 if error is CancellationError || (error as? RPCError) == .cancelled { return }
                 status = .failed(error.localizedDescription)

@@ -42,6 +42,37 @@ struct HostTrafficPanel: View {
     @State private var hasPreselected = false
     @State private var sampledAt: Date?
 
+    /// The interface whose suggested filter has already been applied.
+    ///
+    /// Tracked so the suggestion is a default rather than an override: it is
+    /// applied when the interface changes, and a filter chosen by hand after
+    /// that survives until the interface changes again.
+    @State private var filterSuggestedFor: Int?
+
+    /// Narrows what is shown, never what is measured.
+    ///
+    /// Ten rows do not need searching for their own sake. What this is for is
+    /// the question the list cannot answer by being read: whether one
+    /// particular device is in the ten right now. Typing its name and watching
+    /// the row appear and disappear across captures says that, and scanning
+    /// ten changing rows for it does not.
+    @State private var query = ""
+
+    /// A short trace per address, so a row says which way it is heading.
+    ///
+    /// A single instantaneous number cannot tell a device that is winding down
+    /// from one that is ramping up, and at a fifteen-second interval two
+    /// consecutive glances are a long way apart. Keyed by normalised address
+    /// rather than by the string the capture printed, for the same reason
+    /// everything else here is: two spellings of one IPv6 address would
+    /// otherwise be two traces, each half empty.
+    @State private var history: [String: [ThroughputTracker.Point]] = [:]
+
+    /// Points kept per row. Twenty is five minutes at the default interval and
+    /// about forty seconds at the shortest — enough to read a direction from,
+    /// and narrow enough to draw in a row without crowding the numbers.
+    private let traceLength = 20
+
     /// How often a capture starts, measured start to start.
     ///
     /// A period rather than a pause between captures, so the interval is one
@@ -82,8 +113,15 @@ struct HostTrafficPanel: View {
     /// including on the tie-break, where pfSense's order is whatever `rate`
     /// happened to emit and a stable one stops rows swapping places between
     /// captures for no reason.
-    private var rows: [HostTraffic] {
-        (sample?.hosts ?? [])
+    /// Every host the last capture returned, named and ordered.
+    ///
+    /// Deduplicated by identity first. `ForEach` over duplicate ids is
+    /// undefined behaviour, and the identity here comes from an address the
+    /// firewall chose — this app does not get to assume it is unique.
+    private var allRows: [HostTraffic] {
+        var seen = Set<String>()
+        return (sample?.hosts ?? [])
+            .filter { seen.insert($0.id).inserted }
             .map { host in
                 var named = host
                 named.hostname = store.nameForAddress(host.ip)
@@ -98,14 +136,35 @@ struct HostTrafficPanel: View {
             }
     }
 
+    /// What the search leaves.
+    ///
+    /// Matched against the address and against every name the firewall knows
+    /// the device by, not only the one that won the title — a device shown as
+    /// its DNS override is still findable by the description on its static
+    /// mapping, which is how the Clients list next door behaves.
+    private var rows: [HostTraffic] {
+        guard !query.isEmpty else { return allRows }
+        let needle = query.lowercased()
+        return allRows.filter { host in
+            host.ip.lowercased().contains(needle)
+                || (host.hostname ?? "").lowercased().contains(needle)
+                || (store.client(matching: host.ip)?.name ?? "").lowercased().contains(needle)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             controls
+            search
             results
             note
         }
         .padding(.horizontal, 16)
         .onAppear(perform: applyPreselection)
+        .onChange(of: slot) { _, _ in applySuggestedFilter() }
+        // The interface list can arrive after this screen opens, and the
+        // suggestion cannot be made until it does.
+        .onChange(of: interfaces.count) { _, _ in applySuggestedFilter() }
         .task(id: runKey) { await run() }
     }
 
@@ -120,9 +179,18 @@ struct HostTrafficPanel: View {
         } else {
             Slab(rail: .info, title: "Measuring", trailing: selected?.device) {
                 VStack(alignment: .leading, spacing: 12) {
+                    // Grouped, because fifteen entries in pfSense's config
+                    // order interleaves two uplinks, five tunnels and eight
+                    // VLANs into a list you have to read all of. The tag stays
+                    // the original index either way — grouping changes what is
+                    // shown, never what is sent.
                     Picker("Interface", selection: $slot) {
-                        ForEach(Array(interfaces.enumerated()), id: \.offset) { index, iface in
-                            Text(iface.name).tag(index)
+                        ForEach(InterfaceStat.grouped(interfaces)) { group in
+                            Section(group.title) {
+                                ForEach(group.entries) { entry in
+                                    Text(entry.interface.name).tag(entry.id)
+                                }
+                            }
                         }
                     }
                     .pickerStyle(.menu)
@@ -134,6 +202,15 @@ struct HostTrafficPanel: View {
                         }
                     }
                     .pickerStyle(.segmented)
+
+                    // Only where the default is not the obvious one. On a VLAN
+                    // there is nothing to explain and a line saying so is
+                    // noise on the screen every time.
+                    if let rationale = selected?.hostFilterRationale {
+                        Text(rationale)
+                            .scaledFont(11)
+                            .foregroundStyle(theme.labelFaint)
+                    }
 
                     // The busiest by which direction. Not a re-ordering of one
                     // result — pfSense sorts inside the capture and keeps only
@@ -157,7 +234,21 @@ struct HostTrafficPanel: View {
                     }
                     .pickerStyle(.segmented)
 
-                    liveIndicator
+                    HStack(spacing: 10) {
+                        liveIndicator
+                        Spacer(minLength: 8)
+                        NavigationLink {
+                            TopTalkersView()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock.arrow.circlepath")
+                                Text("History")
+                            }
+                            .scaledFont(12, weight: .medium)
+                            .foregroundStyle(theme.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
         }
@@ -177,6 +268,15 @@ struct HostTrafficPanel: View {
                     .scaledFont(11, design: .monospaced)
                     .foregroundStyle(theme.labelFaint)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var search: some View {
+        // Only once there is something to search. An empty field above an
+        // empty list is furniture.
+        if !allRows.isEmpty || !query.isEmpty {
+            InlineSearchField(text: $query, prompt: "Name or address")
         }
     }
 
@@ -200,6 +300,18 @@ struct HostTrafficPanel: View {
                     hostRow(host)
                 }
             }
+        } else if !allRows.isEmpty {
+            // Searched, and nothing matched. Worth its own sentence rather
+            // than falling through to "nothing measured", which would be
+            // false: something was measured, it just was not this.
+            //
+            // And the absence is the same ambiguity the list always has. A
+            // device missing from the ten is usually idle and is sometimes
+            // crowded out by ten busier ones, and a search that found nothing
+            // cannot tell which.
+            Notice(symbol: "magnifyingglass",
+                   title: "Not in the last capture",
+                   detail: "No address matching that is among the ten busiest on \(selected?.name ?? "this interface") right now. That usually means it is idle, but a quiet device behind ten busy ones looks the same from here.")
         } else if let sample {
             Notice(symbol: "chart.bar",
                    title: sample.available ? "Nothing measured" : "Not available on this firewall",
@@ -216,41 +328,103 @@ struct HostTrafficPanel: View {
         }
     }
 
+    /// One host, and a way through to it when the firewall knows what it is.
+    ///
+    /// Both of these screens live in the Clients tab and describe the same
+    /// devices, so "172.16.1.10 is pulling 5.63M" and that device's leases,
+    /// names and filter log should be one tap apart. A capture also returns
+    /// addresses the client list has never heard of — everything on the far
+    /// side of a WAN — so the link appears only where there is somewhere to
+    /// go, and the chevron is what says which rows those are.
+    @ViewBuilder
     private func hostRow(_ host: HostTraffic) -> some View {
+        if let client = store.client(matching: host.ip) {
+            NavigationLink {
+                // Re-identified rather than captured, the same way the client
+                // list does it: the detail follows the data instead of showing
+                // the device as it was when the row was tapped.
+                ClientDetailView(client: client).id(store.bindingID)
+            } label: {
+                hostRowBody(host, linked: true)
+            }
+            .buttonStyle(.plain)
+        } else {
+            hostRowBody(host, linked: false)
+        }
+    }
+
+    private func hostRowBody(_ host: HostTraffic, linked: Bool) -> some View {
         // No proportion bar.
         //
         // There was one, scaled against the busiest row in the capture. It
         // looked like information and was not: pfSense returns whichever ten
         // hosts happened to be busiest, so the bar's full width meant a
-        // different rate every three seconds and a row could shrink while its
-        // own throughput rose. The numbers are the measurement; a bar drawn
-        // against a moving denominator only obscures them.
+        // different rate every refresh and a row could shrink while its own
+        // throughput rose. The numbers are the measurement.
         Slab(rail: .info) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(host.hostname ?? host.ip)
-                        .scaledFont(13, weight: .semibold)
-                        .foregroundStyle(theme.label)
-                    if host.hostname != nil {
-                        Text(host.ip)
-                            .scaledFont(10, design: .monospaced)
-                            .foregroundStyle(theme.labelFaint)
-                    }
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .top) {
+                    identity(host, linked: linked)
+
+                    Spacer(minLength: 8)
+
+                    rateColumn("IN", rateText(host.bandwidthIn, host.inText), theme.ok,
+                               emphasised: sort == .inbound)
+                    rateColumn("OUT", rateText(host.bandwidthOut, host.outText), theme.info,
+                               emphasised: sort == .outbound)
                 }
-                .textSelection(.enabled)
 
-                Spacer(minLength: 8)
-
-                rateColumn("IN", rateText(host.bandwidthIn, host.inText), theme.ok,
-                           emphasised: sort == .inbound)
-                rateColumn("OUT", rateText(host.bandwidthOut, host.outText), theme.info,
-                           emphasised: sort == .outbound)
+                // Scaled to this row's own peak, not the list's. The question
+                // a row-sized trace answers is "which way is this one
+                // heading", and against a shared scale every row but the
+                // busiest would be a flat line along the bottom.
+                if let series = history[traceKey(host.ip)], series.count > 1 {
+                    RowTrace(inSeries: series.map(\.inBps), outSeries: series.map(\.outBps))
+                }
             }
         }
         // Kept after the bar went: `contentTransition(.numericText())` on the
         // rate labels needs an animation to drive it, and without one the
         // figures snap between captures rather than counting across.
         .animation(.easeOut(duration: 0.3), value: host.total)
+    }
+
+    /// The name and address, selectable only where the row does not navigate.
+    ///
+    /// Written as two branches rather than one modifier taking a ternary.
+    /// `.enabled` and `.disabled` are two different types conforming to
+    /// `TextSelectability`, not two cases of one, so a ternary between them
+    /// does not type-check — the choice has to be which modifier is applied,
+    /// not which argument it gets.
+    @ViewBuilder
+    private func identity(_ host: HostTraffic, linked: Bool) -> some View {
+        if linked {
+            // Selectable text swallows the tap that would follow the link, so
+            // rows that go somewhere do not offer it.
+            identityLabel(host, linked: true)
+        } else {
+            identityLabel(host, linked: false).textSelection(.enabled)
+        }
+    }
+
+    private func identityLabel(_ host: HostTraffic, linked: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text(host.hostname ?? host.ip)
+                    .scaledFont(13, weight: .semibold)
+                    .foregroundStyle(theme.label)
+                if linked {
+                    Image(systemName: "chevron.right")
+                        .scaledFont(9, weight: .semibold)
+                        .foregroundStyle(theme.labelFaint)
+                }
+            }
+            if host.hostname != nil {
+                Text(host.ip)
+                    .scaledFont(10, design: .monospaced)
+                    .foregroundStyle(theme.labelFaint)
+            }
+        }
     }
 
     private func rateColumn(_ label: String, _ value: String, _ colour: Color,
@@ -279,40 +453,93 @@ struct HostTrafficPanel: View {
         return Rate.bits(value)
     }
 
+    /// Whatever pfSense wrote when it wrote no rows.
+    ///
+    /// What used to be here was four paragraphs explaining the capture
+    /// interval, the ten-host cap, what the row traces mean and what Local
+    /// means on a WAN. All true, and all of it read once and then sat under a
+    /// live screen forever. The constraints are in `PHPSnippets.hostTraffic`
+    /// and in this file's own documentation, where they are of use to somebody
+    /// changing the code rather than to somebody watching a graph.
+    ///
+    /// This line stays because it only appears when the list is empty, and
+    /// when the list is empty it is the only thing on screen that says why.
     @ViewBuilder
     private var note: some View {
-        if sample != nil {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Refreshed every \(Int(period)) seconds for as long as this screen is open, each one a one-second packet capture on this interface. pfSense returns at most ten hosts and picks them by \(sort.displayName.lowercased()), so switching the sort can return a different set of devices rather than the same ones reordered.")
-
-                // Local means the interface's own subnet, which on a LAN is
-                // the clients and on a WAN is whatever the ISP has on the
-                // other side of the link. Same filter, opposite meaning, and
-                // the word does not say so.
-                Text("Local means the interface's own subnet. On a VLAN that is your clients; on a WAN it is the addresses the ISP has on the far side of the link, so Remote is usually the one worth asking for there.")
-
-                if let raw = sample?.raw, !raw.isEmpty, rows.isEmpty {
-                    Text(raw)
-                        .scaledFont(11, design: .monospaced)
-                        .foregroundStyle(theme.labelFaint)
-                        .textSelection(.enabled)
-                }
-            }
-            .scaledFont(12)
-            .foregroundStyle(theme.labelMuted)
-            .padding(.horizontal, 2)
+        // `allRows`, not `rows`: a search that happens to match nothing is not
+        // the firewall reporting nothing, and showing its raw output
+        // underneath would read as though it were.
+        if let raw = sample?.raw, !raw.isEmpty, allRows.isEmpty {
+            Text(raw)
+                .scaledFont(11, design: .monospaced)
+                .foregroundStyle(theme.labelFaint)
+                .textSelection(.enabled)
+                .padding(.horizontal, 2)
         }
     }
 
     // MARK: The loop
 
-    private func applyPreselection() {
-        guard !hasPreselected else { return }
-        hasPreselected = true
-        if let preselect,
-           let index = interfaces.firstIndex(where: { $0.internalName == preselect }) {
-            slot = index
+    private func traceKey(_ ip: String) -> String { ClientAddress.key(ip) ?? ip }
+
+    private func recordHistory(_ result: HostTrafficSample) {
+        let now = Date()
+        var seen = Set<String>()
+
+        for host in result.hosts {
+            let key = traceKey(host.ip)
+            seen.insert(key)
+            var series = history[key] ?? []
+            series.append(ThroughputTracker.Point(at: now,
+                                                  inBps: host.bandwidthIn,
+                                                  outBps: host.bandwidthOut))
+            history[key] = Array(series.suffix(traceLength))
         }
+
+        // A row that fell out of the top ten carries a zero rather than a gap,
+        // so the trace keeps a time axis and a device winding down is drawn
+        // winding down rather than simply vanishing. It is the same ambiguity
+        // the list itself has — out of the ten is not proof of silence — and
+        // the note under the list says so.
+        //
+        // Once its whole window is zeros it is forgotten. Otherwise a firewall
+        // left on this screen accumulates a trace for every address that has
+        // ever been busy on that interface.
+        for (key, series) in history where !seen.contains(key) {
+            let next = Array((series + [ThroughputTracker.Point(at: now, inBps: 0, outBps: 0)])
+                .suffix(traceLength))
+            if next.allSatisfy({ $0.inBps == 0 && $0.outBps == 0 }) {
+                history.removeValue(forKey: key)
+            } else {
+                history[key] = next
+            }
+        }
+    }
+
+    private func applyPreselection() {
+        if !hasPreselected {
+            hasPreselected = true
+            if let preselect,
+               let index = interfaces.firstIndex(where: { $0.internalName == preselect }) {
+                slot = index
+            }
+        }
+        applySuggestedFilter()
+    }
+
+    /// Start each interface on the filter that will actually return something.
+    ///
+    /// Opening a WAN or a tunnel and being shown an empty list reads as a
+    /// broken screen, and on both of those an empty list is exactly what Local
+    /// correctly returns — a tunnel has no local subnet, and a WAN's local
+    /// subnet is the ISP's side of the link.
+    ///
+    /// Applied once per interface. Choosing a filter by hand afterwards is a
+    /// deliberate act and is not undone until the interface changes.
+    private func applySuggestedFilter() {
+        guard let selected, filterSuggestedFor != slot else { return }
+        filterSuggestedFor = slot
+        filter = selected.suggestedHostFilter
     }
 
     private func run() async {
@@ -322,6 +549,10 @@ struct HostTrafficPanel: View {
         sample = nil
         sampledAt = nil
         error = nil
+        // The previous run measured a different interface, filter or sort.
+        // Its traces describe a different question and would be read as
+        // history for this one.
+        history = [:]
 
         var consecutiveFailures = 0
 
@@ -353,6 +584,19 @@ struct HostTrafficPanel: View {
                 sampledAt = Date()
                 error = nil
                 consecutiveFailures = 0
+                recordHistory(result)
+
+                // Folded into the hourly record as well as the row traces.
+                // The traces are two minutes and belong to this screen; the
+                // record outlives it, which is the only reason there is
+                // anything to look back at.
+                store.topTalkers.record(
+                    result.hosts,
+                    serverID: store.profile.id.uuidString,
+                    interface: result.interface,
+                    interfaceName: selected.name,
+                    names: { store.nameForAddress($0) }
+                )
             } catch {
                 if error is CancellationError || (error as? RPCError) == .cancelled { return }
                 self.error = error.localizedDescription
@@ -370,6 +614,70 @@ struct HostTrafficPanel: View {
             } catch {
                 return
             }
+        }
+    }
+}
+
+/// A row-sized trace. Twenty points, two directions, no furniture.
+///
+/// `Sparkline` already exists and is the wrong tool here: it carries axis
+/// labels, gridlines and a tap-to-inspect tooltip, all of which are right for
+/// a card and wrong for a strip under two numbers — and its tap gesture would
+/// fight the link the row now is.
+///
+/// Deliberately not interactive and deliberately unlabelled. The numbers above
+/// it are the measurement; this only has to answer "rising or falling", and
+/// anything more would be competing with the row it belongs to.
+struct RowTrace: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+
+    let inSeries: [Double]
+    let outSeries: [Double]
+    var height: CGFloat = 20
+
+    /// Both directions share one scale so they stay comparable. Scaling each
+    /// independently would draw a device downloading at 5 Mbit and uploading
+    /// at 3 kbit as two lines of similar size.
+    private var peak: Double {
+        max(inSeries.max() ?? 0, outSeries.max() ?? 0, 1)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                area(outSeries, in: geo.size, colour: theme.info)
+                area(inSeries, in: geo.size, colour: theme.ok)
+            }
+        }
+        .frame(height: height)
+        .accessibilityHidden(true)
+    }
+
+    private func area(_ values: [Double], in size: CGSize, colour: Color) -> some View {
+        let step = values.count > 1 ? size.width / CGFloat(values.count - 1) : size.width
+        let points = values.enumerated().map { index, value in
+            CGPoint(x: CGFloat(index) * step,
+                    y: size.height - (CGFloat(value / peak) * size.height * 0.9) - 1)
+        }
+        return ZStack {
+            Path { path in
+                guard let first = points.first else { return }
+                path.move(to: CGPoint(x: first.x, y: size.height))
+                path.addLine(to: first)
+                for point in points.dropFirst() { path.addLine(to: point) }
+                path.addLine(to: CGPoint(x: points.last?.x ?? 0, y: size.height))
+                path.closeSubpath()
+            }
+            .fill(colour.opacity(0.18))
+
+            Path { path in
+                guard let first = points.first else { return }
+                path.move(to: first)
+                for point in points.dropFirst() { path.addLine(to: point) }
+            }
+            .stroke(colour.opacity(0.85), style: StrokeStyle(lineWidth: 1.2,
+                                                             lineCap: .round,
+                                                             lineJoin: .round))
         }
     }
 }

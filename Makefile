@@ -116,7 +116,7 @@ build: project
 # Runs SwiftLint on the source tree. Fails on violation so CI can gate on it.
 lint:
 	@command -v swiftlint >/dev/null || { echo "SwiftLint missing — brew install swiftlint"; exit 1; }
-	@swiftlint lint --strict --config swiftlint.yml
+	@swiftlint lint --strict --config .swiftlint.yml
 
 # The slow one. `xcodebuild test` installs the test host on a simulator and
 # runs it, which means booting a device and waiting. Worth doing deliberately;

@@ -253,6 +253,182 @@ final class HostTrafficTests: XCTestCase {
         XCTAssertEqual(match?.bandwidthOut ?? 0, 13_000, accuracy: 0.5)
     }
 
+    // MARK: Which hosts to ask for, per interface
+
+    private func iface(_ raw: [String: Any]) -> InterfaceStat {
+        let data = try! JSONSerialization.data(withJSONObject: raw)
+        let value = try! JSONDecoder().decode(JSONValue.self, from: data)
+        return InterfaceStat(JSONDict(value)!)
+    }
+
+    func testATunnelAsksForEveryHost() {
+        // A tunnel is point to point and has no local subnet, so a capture
+        // scoped to one returns nothing however busy the tunnel is. Local
+        // there is an empty list that reads as a broken screen.
+        for device in ["ovpns1", "ovpnc2", "tun_wg0", "ipsec1000", "gif0", "gre0"] {
+            let stat = iface(["name": "opt7", "descr": "TUNNEL", "hwif": device,
+                              "status": "up", "gateway": "GW_TUNNEL"])
+            XCTAssertEqual(stat.kind, .tunnel, "\(device) should read as a tunnel")
+            XCTAssertEqual(stat.suggestedHostFilter, .all)
+            XCTAssertNotNil(stat.hostFilterRationale)
+        }
+    }
+
+    func testAnInterfaceWithAGatewayAsksForRemoteHosts() {
+        // On a WAN the "local" subnet is the link to the ISP, so Local returns
+        // the provider's side rather than anything on the network.
+        let wan = iface(["name": "wan", "descr": "WAN_1", "hwif": "ix0",
+                         "status": "up", "gateway": "WAN_DHCP"])
+        XCTAssertEqual(wan.kind, .wan)
+        XCTAssertEqual(wan.suggestedHostFilter, .remote)
+
+        // A second WAN is an opt interface and is recognised by its gateway,
+        // not by being called WAN.
+        let second = iface(["name": "opt1", "descr": "WAN_2", "hwif": "ix1",
+                            "status": "up", "gateway": "WAN2_DHCP"])
+        XCTAssertEqual(second.kind, .wan)
+    }
+
+    func testAVLANAsksForLocalHostsAndExplainsNothing() {
+        let vlan = iface(["name": "lan", "descr": "VLAN_100", "hwif": "lagg0.100",
+                          "status": "up"])
+        XCTAssertEqual(vlan.kind, .local)
+        XCTAssertEqual(vlan.suggestedHostFilter, .local)
+        XCTAssertNil(vlan.hostFilterRationale,
+                     "there is nothing to explain on a VLAN, and a line saying so is noise")
+    }
+
+    func testADescriptionAloneDoesNotMakeSomethingAWAN() {
+        // "WAN_2" is a convention, not a fact. A LAN somebody named badly
+        // should not be classified by its label, and misclassifying it would
+        // start that screen on Remote and show them nothing.
+        let misnamed = iface(["name": "opt9", "descr": "WANNABE", "hwif": "lagg0.400",
+                              "status": "up"])
+        XCTAssertEqual(misnamed.kind, .local)
+    }
+
+    func testAnEmptyGatewayIsNotAGateway() {
+        for gateway in ["", "none", "None"] {
+            let stat = iface(["name": "opt3", "descr": "VLAN_202", "hwif": "lagg0.202",
+                              "status": "up", "gateway": gateway])
+            XCTAssertEqual(stat.kind, .local, "gateway \"\(gateway)\" should not read as a WAN")
+        }
+    }
+
+    // MARK: Grouping the interface picker
+
+    /// The shape of a real firewall: fifteen interfaces in pfSense's config
+    /// order, with two uplinks, five tunnels and eight VLANs interleaved.
+    private var wholeFirewall: [InterfaceStat] {
+        [
+            iface(["name": "wan", "descr": "WAN_1", "hwif": "ix0", "gateway": "WAN_DHCP"]),
+            iface(["name": "opt1", "descr": "WAN_2", "hwif": "ix1", "gateway": "WAN2_DHCP"]),
+            iface(["name": "opt5", "descr": "OPENVPN1", "hwif": "ovpns1"]),
+            iface(["name": "opt6", "descr": "OPENVPN2", "hwif": "ovpns2"]),
+            iface(["name": "opt7", "descr": "WIREGUARD1", "hwif": "tun_wg0"]),
+            iface(["name": "opt8", "descr": "WIREGUARD2", "hwif": "tun_wg1"]),
+            iface(["name": "opt9", "descr": "WIREGUARD3", "hwif": "tun_wg2"]),
+            iface(["name": "lan", "descr": "VLAN_100", "hwif": "lagg0.100"]),
+            iface(["name": "opt10", "descr": "VLAN_101", "hwif": "lagg0.101"]),
+        ]
+    }
+
+    func testGroupingKeepsTheSlotEachInterfaceOccupies() {
+        // The whole point. Grouping reorders what is shown; it must not
+        // reorder what is sent, or the app samples one interface and labels it
+        // with another's name.
+        for group in InterfaceStat.grouped(wholeFirewall) {
+            for entry in group.entries {
+                XCTAssertEqual(entry.interface.name, wholeFirewall[entry.id].name,
+                               "slot \(entry.id) no longer points at the interface it did")
+            }
+        }
+    }
+
+    func testGroupsAreUplinksThenNetworksThenTunnels() {
+        let groups = InterfaceStat.grouped(wholeFirewall)
+        XCTAssertEqual(groups.map(\.title), ["Uplinks", "Networks", "Tunnels"])
+        XCTAssertEqual(groups[0].entries.map(\.id), [0, 1])
+        XCTAssertEqual(groups[1].entries.map(\.id), [7, 8])
+        XCTAssertEqual(groups[2].entries.map(\.id), [2, 3, 4, 5, 6])
+    }
+
+    func testEveryInterfaceAppearsExactlyOnce() {
+        let ids = InterfaceStat.grouped(wholeFirewall).flatMap { $0.entries.map(\.id) }
+        XCTAssertEqual(Set(ids).count, wholeFirewall.count)
+        XCTAssertEqual(ids.count, wholeFirewall.count)
+    }
+
+    func testConfigOrderSurvivesWithinAGroup() {
+        // Sorting by name would look tidier and would mean the menu reordered
+        // itself whenever somebody renamed an interface.
+        let tunnels = InterfaceStat.grouped(wholeFirewall).last?.entries.map(\.interface.name)
+        XCTAssertEqual(tunnels, ["OPENVPN1", "OPENVPN2", "WIREGUARD1", "WIREGUARD2", "WIREGUARD3"])
+    }
+
+    func testAFirewallWithNoTunnelsGetsNoTunnelHeading() {
+        let plain = [iface(["name": "wan", "descr": "WAN", "hwif": "em0", "gateway": "GW"]),
+                     iface(["name": "lan", "descr": "LAN", "hwif": "em1"])]
+        XCTAssertEqual(InterfaceStat.grouped(plain).map(\.title), ["Uplinks", "Networks"])
+    }
+
+    func testGroupingNothingGivesNothing() {
+        XCTAssertTrue(InterfaceStat.grouped([]).isEmpty)
+    }
+
+    // MARK: Finding the device a captured address belongs to
+
+    private func networkClient(mac: String, ip: String) -> NetworkClient {
+        NetworkClient(id: "\(mac)-\(ip)", mac: mac, ip: ip, hostname: nil, descr: nil,
+                      interfaceName: "lan", leaseState: nil, leaseEnds: nil,
+                      isStatic: false, overrideName: nil, aliasName: nil,
+                      seenInARP: true, seenInLease: false, online: true)
+    }
+
+    private func arpEntry(mac: String, ip: String) -> ARPEntry {
+        let raw: [String: Any] = ["ip": ip, "mac": mac, "interface": "lagg0.100"]
+        let data = try! JSONSerialization.data(withJSONObject: raw)
+        let value = try! JSONDecoder().decode(JSONValue.self, from: data)
+        return ARPEntry(JSONDict(value)!)
+    }
+
+    func testACapturedAddressFindsItsClientDirectly() {
+        let s = store([])
+        s.overviewLayout.clients = [networkClient(mac: "aa:bb:cc:dd:ee:01", ip: "172.16.1.10")]
+        XCTAssertEqual(s.client(matching: "172.16.1.10")?.mac, "aa:bb:cc:dd:ee:01")
+    }
+
+    func testASecondAddressOnTheSameDeviceStillFindsIt() {
+        // The client list shows one address per device. A capture can catch
+        // the device on another one, and that row would otherwise be a link
+        // that mysteriously refuses to open.
+        let s = store([])
+        s.overviewLayout.clients = [networkClient(mac: "aa:bb:cc:dd:ee:02", ip: "172.16.1.11")]
+        s.arp = [arpEntry(mac: "aa:bb:cc:dd:ee:02", ip: "172.16.1.99")]
+        XCTAssertEqual(s.client(matching: "172.16.1.99")?.ip, "172.16.1.11")
+    }
+
+    func testAnAddressMatchesAcrossEquivalentIPv6Spellings() {
+        let s = store([])
+        s.overviewLayout.clients = [networkClient(mac: "aa:bb:cc:dd:ee:03", ip: "2001:db8::5")]
+        XCTAssertNotNil(s.client(matching: "2001:db8:0:0:0:0:0:5"))
+    }
+
+    func testAnUnknownAddressLinksNowhere() {
+        // Most of what a WAN capture returns is not a client, and a row that
+        // looks tappable and does nothing is worse than one that does not.
+        let s = store([])
+        s.overviewLayout.clients = [networkClient(mac: "aa:bb:cc:dd:ee:04", ip: "172.16.1.12")]
+        XCTAssertNil(s.client(matching: "203.0.113.7"))
+        XCTAssertNil(s.client(matching: "not an address"))
+    }
+
+    func testAnARPEntryWithNoMatchingClientLinksNowhere() {
+        let s = store([])
+        s.arp = [arpEntry(mac: "aa:bb:cc:dd:ee:05", ip: "172.16.1.13")]
+        XCTAssertNil(s.client(matching: "172.16.1.13"))
+    }
+
     // MARK: The refresh interval
 
     func testTheIntervalDefaultsToFifteenSecondsWhenNothingIsStored() {

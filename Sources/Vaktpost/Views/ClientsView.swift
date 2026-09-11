@@ -316,6 +316,32 @@ struct ClientDetailView: View {
                 // already fetched. This one asks the firewall to measure
                 // something, so it is a button rather than a value.
                 ClientTrafficCard(client: client, addresses: investigation.addresses)
+                // Straight through to everything that references this device,
+                // with the address already in the box.
+                NavigationLink {
+                    InvestigateView(initialQuery: client.ip)
+                } label: {
+                    Slab(rail: .info) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "magnifyingglass")
+                                .scaledFont(14)
+                                .foregroundStyle(theme.accentColor)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("What references this device")
+                                    .scaledFont(13, weight: .semibold)
+                                    .foregroundStyle(theme.label)
+                                Text("Aliases, firewall rules, port forwards, VPN and DNSBL")
+                                    .scaledFont(11)
+                                    .foregroundStyle(theme.labelFaint)
+                            }
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .scaledFont(11, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
                 records
                 GroupHeading(text: "Matching firewall log")
                 FreshnessView(sections: [.firewallLog], showNames: true)

@@ -161,6 +161,15 @@ struct InterfaceCard: View {
                         .foregroundStyle(theme.label)
                         .lineLimit(2)
                     Spacer()
+                    // Only when errors are moving. A total since boot is not
+                    // worth a badge on a list — it would sit there for the
+                    // life of the link and be learned as furniture.
+                    if store.interfaceErrors.change(for: iface)?.isRising == true {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .scaledFont(11)
+                            .foregroundStyle(theme.warn)
+                            .accessibilityLabel("Link errors rising")
+                    }
                     StatusPill(text: iface.status, health: iface.health)
                 }
                 

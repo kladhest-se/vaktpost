@@ -195,3 +195,199 @@ struct PortForward: Identifiable {
 
     var health: Health { disabled ? .idle : .info }
 }
+
+// MARK: - pfBlockerNG
+
+/// One alias pfBlockerNG maintains, and what pf currently holds for it.
+struct PFBlockerFeed: Identifiable {
+    var id: String { name }
+    var name: String
+    var descr: String?
+    var type: String?
+
+    /// Addresses this list holds, or nil where nothing could answer.
+    ///
+    /// Nil rather than zero, and the distinction matters: a list configured
+    /// but never downloaded and a feed that legitimately matched nothing both
+    /// look like zero, and only one of them is working.
+    var entries: Int?
+
+    /// Where the count came from.
+    ///
+    /// `pf` is the running firewall and the strongest answer. `file` is
+    /// /var/db/aliastables, which is what pf loads from — a list written but
+    /// not applied still counts. `config` is an inline alias, which is the
+    /// only count a port alias has ever had.
+    enum Source: String {
+        case pf, file, config, none
+
+        var description: String {
+            switch self {
+            case .pf: return "from pf"
+            case .file: return "from the table file"
+            case .config: return "from the configuration"
+            case .none: return "unavailable"
+            }
+        }
+    }
+
+    var source: Source
+
+    /// What pfBlockerNG calls the list, without its prefix.
+    var shortName: String {
+        name.hasPrefix("pfB_") ? String(name.dropFirst(4)) : name
+    }
+
+    init(_ d: JSONDict) {
+        name = d.string("name") ?? "—"
+        descr = d.string("descr").flatMap { $0.isEmpty ? nil : $0 }
+        type = d.string("type").flatMap { $0.isEmpty ? nil : $0 }
+        let count = d.int("entries") ?? -1
+        entries = count < 0 ? nil : count
+        source = Source(rawValue: d.string("source") ?? "") ?? .none
+    }
+}
+
+/// One of pfBlockerNG's log files, described rather than read.
+///
+/// The size and the modification time answer the question a person actually
+/// has — is this running — without pulling a log that on a busy firewall runs
+/// to hundreds of megabytes across the wire to be counted.
+struct PFBlockerLogFile: Identifiable {
+    var id: String { name }
+    var name: String
+    var bytes: Double
+    var updated: Date?
+
+    init(_ d: JSONDict) {
+        name = d.string("name") ?? "—"
+        bytes = d.double("bytes") ?? 0
+        updated = d.double("updated").flatMap { $0 > 0 ? Date(timeIntervalSince1970: $0) : nil }
+    }
+}
+
+/// pfBlockerNG as this app can see it.
+struct PFBlockerStatus {
+    var enabled: Bool
+    var dnsblEnabled: Bool
+    /// "unbound" or "dnsbl_python", when DNSBL is on.
+    var dnsblMode: String?
+    /// Which pf accessor was available, or nil where neither was.
+    ///
+    /// Nil on pfSense Plus, where neither function exists. That used to mean
+    /// nothing could be counted; the counts now fall back to the table files
+    /// pf loads from, and this only says whether the strongest source was
+    /// available.
+    var accessor: String?
+    /// Which of the probed paths exist, for the diagnostics screen. The
+    /// package and its development build keep things in different places and
+    /// this app cannot tell which is installed without looking.
+    var foundPaths: [String]
+    var feeds: [PFBlockerFeed]
+    var logs: [PFBlockerLogFile]
+
+    /// Addresses currently loaded into pf across every feed.
+    ///
+    /// Feeds with no table are left out rather than counted as zero, so this
+    /// is "what is blocked", not "what should be".
+    var blockedAddresses: Int {
+        feeds.compactMap(\.entries).reduce(0, +)
+    }
+
+    /// Feeds that are configured but hold nothing in pf.
+    var unloadedFeeds: [PFBlockerFeed] {
+        feeds.filter { $0.entries == nil }
+    }
+
+    init(_ d: JSONDict) {
+        enabled = d.bool("enabled") ?? false
+        dnsblEnabled = d.bool("dnsbl") ?? false
+        dnsblMode = d.string("dnsbl_mode").flatMap { $0.isEmpty ? nil : $0 }
+        accessor = d.string("accessor").flatMap { $0.isEmpty ? nil : $0 }
+        foundPaths = (JSONDict(d.value("paths"))?.raw ?? [:])
+            .filter { $0.value.boolValue == true }
+            .keys.sorted()
+        feeds = d.list("feeds").compactMap { JSONDict($0) }.map(PFBlockerFeed.init)
+            .sorted { ($0.entries ?? -1) > ($1.entries ?? -1) }
+        logs = d.list("logs").compactMap { JSONDict($0) }.map(PFBlockerLogFile.init)
+    }
+}
+
+// MARK: - DNSBL statistics
+
+/// One row of a "top N" count — a domain, a client, a feed, a group.
+struct DNSBLCount: Identifiable {
+    var id: String { name }
+    var name: String
+    var count: Int
+
+    init(_ d: JSONDict) {
+        name = d.string("name") ?? "—"
+        count = d.int("count") ?? 0
+    }
+}
+
+/// One hour of the log, labelled as pfBlockerNG labels it.
+///
+/// The label is text, not a date, and stays that way. pfBlockerNG writes its
+/// timestamps with `date('M j H:i:s')` — no year — so anything that turned
+/// "Sep 3 01" into a `Date` would be inventing one, and would invent the wrong
+/// one for a log that spans a new year.
+struct DNSBLHour: Identifiable {
+    var id: String { label }
+    var label: String
+    var count: Int
+
+    /// Just the hour, for an axis that already knows the day.
+    var shortLabel: String {
+        label.split(separator: " ").last.map(String.init) ?? label
+    }
+
+    init(_ d: JSONDict) {
+        label = d.string("label") ?? "—"
+        count = d.int("count") ?? 0
+    }
+}
+
+/// What DNSBL has been blocking, from the tail of its log.
+struct DNSBLStats {
+    /// False when the log does not exist or is empty — DNSBL off, or on and
+    /// never having blocked anything.
+    var available: Bool
+    var logBytes: Double
+    var scannedBytes: Double
+    /// The log is bigger than the window that was read, so these counts
+    /// describe the recent tail rather than the whole log. Said out loud
+    /// because a total that silently means "some of it" is worse than no
+    /// total.
+    var truncated: Bool
+    var events: Int
+    /// Lines that did not have the nine fields a complete record has — a line
+    /// being written as it was read, or a format this app does not know.
+    var unparsed: Int
+    var first: String?
+    var last: String?
+    var domains: [DNSBLCount]
+    var clients: [DNSBLCount]
+    var groups: [DNSBLCount]
+    var feeds: [DNSBLCount]
+    var hours: [DNSBLHour]
+
+    var busiestHour: DNSBLHour? { hours.max { $0.count < $1.count } }
+
+    init(_ d: JSONDict) {
+        available = d.bool("available") ?? false
+        logBytes = d.double("bytes") ?? 0
+        scannedBytes = d.double("scanned") ?? 0
+        truncated = d.bool("truncated") ?? false
+        events = d.int("events") ?? 0
+        unparsed = d.int("unparsed") ?? 0
+        first = d.string("first").flatMap { $0.isEmpty ? nil : $0 }
+        last = d.string("last").flatMap { $0.isEmpty ? nil : $0 }
+        domains = d.list("domains").compactMap { JSONDict($0) }.map(DNSBLCount.init)
+        clients = d.list("clients").compactMap { JSONDict($0) }.map(DNSBLCount.init)
+        groups = d.list("groups").compactMap { JSONDict($0) }.map(DNSBLCount.init)
+        feeds = d.list("feeds").compactMap { JSONDict($0) }.map(DNSBLCount.init)
+        hours = d.list("hours").compactMap { JSONDict($0) }.map(DNSBLHour.init)
+    }
+}

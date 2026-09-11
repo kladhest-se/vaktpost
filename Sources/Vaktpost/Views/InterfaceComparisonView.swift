@@ -360,7 +360,11 @@ private struct MultiSeriesChart: View {
         let y = height - (CGFloat(value / peak) * height * 0.92) - 2
         let halfWidth: CGFloat = 40
         let clampedX = min(max(x, halfWidth), max(halfWidth, width - halfWidth))
-        return Text("\(Fmt.bytesPerSec(value))")
+        // Bits, like the legend three lines below and like every other rate
+        // on this screen. These series come from `store.throughput`, which is
+        // the interface tracker, and this was the second place labelling its
+        // bits as bytes.
+        return Text("\(Rate.bits(value))")
             .scaledFont(9, design: .monospaced)
             .foregroundStyle(.white)
             .padding(.horizontal, 4)
