@@ -6,6 +6,9 @@ struct NetworkView: View {
 
     @State private var selectedTab = 0
     @State private var interfaceFilter: InterfaceFilter = .all
+    @State private var showQuickBlock = false
+    @State private var showReloadConfirm = false
+    @State private var quickBlockInterface: InterfaceStat?
 
     enum InterfaceFilter: String, CaseIterable, Identifiable {
         case all = "All", up = "Up", down = "Down"
@@ -13,7 +16,7 @@ struct NetworkView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 PageHeader(title: "Network", subtitle: selectedTab == 0 ? "\(store.interfaces.count) interfaces" : "\(store.gatewayManager.gateways.count) gateways")
                 VStack(spacing: 0) {
@@ -54,6 +57,21 @@ struct NetworkView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showQuickBlock) {
+                NavigationStack {
+                    QuickBlockView()
+                }
+            }
+            .confirmationSheet(
+                isPresented: $showReloadConfirm,
+                title: "Reload firewall rules",
+                message: "This will reload the firewall ruleset in place. Active connections may be briefly interrupted.",
+                destructive: true,
+                destructiveLabel: "Reload",
+                confirmLabel: "Cancel",
+                onConfirm: { await reloadFirewall() },
+                onCancel: {}
+            )
         }
     }
 
@@ -91,12 +109,7 @@ struct NetworkView: View {
                 )
             } else {
                 ForEach(interfaces) { iface in
-                    NavigationLink {
-                        InterfaceDetailView(iface: iface)
-                    } label: {
-                        InterfaceCard(iface: iface)
-                    }
-                    .buttonStyle(.plain)
+                    InterfaceCard(iface: iface)
                 }
             }
         }
@@ -134,12 +147,43 @@ struct NetworkView: View {
         .padding(.horizontal, 16)
         .padding(.bottom, 28)
     }
+
+    // MARK: - Actions
+
+    private func reloadFirewall() async {
+        guard store.rateLimiter.allowWrite() else {
+            return
+        }
+
+        do {
+            _ = try await Retrier(maxAttempts: 2, baseDelay: 1.0).retry {
+                try await store.client.reloadFirewall()
+            }
+
+            store.auditTrail.log(
+                action: .reloadFirewall,
+                summary: "Reloaded firewall ruleset via network view",
+                target: nil,
+                before: nil,
+                after: nil
+            )
+
+            store.analytics.record(operation: "reload_firewall", success: true)
+
+            await store.refresh()
+
+        } catch {
+            store.analytics.record(operation: "reload_firewall", success: false)
+            // Silent failure - user won't see error for this quick action
+        }
+    }
 }
 
 /// One interface, as a card.
 struct InterfaceCard: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
+    @State private var showQuickBlock = false
     let iface: InterfaceStat
 
     var body: some View {
@@ -214,6 +258,35 @@ struct InterfaceCard: View {
                     device: iface.seriesKey,
                     height: 44
                 )
+
+                Divider()
+                    .padding(.vertical, 6)
+
+                HStack(spacing: 8) {
+                    Button {
+                        showQuickBlock = true
+                    } label: {
+                        Label("Block", systemImage: "xmark.circle.fill")
+                            .scaledFont(11, weight: .medium)
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+
+                    NavigationLink {
+                        InterfaceDetailView(iface: iface)
+                    } label: {
+                        Label("Details", systemImage: "chevron.right")
+                            .scaledFont(11, weight: .medium)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .foregroundStyle(theme.labelMuted)
+            }
+        }
+        .sheet(isPresented: $showQuickBlock) {
+            NavigationStack {
+                QuickBlockView()
             }
         }
     }

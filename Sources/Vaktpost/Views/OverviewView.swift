@@ -7,6 +7,7 @@ struct OverviewView: View {
 
     @State private var visibleSections: [OverviewSection] = []
     @State private var draggedSection: OverviewSection?
+    @State private var collapsedSections: Set<String> = []
     /// The measured height of each section.
     ///
     /// A single estimate was why dragging felt wrong: the status banner is a
@@ -41,6 +42,7 @@ struct OverviewView: View {
                                 title: section.displayName,
                                 isEditing: $isEditing,
                                 visibleSections: $visibleSections,
+                                collapsedSections: $collapsedSections,
                                 registry: registry,
                                 content: { sectionContentView(section) },
                                 draggedSection: $draggedSection,
@@ -117,35 +119,52 @@ struct OverviewView: View {
         visibleSections = names
             .compactMap(OverviewSection.init(rawValue:))
             .filter { seen.insert($0).inserted }
+        collapsedSections = Set(active.collapsedSections.compactMap { OverviewSection.init(rawValue: $0) }.map(\.rawValue))
+    }
+    
+    private func resetSections() {
+        guard let active = registry.active else { return }
+        registry.resetSectionOrder(toDefault: active)
+        loadVisibleSections()
     }
     
     @ViewBuilder
     private var hiddenSectionsPicker: some View {
         let hidden = OverviewSection.allCases.filter { !visibleSections.contains($0) }
-        if hidden.isEmpty {
-            EmptyView()
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Hidden Sections")
-                    .scaledFont(12, weight: .semibold)
-                    .foregroundStyle(theme.labelFaint)
-                    .padding(.top, 8)
-                
-                ForEach(hidden) { section in
-                    HStack {
-                        Text(section.displayName)
-                            .scaledFont(14)
-                            .foregroundStyle(theme.label)
-                        Spacer()
-                        Button {
-                            addSection(section)
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
-                                .foregroundStyle(theme.ok)
-                                .scaledFont(20)
+        VStack(alignment: .leading, spacing: 8) {
+            if hidden.isEmpty {
+                EmptyView()
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Hidden Sections")
+                        .scaledFont(12, weight: .semibold)
+                        .foregroundStyle(theme.labelFaint)
+                        .padding(.top, 8)
+                    
+                    ForEach(hidden) { section in
+                        HStack {
+                            Text(section.displayName)
+                                .scaledFont(14)
+                                .foregroundStyle(theme.label)
+                            Spacer()
+                            Button {
+                                addSection(section)
+                            } label: {
+                                Image(systemName: "plus.circle.fill")
+                                    .foregroundStyle(theme.ok)
+                                    .scaledFont(20)
+                            }
                         }
                     }
                 }
+            }
+            
+            Button {
+                resetSections()
+            } label: {
+                Label("Reset to Default", systemImage: "arrow.counterclockwise")
+                    .scaledFont(14)
+                    .foregroundStyle(theme.label)
             }
         }
     }
@@ -848,18 +867,6 @@ struct OverviewView: View {
         }
     }
 
-
-    private var vpnStatusText: String {
-        let total = store.openvpnServers.count + store.openvpnClients.count + store.ipsecSAs.count + store.wireguardTunnels.count + store.wireguardPeers.count
-        guard total > 0 else { return "" }
-        let active = (store.openvpnServers.filter { $0.health == .ok || $0.health == .idle || !$0.connections.isEmpty }.count) +
-                     (store.openvpnClients.filter { $0.health == .ok || $0.health == .idle || !$0.connections.isEmpty }.count) +
-                     store.ipsecSAs.count +
-                     (store.wireguardTunnels.filter(\.isUp).count) +
-                     (store.wireguardPeers.filter(\.hasLiveStatus).count)
-        return "\(active) active"
-    }
-
     private func deltaCounter(_ label: String, _ value: Int, _ delta: Int?, _ health: Health) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -947,6 +954,7 @@ private struct SectionView: View {
     let title: String
     @Binding var isEditing: Bool
     @Binding var visibleSections: [OverviewSection]
+    @Binding var collapsedSections: Set<String>
     let registry: ServerRegistry
     let content: () -> AnyView
     @Environment(\.themeManager) private var theme: ThemeManager
@@ -956,6 +964,7 @@ private struct SectionView: View {
     let currentIndex: Int
 
     @State private var isDragging = false
+    @State private var isCollapsed = false
 
     /// Where the drag started, in the list.
     ///
@@ -1103,11 +1112,30 @@ private struct SectionView: View {
                 
                 GroupHeading(text: title)
                 Spacer()
+                
+                if !isEditing {
+                    Button {
+                        toggleCollapse()
+                    } label: {
+                        Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                            .scaledFont(10)
+                            .foregroundStyle(theme.labelFaint)
+                            .symbolVariant(.fill.circle)
+                            .frame(width: 20, height: 20)
+                    }
+                    .accessibilityLabel(isCollapsed ? "Expand \(title)" : "Collapse \(title)")
+                }
             }
             .animation(.easeInOut(duration: 0.2), value: isEditing)
             
             if isEditing {
                 sectionMockup
+            } else if isCollapsed {
+                Text("Section collapsed")
+                    .scaledFont(12)
+                    .foregroundStyle(theme.labelFaint)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
             } else {
                 content()
             }
@@ -1138,6 +1166,11 @@ private struct SectionView: View {
                 radius: 12, y: isDragging ? 8 : 0)
         .zIndex(isDragging ? 1 : 0)
         .gesture(isEditing ? dragGesture : nil)
+        .onAppear {
+            if let active = registry.active, active.collapsedSections.contains(section.rawValue) {
+                isCollapsed = true
+            }
+        }
     }
     
     private var sectionMockup: some View {
@@ -1150,6 +1183,12 @@ private struct SectionView: View {
         visibleSections.removeAll { $0 == section }
         guard let active = registry.active else { return }
         registry.setOverviewSectionVisibility(active, section, visible: false)
+    }
+    
+    private func toggleCollapse() {
+        isCollapsed.toggle()
+        guard let active = registry.active else { return }
+        registry.setOverviewSectionCollapsed(active, section, collapsed: isCollapsed)
     }
     
     /// Writes the arrangement back to the profile.
@@ -1167,11 +1206,26 @@ extension View {
     @ViewBuilder
     func wobble(_ isEditing: Bool) -> some View {
         if isEditing {
-            self.animation(.easeInOut(duration: 0.5).repeatCount(3, autoreverses: true), value: isEditing)
-                .offset(x: CGFloat.random(in: -1...1), y: 0)
+            self
+                .animation(.easeInOut(duration: 0.5).repeatCount(3, autoreverses: true), value: isEditing)
+                .wobbleOffset()
         } else {
             self
         }
+    }
+}
+
+private struct WobbleOffset: ViewModifier {
+    @State private var offset = CGFloat.random(in: -1...1)
+    
+    func body(content: Content) -> some View {
+        content.offset(x: offset, y: 0)
+    }
+}
+
+private extension View {
+    func wobbleOffset() -> some View {
+        modifier(WobbleOffset())
     }
 }
 

@@ -1,0 +1,234 @@
+import SwiftUI
+
+/// Quick-block an IP address on a specific interface.
+///
+/// Presents a form that collects the target interface, address, and optional
+/// description, then presents a confirmation sheet before writing the rule.
+struct QuickBlockView: View {
+
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var selectedInterface: InterfaceStat?
+    @State private var address = ""
+    @State private var description = ""
+    @State private var showConfirmation = false
+    @State private var isExecuting = false
+    @State private var showErrorAlert = false
+    @State private var writeError: WriteError?
+    @State private var lastBlockedEntry: AuditTrail.Entry?
+    @State private var useStaging = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                sectionHeader("Target")
+
+                interfacePicker
+
+                addressField
+
+                descriptionField
+
+                sectionHeader("Mode")
+
+                stagingToggle
+
+                sectionHeader("Action")
+
+                executeButton
+            }
+            .navigationTitle("Quick Block")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    if !isExecuting {
+                        Button("Done") { dismiss() }
+                    } else {
+                        ProgressView()
+                    }
+                }
+            }
+            .confirmationSheet(
+                isPresented: $showConfirmation,
+                title: "Block address",
+                message: "This will add a firewall rule to block \(address) on \(selectedInterface?.device ?? "the interface").",
+                destructive: true,
+                destructiveLabel: "Block",
+                confirmLabel: "Cancel",
+                onConfirm: confirmBlock,
+                onCancel: {}
+            )
+            .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+            .onAppear {
+                if let firstUp = store.overviewLayout.interfaces.first(where: { $0.isUp }) {
+                    selectedInterface = firstUp
+                }
+            }
+            .onChange(of: address) { _, newValue in
+                address = sanitizeAddress(newValue)
+            }
+        }
+    }
+
+    // MARK: - Form fields
+
+    private var interfacePicker: some View {
+        LabeledContent("Interface") {
+            Picker("", selection: Binding(
+                get: { selectedInterface?.device ?? "" },
+                set: { newValue in selectedInterface = store.overviewLayout.interfaces.first(where: { $0.device == newValue }) }
+            )) {
+                Text("Select interface...").tag("")
+                ForEach(store.overviewLayout.interfaces) { iface in
+                    Text("\(iface.name) (\(iface.device))")
+                        .tag(iface.device)
+                        .foregroundStyle(iface.isUp ? theme.label : theme.labelMuted)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    private var addressField: some View {
+        LabeledContent("Address") {
+            TextField("192.168.1.100 or 10.0.0.0/24", text: $address)
+                .keyboardType(.numberPad)
+                .autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private var descriptionField: some View {
+        LabeledContent("Description") {
+            TextField("Blocked by Vaktpost", text: $description)
+                .autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private var stagingToggle: some View {
+        LabeledContent("Staging") {
+            Toggle("", isOn: $useStaging)
+                .labelsHidden()
+        }
+        .help(useStaging ? "Changes will be staged for batch apply" : "Tap to enable staging mode")
+    }
+
+    private var executeButton: some View {
+        Button {
+            writeError = nil
+            isExecuting = true
+            defer { isExecuting = false }
+
+            if !address.isEmpty && selectedInterface != nil {
+                if useStaging {
+                    stageBlock()
+                } else {
+                    if !store.rateLimiter.allowWrite() {
+                        writeError = WriteError(
+                            title: "Rate limited",
+                            message: "Please wait a few seconds between actions.",
+                            suggestion: nil
+                        )
+                        showErrorAlert = true
+                        return
+                    }
+                    showConfirmation = true
+                }
+            }
+        } label: {
+            HStack {
+                Spacer()
+                Text(useStaging ? "Stage block rule" : "Add block rule")
+                Image(systemName: useStaging ? "square.badge.plus" : "shield.slash")
+            }
+            .foregroundStyle(useStaging ? theme.info : theme.bad)
+            .font(.headline)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(useStaging ? theme.info.opacity(0.1) : theme.bad.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    // MARK: - Confirmation handler
+
+    private func confirmBlock() async {
+        guard let iface = selectedInterface else { return }
+
+        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
+
+        do {
+            let result = try await retrier.retry {
+                try await store.client.quickBlock(
+                    interface: iface.device,
+                    address: address,
+                    description: description.isEmpty ? "Blocked by Vaktpost" : description
+                )
+            }
+
+            let summary = "Blocked \(address) on \(iface.device)"
+            let afterSnapshot: String? = {
+                if let ruleDict = result.dict("rule"),
+                   let descr = ruleDict.string("descr"),
+                   let interface = ruleDict.string("interface") {
+                    return "type=\(ruleDict.string("type") ?? "") interface=\(interface) descr=\(descr)"
+                }
+                return nil
+            }()
+
+            store.auditTrail.log(
+                action: .quickBlock,
+                summary: summary,
+                target: iface.device,
+                before: nil,
+                after: afterSnapshot
+            )
+
+            store.analytics.record(operation: "quick_block", success: true)
+
+            lastBlockedEntry = nil
+
+            dismiss()
+
+        } catch {
+            store.analytics.record(operation: "quick_block", success: false)
+            writeError = WriteError.from(error, operation: .quickBlock)
+            showErrorAlert = true
+        }
+    }
+
+    private func stageBlock() {
+        guard let iface = selectedInterface else { return }
+
+        let op = FirewallClient.stageQuickBlock(
+            interface: iface.device,
+            address: address,
+            description: description.isEmpty ? "Blocked by Vaktpost" : description
+        )
+
+        store.stagedChanges.stage(
+            action: op.action,
+            target: op.target,
+            description: op.description
+        )
+
+        writeError = nil
+    }
+
+    // MARK: - Helpers
+
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .scaledFont(12, weight: .semibold)
+            .foregroundStyle(theme.labelFaint)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 8)
+    }
+
+    private func sanitizeAddress(_ input: String) -> String {
+        input.filter { $0.isNumber || $0 == "." || $0 == "/" }
+    }
+}

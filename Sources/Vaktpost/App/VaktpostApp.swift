@@ -112,22 +112,37 @@ struct AlertButton: View {
 
 @main
 struct VaktpostApp: App {
+    @UIApplicationDelegateAdaptor(URLDelegate.self) private var urlDelegate
     private let theme = ThemeManager()
     private let registry = ServerRegistry()
+    private let deepLinkRouter: DeepLinkRouter
     private let store: DashboardStore
 
     init() {
+        self.deepLinkRouter = DeepLinkRouter()
         self.store = DashboardStore(registry: registry)
+        self.urlDelegate.router = self.deepLinkRouter
+        DashboardStore.shared = self.store
     }
 
     var body: some Scene {
         WindowGroup {
             RootView()
+                .environment(\.deepLinkRouter, deepLinkRouter)
                 .environment(theme)
                 .environment(registry)
                 .environment(\.dashboardStore, store)
                 .environment(\.store, store)
         }
+    }
+}
+
+class URLDelegate: NSObject, UIApplicationDelegate {
+    weak var router: DeepLinkRouter?
+    
+    func application(_ application: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        router?.handle(url)
+        return true
     }
 }
 

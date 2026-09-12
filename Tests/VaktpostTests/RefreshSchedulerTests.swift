@@ -62,9 +62,7 @@ final class RefreshSchedulerTests: XCTestCase {
         scheduler.start { }
         scheduler.reset()
         
-        // After reset, state should be idle and no refreshes should happen
-        try? await Task.sleep(for: .milliseconds(50))
-        // If reset worked, no refresh should have occurred
+        XCTAssertTrue(scheduler.state == .idle, "State should be idle after reset")
     }
 
     func testSchedulerStopsOnCancellation() async {

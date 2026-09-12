@@ -153,7 +153,9 @@ final class TopTalkerRecorder {
                 interfaceName: String,
                 names: (String) -> String?,
                 at when: Date = Date(),
-                calendar: Calendar = .current) {
+                calendar: Calendar = .current,
+                now: Date = Date(),
+                skipPrune: Bool = false) {
         guard !hosts.isEmpty else { return }
 
         let hourStart = calendar.dateInterval(of: .hour, for: when)?.start ?? when
@@ -208,7 +210,9 @@ final class TopTalkerRecorder {
             .prefix(Self.talkersPerHour))
 
         hours[key] = hour
-        prune()
+        if !skipPrune {
+            prune(now: now)
+        }
         scheduleSave()
     }
 
@@ -268,7 +272,6 @@ final class TopTalkerRecorder {
             return
         }
         hours = decoded
-        prune()
     }
 
     /// Debounced, because recording happens on every capture and a capture can

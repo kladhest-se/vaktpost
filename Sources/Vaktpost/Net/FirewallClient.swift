@@ -329,4 +329,112 @@ actor FirewallClient {
         let dict = try await rpc.runObject(.ping)
         return dict.string("version") ?? "connected"
     }
+
+    // MARK: Write operations
+
+    /// Reloads the firewall ruleset.
+    func reloadFirewall() async throws -> String {
+        let dict = try await rpc.runObject(.reloadFirewall)
+        return dict.string("status") ?? "unknown"
+    }
+
+    /// Restarts a pfSense service by name.
+    func restartService(named serviceName: String) async throws -> String {
+        let snippet = PHPSnippet.restartService(serviceName: serviceName)
+        let dict = try await rpc.runObject(snippet)
+        return dict.string("status") ?? "unknown"
+    }
+
+    /// Adds a quick-block rule to block an IP address.
+    ///
+    /// - Parameters:
+    ///   - interface: The interface to block on.
+    ///   - address: The IP address or subnet to block.
+    ///   - description: A description for the rule.
+    func quickBlock(interface: String, address: String, description: String) async throws -> JSONDict {
+        let snippet = PHPSnippet.quickBlock(interface: interface, address: address, description: description)
+        return try await rpc.runObject(snippet)
+    }
+
+    /// Flushes the firewall state table.
+    ///
+    /// - Parameter interface: Optional interface to flush states for. Empty means all.
+    func flushStates(interface: String = "") async throws -> String {
+        let snippet = PHPSnippet.flushStates(interface: interface)
+        let dict = try await rpc.runObject(snippet)
+        return dict.string("status") ?? "unknown"
+    }
+
+    /// Deletes a firewall rule by tracker ID.
+    func deleteRule(tracker: String) async throws -> String {
+        let snippet = PHPSnippet.deleteRule(tracker: tracker)
+        let dict = try await rpc.runObject(snippet)
+        return dict.string("status") ?? "unknown"
+    }
+
+    /// Deletes a NAT/port forward rule by tracker ID.
+    func deleteNatRule(tracker: String) async throws -> String {
+        let snippet = PHPSnippet.deleteNatRule(tracker: tracker)
+        let dict = try await rpc.runObject(snippet)
+        return dict.string("status") ?? "unknown"
+    }
+
+    /// Saves (creates or updates) a firewall rule.
+    func saveRule(rule: JSONDict) async throws -> String {
+        let snippet = PHPSnippet.saveRule(rule: rule)
+        let dict = try await rpc.runObject(snippet)
+        return dict.string("status") ?? "unknown"
+    }
+
+    /// Saves (creates or updates) a NAT/port forward rule.
+    func saveNatRule(rule: JSONDict) async throws -> String {
+        let snippet = PHPSnippet.saveNatRule(rule: rule)
+        let dict = try await rpc.runObject(snippet)
+        return dict.string("status") ?? "unknown"
+    }
+
+    // MARK: - Staged operations
+
+    /// Represents a staged write operation ready for batch apply.
+    struct StagedOperation {
+        let action: String
+        let target: String?
+        let description: String
+    }
+
+    /// Stages a quick-block operation without executing it.
+    static func stageQuickBlock(interface: String, address: String, description: String) -> StagedOperation {
+        StagedOperation(
+            action: "quick_block",
+            target: address,
+            description: "Block \(address) on \(interface)"
+        )
+    }
+
+    /// Stages a service restart operation without executing it.
+    static func stageRestartService(named serviceName: String) -> StagedOperation {
+        StagedOperation(
+            action: "restart_service",
+            target: serviceName,
+            description: "Restart \(serviceName)"
+        )
+    }
+
+    /// Stages a firewall reload operation without executing it.
+    static func stageReloadFirewall() -> StagedOperation {
+        StagedOperation(
+            action: "reload_firewall",
+            target: nil,
+            description: "Reload firewall ruleset"
+        )
+    }
+
+    /// Stages a state flush operation without executing it.
+    static func stageFlushStates(interface: String = "") -> StagedOperation {
+        StagedOperation(
+            action: "flush_states",
+            target: interface.isEmpty ? nil : interface,
+            description: interface.isEmpty ? "Flush all firewall states" : "Flush states on \(interface)"
+        )
+    }
 }

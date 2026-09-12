@@ -385,6 +385,13 @@ final class HostTrafficTests: XCTestCase {
                       seenInARP: true, seenInLease: false, online: true)
     }
 
+    private func lease(mac: String, ip: String) -> DHCPLease {
+        let raw: [String: Any] = ["ip": ip, "mac": mac, "if": "lan", "state": "active"]
+        let data = try! JSONSerialization.data(withJSONObject: raw)
+        let value = try! JSONDecoder().decode(JSONValue.self, from: data)
+        return DHCPLease(JSONDict(value)!)
+    }
+
     private func arpEntry(mac: String, ip: String) -> ARPEntry {
         let raw: [String: Any] = ["ip": ip, "mac": mac, "interface": "lagg0.100"]
         let data = try! JSONSerialization.data(withJSONObject: raw)
@@ -394,7 +401,7 @@ final class HostTrafficTests: XCTestCase {
 
     func testACapturedAddressFindsItsClientDirectly() {
         let s = store([])
-        s.overviewLayout.clients = [networkClient(mac: "aa:bb:cc:dd:ee:01", ip: "172.16.1.10")]
+        s.overviewLayout.leases = [lease(mac: "aa:bb:cc:dd:ee:01", ip: "172.16.1.10")]
         XCTAssertEqual(s.client(matching: "172.16.1.10")?.mac, "aa:bb:cc:dd:ee:01")
     }
 
@@ -403,14 +410,14 @@ final class HostTrafficTests: XCTestCase {
         // the device on another one, and that row would otherwise be a link
         // that mysteriously refuses to open.
         let s = store([])
-        s.overviewLayout.clients = [networkClient(mac: "aa:bb:cc:dd:ee:02", ip: "172.16.1.11")]
+        s.overviewLayout.leases = [lease(mac: "aa:bb:cc:dd:ee:02", ip: "172.16.1.11")]
         s.arp = [arpEntry(mac: "aa:bb:cc:dd:ee:02", ip: "172.16.1.99")]
         XCTAssertEqual(s.client(matching: "172.16.1.99")?.ip, "172.16.1.11")
     }
 
     func testAnAddressMatchesAcrossEquivalentIPv6Spellings() {
         let s = store([])
-        s.overviewLayout.clients = [networkClient(mac: "aa:bb:cc:dd:ee:03", ip: "2001:db8::5")]
+        s.overviewLayout.leases = [lease(mac: "aa:bb:cc:dd:ee:03", ip: "2001:db8::5")]
         XCTAssertNotNil(s.client(matching: "2001:db8:0:0:0:0:0:5"))
     }
 
@@ -418,7 +425,7 @@ final class HostTrafficTests: XCTestCase {
         // Most of what a WAN capture returns is not a client, and a row that
         // looks tappable and does nothing is worse than one that does not.
         let s = store([])
-        s.overviewLayout.clients = [networkClient(mac: "aa:bb:cc:dd:ee:04", ip: "172.16.1.12")]
+        s.overviewLayout.leases = [lease(mac: "aa:bb:cc:dd:ee:04", ip: "172.16.1.12")]
         XCTAssertNil(s.client(matching: "203.0.113.7"))
         XCTAssertNil(s.client(matching: "not an address"))
     }

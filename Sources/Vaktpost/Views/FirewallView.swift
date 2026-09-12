@@ -431,7 +431,15 @@ struct RuleRow: View {
 struct RuleDetailView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.dismiss) private var dismiss
     let rule: FirewallRule
+
+    @State private var showDeleteConfirm = false
+    @State private var showEditSheet = false
+    @State private var isSaving = false
+    @State private var showErrorAlert = false
+    @State private var writeError: WriteError?
+    @State private var editForm: RuleEditForm?
 
     /// Every address or port behind a value, one per line.
     ///
@@ -487,11 +495,36 @@ struct RuleDetailView: View {
                         }
                         FieldRow(key: "Logged", value: rule.logged ? "yes" : "no", mono: false)
                         if !rule.tracker.isEmpty {
-                            // The tracker is how you find this exact rule in
-                            // the webConfigurator, which is where you would go
-                            // to change it.
                             FieldRow(key: "Tracker", value: rule.tracker)
                         }
+                    }
+                }
+
+                if !isSaving {
+                    VStack(spacing: 8) {
+                        Button {
+                            showEditSheet = true
+                        } label: {
+                            Label("Edit Rule", systemImage: "pencil")
+                                .scaledFont(14, weight: .medium)
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(theme.accentColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            showDeleteConfirm = true
+                        } label: {
+                            Label("Delete Rule", systemImage: "trash")
+                                .scaledFont(14, weight: .medium)
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color.red, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -502,6 +535,161 @@ struct RuleDetailView: View {
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle(rule.descr.isEmpty ? "Rule" : rule.descr)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if isSaving {
+                    ProgressView()
+                } else {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .confirmationSheet(
+            isPresented: $showDeleteConfirm,
+            title: "Delete rule",
+            message: "This will permanently delete the rule \"\(rule.descr.isEmpty ? "untitled" : rule.descr)\".",
+            destructive: true,
+            destructiveLabel: "Delete",
+            confirmLabel: "Cancel",
+            onConfirm: confirmDelete,
+            onCancel: {}
+        )
+        .sheet(isPresented: $showEditSheet) {
+            if let form = editForm {
+                RuleEditSheet(rule: rule, form: form, onSave: { saved in
+                    isSaving = true
+                    defer { isSaving = false }
+                    confirmEdit(rule: rule, changes: saved)
+                }, onCancel: { dismiss() })
+            } else {
+                NavigationStack {
+                    ProgressView("Loading...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .onAppear {
+            editForm = RuleEditForm(from: rule)
+        }
+        .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+    }
+
+    private func confirmDelete() async {
+        isSaving = true
+        defer { isSaving = false }
+
+        if !store.rateLimiter.allowWrite() {
+            writeError = WriteError(
+                title: "Rate limited",
+                message: "Please wait a few seconds between actions.",
+                suggestion: nil
+            )
+            showErrorAlert = true
+            return
+        }
+
+        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
+
+        do {
+            _ = try await retrier.retry {
+                try await store.client.deleteRule(tracker: rule.tracker)
+            }
+
+            store.auditTrail.log(
+                action: .deleteRule,
+                summary: "Deleted rule \(rule.tracker)",
+                target: rule.descr.isEmpty ? rule.tracker : rule.descr,
+                before: nil,
+                after: nil
+            )
+
+            store.analytics.record(operation: "delete_rule", success: true)
+
+            dismiss()
+            await store.refresh()
+
+        } catch {
+            store.analytics.record(operation: "delete_rule", success: false)
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
+        }
+    }
+
+    private func confirmEdit(rule: FirewallRule, changes: RuleEditForm) {
+        isSaving = true
+        defer { isSaving = false }
+
+        if !store.rateLimiter.allowWrite() {
+            writeError = WriteError(
+                title: "Rate limited",
+                message: "Please wait a few seconds between actions.",
+                suggestion: nil
+            )
+            showErrorAlert = true
+            return
+        }
+
+        let before = rule
+        let after = changes.apply(to: rule)
+
+        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
+
+        Task {
+            do {
+                _ = try await retrier.retry {
+                    try await store.client.saveRule(rule: changes.toDict(tracker: rule.tracker, interface: rule.interfaceName))
+                }
+
+                store.auditTrail.log(
+                    action: .editRule,
+                    summary: "Edited rule \(rule.tracker)",
+                    target: rule.descr.isEmpty ? rule.tracker : rule.descr,
+                    before: json(from: before),
+                    after: json(from: after)
+                )
+
+                store.analytics.record(operation: "edit_rule", success: true)
+
+                await MainActor.run {
+                    dismiss()
+                    Task { await store.refresh() }
+                }
+
+            } catch {
+                store.analytics.record(operation: "edit_rule", success: false)
+                await MainActor.run {
+                    writeError = WriteError.from(error, operation: .other)
+                    showErrorAlert = true
+                }
+            }
+        }
+    }
+
+    private func json(from rule: FirewallRule) -> String? {
+        struct RuleSnapshot: Encodable {
+            let tracker: String
+            let type: String
+            let proto: String
+            let interface: String
+            let source: String
+            let destination: String
+            let descr: String
+            let disabled: Bool
+            let logged: Bool
+        }
+        let snapshot = RuleSnapshot(
+            tracker: rule.tracker,
+            type: rule.type,
+            proto: rule.proto ?? "",
+            interface: rule.interfaceName,
+            source: rule.source,
+            destination: rule.destination,
+            descr: rule.descr,
+            disabled: rule.disabled,
+            logged: rule.logged
+        )
+        let data = try? JSONEncoder().encode(snapshot)
+        return data.flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// A field, with the alias name kept above its contents.
@@ -533,7 +721,15 @@ struct RuleDetailView: View {
 struct PortForwardDetailView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.dismiss) private var dismiss
     let forward: PortForward
+
+    @State private var showDeleteConfirm = false
+    @State private var showEditSheet = false
+    @State private var isSaving = false
+    @State private var showErrorAlert = false
+    @State private var writeError: WriteError?
+    @State private var editForm: PortForwardEditForm?
 
     @ViewBuilder
     private func detailField(_ label: String, _ value: String) -> some View {
@@ -594,6 +790,34 @@ struct PortForwardDetailView: View {
                         }
                     }
                 }
+
+                if !isSaving {
+                    VStack(spacing: 8) {
+                        Button {
+                            showEditSheet = true
+                        } label: {
+                            Label("Edit Forward", systemImage: "pencil")
+                                .scaledFont(14, weight: .medium)
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(theme.accentColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            showDeleteConfirm = true
+                        } label: {
+                            Label("Delete Forward", systemImage: "trash")
+                                .scaledFont(14, weight: .medium)
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color.red, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -602,11 +826,360 @@ struct PortForwardDetailView: View {
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle(forward.descr.isEmpty ? "Port forward" : forward.descr)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if isSaving {
+                    ProgressView()
+                } else {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .sheet(isPresented: $showEditSheet) {
+            if let form = editForm {
+                PortForwardEditSheet(forward: forward, form: form, onSave: { saved in
+                    isSaving = true
+                    defer { isSaving = false }
+                    confirmEdit(forward: forward, changes: saved)
+                }, onCancel: { dismiss() })
+            } else {
+                NavigationStack {
+                    ProgressView("Loading...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        }
+        .onAppear {
+            editForm = PortForwardEditForm(from: forward)
+        }
+        .confirmationSheet(
+            isPresented: $showDeleteConfirm,
+            title: "Delete port forward",
+            message: "This will permanently delete the port forward \"\(forward.descr.isEmpty ? "untitled" : forward.descr)\".",
+            destructive: true,
+            destructiveLabel: "Delete",
+            confirmLabel: "Cancel",
+            onConfirm: confirmDelete,
+            onCancel: {}
+        )
+        .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+    }
+
+    private func confirmDelete() async {
+        isSaving = true
+        defer { isSaving = false }
+
+        if !store.rateLimiter.allowWrite() {
+            writeError = WriteError(
+                title: "Rate limited",
+                message: "Please wait a few seconds between actions.",
+                suggestion: nil
+            )
+            showErrorAlert = true
+            return
+        }
+
+        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
+
+        do {
+            _ = try await retrier.retry {
+                try await store.client.deleteNatRule(tracker: forward.id)
+            }
+
+            store.auditTrail.log(
+                action: .deletePortForward,
+                summary: "Deleted port forward \(forward.id)",
+                target: forward.descr.isEmpty ? forward.id : forward.descr,
+                before: nil,
+                after: nil
+            )
+
+            store.analytics.record(operation: "delete_nat", success: true)
+
+            dismiss()
+            await store.refresh()
+
+        } catch {
+            store.analytics.record(operation: "delete_nat", success: false)
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
+        }
+    }
+
+    private func confirmEdit(forward: PortForward, changes: PortForwardEditForm) {
+        isSaving = true
+        defer { isSaving = false }
+
+        if !store.rateLimiter.allowWrite() {
+            writeError = WriteError(
+                title: "Rate limited",
+                message: "Please wait a few seconds between actions.",
+                suggestion: nil
+            )
+            showErrorAlert = true
+            return
+        }
+
+        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
+
+        Task {
+            do {
+                _ = try await retrier.retry {
+                    try await store.client.saveNatRule(rule: changes.toDict(interface: forward.interfaceName))
+                }
+
+                store.auditTrail.log(
+                    action: .editPortForward,
+                    summary: "Edited port forward \(forward.id)",
+                    target: forward.descr.isEmpty ? forward.id : forward.descr,
+                    before: nil,
+                    after: nil
+                )
+
+                store.analytics.record(operation: "edit_nat", success: true)
+
+                await MainActor.run {
+                    dismiss()
+                    Task { await store.refresh() }
+                }
+
+            } catch {
+                store.analytics.record(operation: "edit_nat", success: false)
+                await MainActor.run {
+                    writeError = WriteError.from(error, operation: .other)
+                    showErrorAlert = true
+                }
+            }
+        }
     }
 
     /// Every address or port behind a value, one per line. Same as the rule
     /// screen's; both types need it and neither owns the other.
     private func expandedValues(_ value: String) -> [String] {
         store.resolveAlias(value) ?? [value]
+    }
+}
+
+/// Editable representation of a firewall rule.
+struct RuleEditForm {
+    var descr: String
+    var type: String
+    var proto: String
+    var interface: String
+    var sourceAddress: String
+    var sourcePort: String
+    var destinationAddress: String
+    var destinationPort: String
+    var disabled: Bool
+    var logged: Bool
+
+    init(from rule: FirewallRule) {
+        descr = rule.descr
+        type = rule.type
+        proto = rule.proto ?? ""
+        interface = rule.interfaceName
+        sourceAddress = rule.sourceSide.address
+        sourcePort = rule.sourceSide.port ?? ""
+        destinationAddress = rule.destinationSide.address
+        destinationPort = rule.destinationSide.port ?? ""
+        disabled = rule.disabled
+        logged = rule.logged
+    }
+
+    func apply(to rule: FirewallRule) -> FirewallRule {
+        FirewallRule(JSONDict([
+            "tracker": .string(rule.tracker),
+            "interface": .string(interface),
+            "type": .string(type),
+            "ipprotocol": rule.ipProtocol.map { .string($0) } ?? .null,
+            "protocol": proto.isEmpty ? .string("any") : .string(proto),
+            "source": .object(["address": .string(sourceAddress)]),
+            "source_port": sourcePort.isEmpty ? .null : .string(sourcePort),
+            "destination": .object(["address": .string(destinationAddress)]),
+            "destination_port": destinationPort.isEmpty ? .null : .string(destinationPort),
+            "descr": .string(descr),
+            "disabled": .bool(disabled),
+            "log": .bool(logged)
+        ]))
+    }
+
+    func toDict(tracker: String, interface: String) -> JSONDict {
+        var dict: [String: JSONValue] = [
+            "tracker": .string(tracker),
+            "interface": .string(interface),
+            "type": .string(type),
+            "protocol": .string(proto.isEmpty ? "any" : proto),
+            "source": .object(["address": .string(sourceAddress)]),
+            "destination": .object(["address": .string(destinationAddress)]),
+            "descr": .string(descr),
+            "disabled": .bool(disabled),
+            "log": .bool(logged)
+        ]
+        if !sourcePort.isEmpty {
+            dict["source_port"] = .string(sourcePort)
+        }
+        if !destinationPort.isEmpty {
+            dict["destination_port"] = .string(destinationPort)
+        }
+        if let ipProtocol {
+            dict["ipprotocol"] = .string(ipProtocol)
+        }
+        return JSONDict(dict)
+    }
+
+    var ipProtocol: String? {
+        ["inet": "inet", "inet6": "inet6"].first(where: { $0.value == proto })?.key
+    }
+}
+
+struct RuleEditSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let form: RuleEditForm
+    let onSave: (RuleEditForm) async -> Void
+
+    @State private var edited: RuleEditForm
+    @State private var isSaving = false
+
+    init(rule: FirewallRule, form: RuleEditForm, onSave: @escaping (RuleEditForm) async -> Void, onCancel: @escaping () -> Void) {
+        self.form = form
+        self.onSave = onSave
+        _edited = State(initialValue: form)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Description", text: $edited.descr)
+                    TextField("Type (pass/block/reject)", text: $edited.type)
+                    TextField("Protocol", text: $edited.proto)
+                    TextField("Source address", text: $edited.sourceAddress)
+                    TextField("Source port", text: $edited.sourcePort)
+                    TextField("Destination address", text: $edited.destinationAddress)
+                    TextField("Destination port", text: $edited.destinationPort)
+                    Toggle("Disabled", isOn: $edited.disabled)
+                    Toggle("Log", isOn: $edited.logged)
+                }
+            }
+            .navigationTitle("Edit")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            isSaving = true
+                            Task {
+                                await onSave(edited)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct PortForwardEditForm {
+    var descr: String
+    var proto: String
+    var interface: String
+    var sourceAddress: String
+    var destinationAddress: String
+    var destinationPort: String
+    var targetAddress: String
+    var localPort: String
+    var disabled: Bool
+    var addressFamily: String
+
+    init(from forward: PortForward) {
+        descr = forward.descr
+        proto = forward.proto ?? ""
+        interface = forward.interfaceName
+        sourceAddress = forward.sourceSide.address
+        destinationAddress = forward.destinationSide.address
+        destinationPort = forward.destinationSide.port ?? ""
+        targetAddress = forward.target
+        localPort = forward.localPort ?? ""
+        disabled = forward.disabled
+        addressFamily = forward.proto == "inet6" ? "inet6" : "inet"
+    }
+
+    func toDict(interface: String) -> JSONDict {
+        var dict: [String: JSONValue] = [
+            "interface": .string(interface),
+            "protocol": .string(proto.isEmpty ? "any" : proto),
+            "ipprotocol": .string(addressFamily),
+            "source": .object(["address": .string(sourceAddress)]),
+            "destination": .object(["address": .string(destinationAddress)]),
+            "target": .string(targetAddress),
+            "descr": .string(descr),
+            "disabled": .bool(disabled)
+        ]
+        if !destinationPort.isEmpty {
+            dict["destination_port"] = .string(destinationPort)
+        }
+        if !localPort.isEmpty {
+            dict["local_port"] = .string(localPort)
+        }
+        return JSONDict(dict)
+    }
+}
+
+struct PortForwardEditSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let form: PortForwardEditForm
+    let onSave: (PortForwardEditForm) async -> Void
+
+    @State private var edited: PortForwardEditForm
+    @State private var isSaving = false
+
+    init(forward: PortForward, form: PortForwardEditForm, onSave: @escaping (PortForwardEditForm) async -> Void, onCancel: @escaping () -> Void) {
+        self.form = form
+        self.onSave = onSave
+        _edited = State(initialValue: form)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Description", text: $edited.descr)
+                    TextField("Interface", text: $edited.interface)
+                    TextField("Protocol (tcp/udp/tcp+udp/icmp/any)", text: $edited.proto)
+                    Toggle("Disabled", isOn: $edited.disabled)
+                }
+                Section {
+                    TextField("Source address", text: $edited.sourceAddress)
+                    TextField("Destination address", text: $edited.destinationAddress)
+                    TextField("Destination port", text: $edited.destinationPort)
+                    TextField("Target IP", text: $edited.targetAddress)
+                    TextField("Local port", text: $edited.localPort)
+                }
+            }
+            .navigationTitle("Edit")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            isSaving = true
+                            Task {
+                                await onSave(edited)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

@@ -23,6 +23,11 @@ private struct ThemeManagerEnvironmentKey: EnvironmentKey {
     static var defaultValue: ThemeManager { _defaultThemeManager }
 }
 
+private struct DeepLinkRouterEnvironmentKey: EnvironmentKey {
+    @MainActor
+    static var defaultValue: DeepLinkRouter { DeepLinkRouter() }
+}
+
 // MARK: - Default instances
 
 @MainActor
@@ -46,6 +51,10 @@ extension EnvironmentValues {
     var themeManager: ThemeManager {
         get { self[ThemeManagerEnvironmentKey.self] }
         set { self[ThemeManagerEnvironmentKey.self] = newValue }
+    }
+    var deepLinkRouter: DeepLinkRouter {
+        get { self[DeepLinkRouterEnvironmentKey.self] }
+        set { self[DeepLinkRouterEnvironmentKey.self] = newValue }
     }
     
     /// Allow @Environment(\.themeManager) private var theme: ThemeManager

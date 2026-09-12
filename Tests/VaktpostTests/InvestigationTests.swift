@@ -60,6 +60,13 @@ final class InvestigationTests: XCTestCase {
         XCTAssertFalse(Investigation.isMAC("zz:10:01:01:02:03"), "nor is one with non-hex in it")
     }
 
+    func testHyphenAndCiscoMACFormatsAreRecognised() {
+        XCTAssertEqual(Investigation.subject("AC-10-01-01-02-03"), .mac("ac-10-01-01-02-03"))
+        XCTAssertEqual(Investigation.subject("AC10.0101.0203"), .mac("ac10.0101.0203"))
+        XCTAssertFalse(Investigation.isMAC("ac-10-01-01-02"))
+        XCTAssertFalse(Investigation.isMAC("AC10.010.0203"))
+    }
+
     func testAnythingElseIsText() {
         XCTAssertEqual(Investigation.subject("nas001"), .text("nas001"))
     }

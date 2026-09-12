@@ -134,13 +134,17 @@ actor XMLRPCClient {
     func run(_ snippet: PHPSnippet, timeout: TimeInterval? = nil) async throws -> JSONValue {
         do {
             return try await queue.run {
-                do {
-                    return try await self.perform(snippet, timeout: timeout)
-                } catch let error as RPCError where error.isRetryable {
-                    try await Task.sleep(nanoseconds: 1_000_000_000)
-                    try Task.checkCancellation()
+                return try await self.perform(snippet, timeout: timeout)
+            }
+        } catch let error as RPCError where error.isRetryable {
+            try await Task.sleep(for: .seconds(1))
+            try Task.checkCancellation()
+            do {
+                return try await queue.run {
                     return try await self.perform(snippet, timeout: timeout)
                 }
+            } catch let retryError as RPCError where retryError.isRetryable {
+                throw retryError
             }
         } catch is CancellationError {
             throw RPCError.cancelled
@@ -150,13 +154,17 @@ actor XMLRPCClient {
     func run(_ snippet: PHPSnippet, params: [String: JSONValue], timeout: TimeInterval? = nil) async throws -> JSONValue {
         do {
             return try await queue.run {
-                do {
-                    return try await self.perform(snippet, params: params, timeout: timeout)
-                } catch let error as RPCError where error.isRetryable {
-                    try await Task.sleep(nanoseconds: 1_000_000_000)
-                    try Task.checkCancellation()
+                return try await self.perform(snippet, params: params, timeout: timeout)
+            }
+        } catch let error as RPCError where error.isRetryable {
+            try await Task.sleep(for: .seconds(1))
+            try Task.checkCancellation()
+            do {
+                return try await queue.run {
                     return try await self.perform(snippet, params: params, timeout: timeout)
                 }
+            } catch let retryError as RPCError where retryError.isRetryable {
+                throw retryError
             }
         } catch is CancellationError {
             throw RPCError.cancelled

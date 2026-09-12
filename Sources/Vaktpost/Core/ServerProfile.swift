@@ -27,6 +27,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     var refreshSeconds: Int = 30
     var logLimit: Int = 100
     var overviewVisibleSections: [String] = ["status", "interfaces", "system", "gateways", "services", "firewall"]
+    var collapsedSections: [String] = []
 
     var isConfigured: Bool { URL(string: baseURL)?.host != nil }
     var host: String { URL(string: baseURL)?.host ?? baseURL }
@@ -86,11 +87,11 @@ final class ServerRegistry: Observable {
             // Migrate the single-server layout used before multi-firewall support.
             legacy.id = UUID()
             servers = [legacy]
-            // A stored API key is deliberately not carried over. It is not a
-            // password, and this build authenticates as a webConfigurator user
-            // — reusing it would fail with a confusing 401 rather than asking
-            // for what is now needed.
-            Keychain.deleteLegacy()
+            // Migrate the legacy API key to the new keychain format if present.
+            if let apiKey = Keychain.legacyAPIKey() {
+                Keychain.setPassword(apiKey, for: legacy.id)
+                Keychain.deleteLegacy()
+            }
             d.removeObject(forKey: "server.profile")
             persist()
         }
@@ -189,6 +190,29 @@ final class ServerRegistry: Observable {
         } else {
             profile.overviewVisibleSections.removeAll { $0 == section.rawValue }
         }
+        servers[idx] = profile
+        persist()
+    }
+
+    func setOverviewSectionCollapsed(_ server: ServerProfile, _ section: OverviewSection, collapsed: Bool) {
+        guard let idx = servers.firstIndex(where: { $0.id == server.id }) else { return }
+        var profile = servers[idx]
+        if collapsed {
+            if !profile.collapsedSections.contains(section.rawValue) {
+                profile.collapsedSections.append(section.rawValue)
+            }
+        } else {
+            profile.collapsedSections.removeAll { $0 == section.rawValue }
+        }
+        servers[idx] = profile
+        persist()
+    }
+
+    func resetSectionOrder(toDefault server: ServerProfile) {
+        guard let idx = servers.firstIndex(where: { $0.id == server.id }) else { return }
+        var profile = servers[idx]
+        profile.overviewVisibleSections = OverviewSection.allCases.map(\.rawValue)
+        profile.collapsedSections = []
         servers[idx] = profile
         persist()
     }

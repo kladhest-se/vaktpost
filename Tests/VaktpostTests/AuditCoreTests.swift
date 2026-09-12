@@ -12,7 +12,7 @@ final class AuditCoreTests: XCTestCase {
             peak = max(peak, active)
             calls.append(id)
             defer { active -= 1 }
-            try await Task.sleep(nanoseconds: 40_000_000)
+            try await Task.sleep(for: .milliseconds(40))
             return id
         }
         func snapshot() -> (Int, [Int]) { (peak, calls) }
@@ -36,9 +36,9 @@ final class AuditCoreTests: XCTestCase {
         let queue = SerialRequestQueue()
         let activity = Activity()
         let first = Task { try await queue.run { try await activity.perform(1) } }
-        try await Task.sleep(nanoseconds: 5_000_000)
+        try await Task.sleep(for: .milliseconds(5))
         let second = Task { try await queue.run { try await activity.perform(2) } }
-        try await Task.sleep(nanoseconds: 5_000_000)
+        try await Task.sleep(for: .milliseconds(5))
         let third = Task { try await queue.run { try await activity.perform(3) } }
         second.cancel()
         _ = try await first.value
@@ -54,7 +54,7 @@ final class AuditCoreTests: XCTestCase {
         let queue = SerialRequestQueue()
         let activity = Activity()
         let first = Task { try await queue.run { try await activity.perform(1) } }
-        try await Task.sleep(nanoseconds: 5_000_000)
+        try await Task.sleep(for: .milliseconds(5))
         await queue.invalidate()
         do { _ = try await first.value; XCTFail("Active operation survived invalidation") }
         catch is CancellationError { }

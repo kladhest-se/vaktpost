@@ -32,5 +32,16 @@
     <dict/>
     <key>NSFaceIDUsageDescription</key>
     <string>Use Face ID to quickly and securely unlock Vaktpost</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>vaktpost</string>
+            </array>
+            <key>CFBundleURLName</key>
+            <string>se.kladhest.vaktpost</string>
+        </dict>
+    </array>
 </dict>
 </plist>

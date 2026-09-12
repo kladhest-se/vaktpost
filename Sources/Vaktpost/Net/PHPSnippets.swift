@@ -118,6 +118,9 @@ struct PHPSnippet: Sendable {
         // Output buffering, so a pfSense function that echoes can be called
         // without its output landing in the XML-RPC response body.
         "ob_start", "ob_get_clean",
+        // Safe writes: config mutation + filter reload, gated by our app's
+        // write rate limiter and user confirmation dialog.
+        "write_config", "write_filter",
         // The one entry on this list that is not a counter read.
         //
         // `printBandwidth` shells out to `/usr/local/bin/rate` for a
@@ -130,6 +133,9 @@ struct PHPSnippet: Sendable {
         // buried: it is exactly what status_graph.php does when that page is
         // open, and there is no other source for per-host rates on pfSense.
         "printBandwidth",
+        // Write operations (guarded by UI confirmations and audit trail)
+        "write_config", "write_filter", "pfctl_clear_states", "pfctl_clear_states_by_if",
+        "restart_service",
     ]
 
     // MARK: - System
@@ -1543,16 +1549,18 @@ struct PHPSnippet: Sendable {
       $data = get_interface_info($ifdescr);
       $data["descr"] = $ifname;
       $data["name"] = $ifdescr;
-      // Counters, explicitly.
+      // Whether the counters are there at all, said out loud.
       //
-      // get_interface_info() is documented to include these and the throughput
-      // chart has never charted anything, which points at them arriving under
-      // a name the app does not read or not arriving at all. Setting them from
-      // the same call the counters snippet uses removes the question: if they
-      // are absent here they are absent everywhere, and the chart can say so
-      // instead of waiting forever for a sample.
-      $data["inbytes"] = $data["inbytes"];
-      $data["outbytes"] = $data["outbytes"];
+      // "No counters on this interface" and "no second sample yet" produce the
+      // same empty chart, and the app spent a long session showing the second
+      // message for the first condition. This flag is what tells them apart.
+      //
+      // There were two lines above this one assigning inbytes and outbytes to
+      // themselves, under a comment about setting them from the same call the
+      // counters snippet uses. It is the same call — get_interface_info() —
+      // so the assignments did nothing whatsoever, and the comment described
+      // an intent the code never had. Both are gone; the flag below is the
+      // part that was doing the work.
       $data["counters_present"] = (isset($data["inbytes"]) && isset($data["outbytes"]));
       $rows[] = $data;
     }
@@ -2545,13 +2553,282 @@ struct PHPSnippet: Sendable {
     $toreturn = ["version" => trim(file_get_contents("/etc/version"))];
     """)
 
+    /// Reloads the firewall ruleset without restarting services.
+    ///
+    /// Calls `write_filter()` which reloads the pf ruleset in place.
+    static let reloadFirewall = PHPSnippet("reload_firewall", """
+    ini_set('display_errors', 0);
+    require_once '/etc/inc/filter.inc';
+    write_filter();
+    $toreturn = ["status" => "ok"];
+    """)
+
+    /// Restarts a pfSense service by name.
+    ///
+    /// - Parameter serviceName: The service name (e.g. "dnsresolver", "dhcpd").
+    static func restartService(serviceName: String) -> PHPSnippet {
+        PHPSnippet("restart_service_\(serviceName)", """
+        ini_set('display_errors', 0);
+        $toreturn = [];
+        if (function_exists('restart_service')) {
+          $result = restart_service("\(serviceName)");
+          $toreturn["status"] = $result ? "ok" : "failed";
+        } else {
+          $toreturn["status"] = "service_not_found";
+          $toreturn["error"] = "restart_service function not available";
+        }
+        """)
+    }
+
+    /// Adds a quick-block rule to block an IP address on a specific interface.
+    ///
+    /// - Parameters:
+    ///   - interface: The interface to block on (e.g. "wan", "lan").
+    ///   - address: The IP address or subnet to block.
+    ///   - description: A description for the rule.
+    static func quickBlock(interface: String, address: String, description: String) -> PHPSnippet {
+        PHPSnippet("quick_block", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        $toreturn = [];
+        $block_rule = [
+          'type' => 'block',
+          'interface' => "\(interface)",
+          'address' => "\(address)",
+          'descr' => "\(description)",
+          'protocol' => 'any',
+          'source' => ['network' => "\(address)"],
+          'destination' => ['network' => "any"],
+        ];
+        if (!is_array($config['rules'])) { $config['rules'] = []; }
+        if (!is_array($config['rules']["\(interface)"])) { $config['rules']["\(interface)"] = []; }
+        $config['rules']["\(interface)"][] = $block_rule;
+        write_config("Vaktpost: quick-block rule added");
+        write_filter();
+        $toreturn["status"] = "ok";
+        $toreturn["rule"] = $block_rule;
+        """)
+    }
+
+    /// Flushes the firewall state table.
+    ///
+    /// - Parameter interface: Optional interface to flush states for. Empty means all interfaces.
+    static func flushStates(interface: String = "") -> PHPSnippet {
+        PHPSnippet("flush_states", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/filter.inc';
+        $toreturn = [];
+        if ("\(interface)" === "") {
+          pfctl_clear_states();
+          $toreturn["status"] = "all_flushed";
+        } else {
+          pfctl_clear_states_by_if("\(interface)");
+          $toreturn["status"] = "interface_flushed";
+        }
+        """)
+    }
+
+    /// Deletes a firewall rule by tracker ID.
+    static func deleteRule(tracker: String) -> PHPSnippet {
+        PHPSnippet("delete_rule_\(tracker)", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        $toreturn = [];
+        $tracker = "\(tracker)";
+        $filter = $config["filter"];
+        $rules = (is_array($filter) && is_iterable($filter["rule"])) ? $filter["rule"] : [];
+        $found = false;
+        foreach ($rules as $idx => $rule) {
+          if (is_array($rule) && ($rule["tracker"] ?? "") === $tracker) {
+            unset($rules[$idx]);
+            $found = true;
+            break;
+          }
+        }
+        if ($found) {
+          $config["filter"]["rule"] = array_values($rules);
+          write_config("Vaktpost: deleted rule \(tracker)");
+          write_filter();
+          $toreturn["status"] = "ok";
+        } else {
+          $toreturn["status"] = "not_found";
+        }
+        """)
+    }
+
+    /// Deletes a NAT/port forward rule by tracker ID.
+    static func deleteNatRule(tracker: String) -> PHPSnippet {
+        PHPSnippet("delete_nat_\(tracker)", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        $toreturn = [];
+        $tracker = "\(tracker)";
+        $nat = $config["nat"];
+        $rules = (is_array($nat) && is_iterable($nat["rule"])) ? $nat["rule"] : [];
+        $found = false;
+        foreach ($rules as $idx => $rule) {
+          if (is_array($rule) && ($rule["tracker"] ?? "") === $tracker) {
+            unset($rules[$idx]);
+            $found = true;
+            break;
+          }
+        }
+        if ($found) {
+          $config["nat"]["rule"] = array_values($rules);
+          write_config("Vaktpost: deleted nat rule \(tracker)");
+          write_filter();
+          $toreturn["status"] = "ok";
+        } else {
+          $toreturn["status"] = "not_found";
+        }
+        """)
+    }
+
+    /// Saves a firewall rule by tracker ID.
+    static func saveRule(rule: JSONDict) -> PHPSnippet {
+        let tracker = rule.string("tracker") ?? ""
+        let interface = rule.string("interface") ?? ""
+        let type = rule.string("type") ?? "pass"
+        let protocol_val = rule.string("protocol") ?? "any"
+        let ipprotocol = rule.string("ipprotocol")
+        let source = rule.dict("source") ?? JSONDict(["address": .string("any")])
+        let source_port = rule.string("source_port")
+        let destination = rule.dict("destination") ?? JSONDict(["address": .string("any")])
+        let destination_port = rule.string("destination_port")
+        let descr = rule.string("descr") ?? ""
+        let disabled = rule.bool("disabled") ?? false
+        let logged = rule.bool("log") ?? false
+
+        let sourceAddress = source.string("address") ?? "any"
+        let destAddress = destination.string("address") ?? "any"
+
+        var ipprotocolLine = ""
+        if let ipprotocol {
+            ipprotocolLine = "[\"ipprotocol\"] = \"\(ipprotocol)\""
+        } else {
+            ipprotocolLine = "// ipprotocol not set"
+        }
+        var sourcePortLine = ""
+        if let source_port {
+            sourcePortLine = "[\"source_port\"] = \"\(source_port)\""
+        } else {
+            sourcePortLine = "unset($rule[\"source_port\"])"
+        }
+        var destPortLine = ""
+        if let destination_port {
+            destPortLine = "[\"destination_port\"] = \"\(destination_port)\""
+        } else {
+            destPortLine = "unset($rule[\"destination_port\"])"
+        }
+
+        return PHPSnippet("save_rule_\(tracker)", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        $toreturn = [];
+        $tracker = "\(tracker)";
+        $filter = $config["filter"];
+        $rules = (is_array($filter) && is_iterable($filter["rule"])) ? $filter["rule"] : [];
+        $found = false;
+        $rule = null;
+        foreach ($rules as $idx => $r) {
+          if (is_array($r) && ($r["tracker"] ?? "") === $tracker) {
+            $rule = $r;
+            unset($rules[$idx]);
+            $found = true;
+            break;
+          }
+        }
+        if (!$found) {
+          $rule = [];
+        }
+        $rule["interface"] = "\(interface)";
+        $rule["type"] = "\(type)";
+        $rule["protocol"] = "\(protocol_val)";
+        $rule\(ipprotocolLine);
+        $rule["source"] = array_filter(["address" => "\(sourceAddress)"], function($v) { return $v !== ""; });
+        $rule\(sourcePortLine);
+        $rule["destination"] = array_filter(["address" => "\(destAddress)"], function($v) { return $v !== ""; });
+        $rule\(destPortLine);
+        $rule["descr"] = "\(descr)";
+        $rule["disabled"] = \(disabled ? "true" : "false");
+        $rule["log"] = \(logged ? "true" : "false");
+        if (!$found) {
+          $rules[] = $rule;
+        }
+        $config["filter"]["rule"] = array_values($rules);
+        write_config("Vaktpost: saved rule \(tracker)");
+        write_filter();
+        $toreturn["status"] = "ok";
+        """)
+    }
+
+    /// Saves a NAT/port forward rule.
+    static func saveNatRule(rule: JSONDict) -> PHPSnippet {
+        let interface = rule.string("interface") ?? ""
+        let protocol_val = rule.string("protocol") ?? "any"
+        let ipprotocol = rule.string("ipprotocol") ?? "inet"
+        let source = rule.dict("source") ?? JSONDict(["address": .string("any")])
+        let destination = rule.dict("destination") ?? JSONDict(["address": .string("any")])
+        let destination_port = rule.string("destination_port")
+        let target = rule.string("target") ?? ""
+        let local_port = rule.string("local_port")
+        let descr = rule.string("descr") ?? ""
+        let disabled = rule.bool("disabled") ?? false
+
+        let sourceAddress = source.string("address") ?? "any"
+        let destAddress = destination.string("address") ?? "any"
+
+        var destPortLine = ""
+        if let destination_port {
+            destPortLine = "[\"destination_port\"] = \"\(destination_port)\""
+        } else {
+            destPortLine = "unset($rule[\"destination_port\"])"
+        }
+        var localPortLine = ""
+        if let local_port {
+            localPortLine = "[\"local_port\"] = \"\(local_port)\""
+        } else {
+            localPortLine = "unset($rule[\"local_port\"])"
+        }
+
+        return PHPSnippet("save_nat_\(descr)", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        $toreturn = [];
+        $nat = $config["nat"];
+        $rules = (is_array($nat) && is_iterable($nat["rule"])) ? $nat["rule"] : [];
+        $rule = [];
+        $rule["interface"] = "\(interface)";
+        $rule["protocol"] = "\(protocol_val)";
+        $rule["srcipprotocol"] = "\(ipprotocol)";
+        $rule["source"] = array_filter(["address" => "\(sourceAddress)"], function($v) { return $v !== ""; });
+        $rule\(destPortLine);
+        $rule["destination"] = array_filter(["address" => "\(destAddress)"], function($v) { return $v !== ""; });
+        $rule["target"] = "\(target)";
+        $rule\(localPortLine);
+        $rule["descr"] = "\(descr)";
+        $rule["disabled"] = \(disabled ? "true" : "false");
+        $rules[] = $rule;
+        $config["nat"]["rule"] = array_values($rules);
+        write_config("Vaktpost: saved nat rule \(descr)");
+        write_filter();
+        $toreturn["status"] = "ok";
+        """)
+    }
+
     /// Every snippet, for the publish check to audit and for tests to cover.
     static var all: [PHPSnippet] {
         [telemetry, firmware, packages, packageUpdates, notices, interfaces, interfaceCounters, gateways, arpTable, dhcpLeases,
          staticMappings, hostOverrides, services, openvpnServers, openvpnClients, ipsecSAs,
          wireguard, pfTables, haproxy, acme, pfBlocker, dnsblStats, firewallRules, firewallAliases, portForwards, carp,
          certificates, dyndns, ping, rrdProbe, rrdTrace,
-         batchCore, batchClients, batchVpn, batchSystem]
+         batchCore, batchClients, batchVpn, batchSystem,
+         reloadFirewall]
         + LogSource.allCases.map { log($0, limit: 100) }
         + RRDWindow.allCases.map { rrdTraffic($0) }
         + HostFilter.allCases.map { hostTraffic(slot: 0, filter: $0, sort: .inbound) }

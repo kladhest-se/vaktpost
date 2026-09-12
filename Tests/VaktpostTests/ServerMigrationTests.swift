@@ -93,7 +93,7 @@ final class ServerMigrationTests: XCTestCase {
         XCTAssertEqual(servers[0].label, "Test firewall")
 
         // The keychain item should have been migrated.
-        XCTAssertEqual(Keychain.password(for: servers[0].id), nil)
+        XCTAssertEqual(Keychain.password(for: servers[0].id), "legacy-key-123")
         XCTAssertNil(Keychain.legacyAPIKey())
 
         // The registry should pick it up as active.

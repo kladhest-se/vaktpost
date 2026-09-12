@@ -99,6 +99,12 @@ final class DashboardStore: Observable {
     let expiryNotifier: ExpiryNotifier
     let topTalkers: TopTalkerRecorder
 
+    /// Safety infrastructure for write operations.
+    let auditTrail = AuditTrail()
+    let rateLimiter = WriteRateLimiter()
+    let stagedChanges = StagedChanges()
+    let analytics = WriteAnalytics()
+
     /// Whether interface error counters are moving, refresh over refresh.
     ///
     /// The totals have always been on screen; what they could not say is
@@ -107,6 +113,10 @@ final class DashboardStore: Observable {
     var interfaceErrors = InterfaceErrorTracker()
     let gatewayManager = GatewayManager()
     let overviewLayout = OverviewLayout()
+    let performanceMetrics = PerformanceMetricsStore()
+    let anomalyDetector = TrafficAnomalyDetector()
+    let clientHistory = ClientHistoryTracker()
+    let diffViewer = FirewallDiffViewer()
 
     // MARK: Dependencies
 
@@ -508,6 +518,7 @@ final class DashboardStore: Observable {
         isRefreshing = true
         defer { if bindingID == binding { isRefreshing = false } }
         refreshCount += 1
+        let refreshStartTime = Date()
 
         var freshErrors: [Section: String] = [:]
         var fatal: String?
@@ -847,6 +858,42 @@ final class DashboardStore: Observable {
         overviewLayout.sync(from: self)
         interfaceErrors.record(interfaces)
         scheduleExpiryNotifications()
+        
+        // Detect traffic anomalies
+        let currentCounts = TrafficAnomalyDetector.TrafficCounts(
+            blocked: overviewLayout.blockedRecently,
+            rejected: overviewLayout.rejectedRecently,
+            passed: overviewLayout.passedRecently,
+            timestamp: Date()
+        )
+        _ = anomalyDetector.analyze(currentCounts: currentCounts, previousCounts: TrafficAnomalyDetector.TrafficCounts(
+            blocked: prevFirewallCounts.blocked,
+            rejected: prevFirewallCounts.rejected,
+            passed: prevFirewallCounts.passed,
+            timestamp: Date()
+        ))
+        
+        // Update client history
+        clientHistory.update(
+            leases: leases,
+            arp: arp,
+            statics: staticMappings,
+            hostOverrides: hostOverrides
+        )
+        
+        // Take config snapshot
+        diffViewer.snapshot(
+            rules: rules,
+            aliases: aliases,
+            portForwards: portForwards
+        )
+        
+        performanceMetrics.recordRefresh(
+            duration: Date().timeIntervalSince(refreshStartTime),
+            sectionsCompleted: succeededSections.count,
+            sectionsFailed: Section.allCases.count - succeededSections.count,
+            success: !networkDown && fatal == nil
+        )
     }
 
     /// Keep the pending expiry notifications in step with what was just read.
@@ -1009,30 +1056,30 @@ final class DashboardStore: Observable {
     }
 
     private func assign<T>(_ binding: UUID, _ sections: [Section], fetcher: @escaping () async throws -> T, assign: @escaping (T) -> Void) async throws {
-        let value: T
+        let startTime = Date()
+        let endpointName = sections.first?.rawValue ?? "unknown"
         do {
-            value = try await Task.detached { [checkedBinding = binding] in
-                guard !Task.isCancelled else { throw RPCError.cancelled }
+            let value: T = try await checked(binding, sections: sections) {
                 var fresh = SectionFreshness()
-                fresh.begin(checkedBinding, at: Date())
+                fresh.begin(binding, at: Date())
                 do {
                     let result = try await fetcher()
-                    guard !Task.isCancelled else { throw RPCError.cancelled }
-                    fresh.succeed(checkedBinding, at: Date())
+                    fresh.succeed(binding, at: Date())
                     return result
                 } catch {
                     let cancelled = error is CancellationError || (error as? RPCError) == .cancelled
-                    fresh.fail(checkedBinding, message: cancelled ? nil : error.localizedDescription)
+                    fresh.fail(binding, message: cancelled ? nil : error.localizedDescription)
                     throw error
                 }
-            }.value
-        } catch {
+            }
+            let duration = Date().timeIntervalSince(startTime)
+            performanceMetrics.recordAPIRequest(endpoint: endpointName, duration: duration, success: true)
             guard isCurrent(binding) else { throw RPCError.cancelled }
-            throw error
-        }
-        await MainActor.run {
-            guard isCurrent(binding) else { return }
             assign(value)
+        } catch {
+            let duration = Date().timeIntervalSince(startTime)
+            performanceMetrics.recordAPIRequest(endpoint: endpointName, duration: duration, success: false)
+            throw error
         }
     }
 
@@ -1285,7 +1332,6 @@ final class DashboardStore: Observable {
         let client = client
         guard isConfigured, !isLoadingFirewallObjects, !hasLoadedFirewallObjects else { return }
         isLoadingFirewallObjects = true
-        hasLoadedFirewallObjects = true
         defer { if bindingID == binding { isLoadingFirewallObjects = false } }
         do {
             let value = try await checked(binding, sections: [.firewall]) { try await client.firewallRules() }
@@ -1294,17 +1340,18 @@ final class DashboardStore: Observable {
             errors[.firewall] = nil
         } catch {
             guard isCurrent(binding) else { return }
+            hasLoadedFirewallObjects = false
             errors[.firewall] = error.localizedDescription
         }
-        // Aliases are not fetched here: the standard refresh already has them,
-        // because they name clients.
         do {
             let value = try await checked(binding, sections: [.portForwards]) { try await client.portForwards() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             portForwards = value
             errors[.portForwards] = nil
+            hasLoadedFirewallObjects = true
         } catch {
             guard isCurrent(binding) else { return }
+            hasLoadedFirewallObjects = false
             errors[.portForwards] = error.localizedDescription
         }
     }
@@ -1793,4 +1840,9 @@ final class DashboardStore: Observable {
             await fetch(section)
         }
     }
+}
+
+// MARK: - Singleton for Shortcuts/App Intents
+extension DashboardStore {
+    static weak var shared: DashboardStore?
 }

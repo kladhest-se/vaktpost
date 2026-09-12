@@ -159,6 +159,7 @@ struct ServerEditView: View {
     @Environment(\.serverRegistry) private var registry: ServerRegistry
     @Environment(\.dismiss) private var dismiss
     @State private var offerPinning = false
+    @State private var confirmedFingerprint: String?
     @State private var pendingFingerprint: String?
 
     @State var profile: ServerProfile
@@ -293,8 +294,8 @@ struct ServerEditView: View {
         .confirmationDialog("Pin this certificate?", isPresented: $offerPinning,
                             titleVisibility: .visible) {
             Button("Pin it") {
-                if let pendingFingerprint {
-                    profile.pinnedFingerprint = pendingFingerprint
+                if let fp = confirmedFingerprint {
+                    profile.pinnedFingerprint = fp
                     profile.allowUntrustedTLS = false
                     Task {
                         await store.saved(profile)
@@ -439,10 +440,10 @@ struct ServerEditView: View {
             if profile.pinnedFingerprint.isEmpty,
                profile.allowUntrustedTLS,
                let seen = await store.client.lastSeenFingerprint {
-                pendingFingerprint = seen
+                confirmedFingerprint = seen
+                offerPinning = true
                 message = "Connected — pfSense \(version)"
                 messageHealth = .ok
-                offerPinning = true
                 return
             }
 

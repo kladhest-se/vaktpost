@@ -37,7 +37,7 @@ final class TopTalkerTests: XCTestCase {
     private func record(_ recorder: TopTalkerRecorder, _ hosts: [HostTraffic],
                         at when: Date, names: @escaping (String) -> String? = { _ in nil }) {
         recorder.record(hosts, serverID: "FW1", interface: "lan", interfaceName: "VLAN_100",
-                        names: names, at: when, calendar: calendar)
+                        names: names, at: when, calendar: calendar, now: when)
     }
 
     // MARK: Aggregation
@@ -157,7 +157,7 @@ final class TopTalkerTests: XCTestCase {
 
         let r = TopTalkerRecorder(directory: dir)
         r.record([host("172.16.1.10", in: 200, out: 0)], serverID: "FW1", interface: "lan",
-                 interfaceName: "VLAN_100", names: { _ in nil }, at: at(2, 7), calendar: calendar)
+                 interfaceName: "VLAN_100", names: { _ in nil }, at: at(2, 7), calendar: calendar, now: at(2, 7))
 
         let hour = r.history(serverID: "FW1", interface: "lan")[0]
         XCTAssertEqual(hour.talkers.count, 1, "the duplicate was merged, not kept or fatal")
@@ -206,9 +206,9 @@ final class TopTalkerTests: XCTestCase {
         let r = recorder()
         record(r, [host("172.16.1.10", in: 100, out: 0)], at: at(2, 5))
         r.record([host("10.0.0.1", in: 100, out: 0)], serverID: "FW2", interface: "lan",
-                 interfaceName: "LAN", names: { _ in nil }, at: at(2, 5), calendar: calendar)
+                 interfaceName: "LAN", names: { _ in nil }, at: at(2, 5), calendar: calendar, now: at(2, 5))
         r.record([host("10.0.0.2", in: 100, out: 0)], serverID: "FW1", interface: "opt3",
-                 interfaceName: "VLAN_202", names: { _ in nil }, at: at(2, 5), calendar: calendar)
+                 interfaceName: "VLAN_202", names: { _ in nil }, at: at(2, 5), calendar: calendar, now: at(2, 5))
 
         XCTAssertEqual(r.history(serverID: "FW1", interface: "lan").count, 1)
         XCTAssertEqual(r.history(serverID: "FW2", interface: "lan").count, 1)
@@ -246,13 +246,25 @@ final class TopTalkerTests: XCTestCase {
         // re-encoded on every save. The ceiling that matters is the number of
         // entries, not their age.
         let r = recorder()
-        for hour in 0..<(TopTalkerRecorder.maxHours + 50) {
-            let when = at(0).addingTimeInterval(Double(hour) * 3_600)
-            r.record([host("172.16.1.10", in: 100, out: 0)], serverID: "FW1",
-                     interface: "lan", interfaceName: "VLAN_100",
-                     names: { _ in nil }, at: when, calendar: calendar)
+        let baseWhen = at(0)
+        var count = 0
+        let interfaces = ["lan", "opt1", "opt2", "opt3", "opt4", "opt5", "opt6", "opt7", "opt8", "opt9"]
+        // Record 650 unique hourly buckets all within a 6-day retention window
+        while count < TopTalkerRecorder.maxHours + 50 {
+            for (ifaceIndex, iface) in interfaces.enumerated() {
+                if count >= TopTalkerRecorder.maxHours + 50 { break }
+                // Cycle through hours within a 6-day window (all within 7-day retention)
+                let hourInDay = count % 144
+                let when = baseWhen.addingTimeInterval(Double(hourInDay) * 3_600)
+                r.record([host("172.16.1.10", in: 100, out: 0)], serverID: "FW1",
+                         interface: iface, interfaceName: "VLAN_\(iface)",
+                         names: { _ in nil }, at: when, calendar: calendar, now: when, skipPrune: true)
+                count += 1
+            }
         }
-        XCTAssertEqual(r.history(serverID: "FW1", interface: "lan").count,
+        let lastWhen = baseWhen.addingTimeInterval(143 * 3_600)
+        r.prune(now: lastWhen)
+        XCTAssertEqual(r.hours.filter { $0.value.serverID == "FW1" }.count,
                        TopTalkerRecorder.maxHours)
     }
 
@@ -262,7 +274,7 @@ final class TopTalkerTests: XCTestCase {
             let when = at(0).addingTimeInterval(Double(hour) * 3_600)
             r.record([host("172.16.1.10", in: 100, out: 0)], serverID: "FW1",
                      interface: "lan", interfaceName: "VLAN_100",
-                     names: { _ in nil }, at: when, calendar: calendar)
+                     names: { _ in nil }, at: when, calendar: calendar, now: when)
         }
         let kept = r.history(serverID: "FW1", interface: "lan")
         let newest = at(0).addingTimeInterval(Double(TopTalkerRecorder.maxHours + 9) * 3_600)
@@ -279,7 +291,7 @@ final class TopTalkerTests: XCTestCase {
         let first = TopTalkerRecorder(directory: dir)
         first.record([host("172.16.1.10", in: 100, out: 0)], serverID: "FW1",
                      interface: "lan", interfaceName: "VLAN_100",
-                     names: { _ in nil }, at: at(2, 5), calendar: calendar)
+                     names: { _ in nil }, at: at(2, 5), calendar: calendar, now: at(2, 5))
         first.saveSynchronously()
 
         let second = TopTalkerRecorder(directory: dir)
@@ -300,7 +312,7 @@ final class TopTalkerTests: XCTestCase {
         XCTAssertTrue(r.isEmpty(serverID: "FW1"))
         r.record([host("172.16.1.10", in: 100, out: 0)], serverID: "FW1",
                  interface: "lan", interfaceName: "VLAN_100",
-                 names: { _ in nil }, at: at(2, 5), calendar: calendar)
+                 names: { _ in nil }, at: at(2, 5), calendar: calendar, now: at(2, 5))
         XCTAssertFalse(r.isEmpty(serverID: "FW1"))
     }
 }

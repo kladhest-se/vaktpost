@@ -89,9 +89,20 @@ enum Investigation {
     }
 
     static func isMAC(_ value: String) -> Bool {
-        let parts = value.lowercased().split(separator: ":")
-        guard parts.count == 6 else { return false }
-        return parts.allSatisfy { $0.count == 2 && $0.allSatisfy(\.isHexDigit) }
+        let lower = value.lowercased()
+        let parts = lower.split(separator: ":")
+        if parts.count == 6, parts.allSatisfy({ $0.count == 2 && $0.allSatisfy(\.isHexDigit) }) {
+            return true
+        }
+        let hyphenParts = lower.split(separator: "-")
+        if hyphenParts.count == 6, hyphenParts.allSatisfy({ $0.count == 2 && $0.allSatisfy(\.isHexDigit) }) {
+            return true
+        }
+        let ciscoParts = lower.split(separator: ".")
+        if ciscoParts.count == 3, ciscoParts.allSatisfy({ $0.count == 4 && $0.allSatisfy(\.isHexDigit) }) {
+            return true
+        }
+        return false
     }
 
     /// Does this text refer to the subject?
