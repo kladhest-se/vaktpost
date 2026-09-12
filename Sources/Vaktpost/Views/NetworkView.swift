@@ -156,9 +156,7 @@ struct NetworkView: View {
         }
 
         do {
-            _ = try await Retrier(maxAttempts: 2, baseDelay: 1.0).retry {
-                try await store.client.reloadFirewall()
-            }
+            _ = try await store.client.reloadFirewall()
 
             store.auditTrail.log(
                 action: .reloadFirewall,
@@ -270,6 +268,8 @@ struct InterfaceCard: View {
                             .scaledFont(11, weight: .medium)
                     }
                     .buttonStyle(.plain)
+                    .disabled(!store.canAdminister)
+                    .opacity(store.canAdminister ? 1 : 0.45)
 
                     Spacer()
 

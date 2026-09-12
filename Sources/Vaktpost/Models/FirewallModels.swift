@@ -160,7 +160,9 @@ struct FirewallAliasEntry: Identifiable {
 }
 
 struct PortForward: Identifiable {
-    var id: String { "\(interfaceName)-\(destination)-\(target)" }
+    var id: String { tracker.isEmpty ? "\(interfaceName)-\(destination)-\(target)" : tracker }
+    /// Stable pfSense identity used for updates and deletes.
+    var tracker: String
     var interfaceName: String
     var proto: String?
     /// Where the traffic comes from.
@@ -185,6 +187,7 @@ struct PortForward: Identifiable {
     var disabled: Bool
 
     init(_ d: JSONDict) {
+        tracker = d.string("tracker") ?? ""
         interfaceName = d.string("interface") ?? "—"
         proto = d.string("protocol")
         sourceSide = FilterAddress(d.value("source"), port: d.value("source_port"))

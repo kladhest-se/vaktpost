@@ -401,6 +401,7 @@ final class DashboardStore: Observable {
 
     var isConfigured: Bool { activeProfile?.isUsable ?? false }
     var profile: ServerProfile { registry.active ?? activeProfile ?? ServerProfile() }
+    var canAdminister: Bool { profile.isAdministrationEnabled }
 
     func logout() async {
         if let current = registry.active { registry.remove(current) }

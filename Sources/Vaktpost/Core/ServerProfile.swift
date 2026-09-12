@@ -26,6 +26,9 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     var username: String = ""
     var refreshSeconds: Int = 30
     var logLimit: Int = 100
+    /// Nil is the migration-safe form of `false`: profiles saved by older
+    /// builds do not contain this key and must remain monitor-only.
+    var administrationEnabled: Bool? = nil
     var overviewVisibleSections: [String] = ["status", "interfaces", "system", "gateways", "services", "firewall"]
     var collapsedSections: [String] = []
 
@@ -35,6 +38,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
 
     var hasCredentials: Bool { !username.isEmpty && Keychain.password(for: id) != nil }
     var isUsable: Bool { isConfigured && hasCredentials }
+    var isAdministrationEnabled: Bool { administrationEnabled == true }
 
     /// Normalises a user-typed URL: adds https://, strips trailing slashes.
     mutating func normalize() {

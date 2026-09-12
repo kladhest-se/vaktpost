@@ -30,6 +30,7 @@ struct FlushStatesView: View {
 
                 sectionHeader("Mode")
 
+                AdministrationModeNotice()
 
                 sectionHeader("Action")
 
@@ -114,15 +115,6 @@ struct FlushStatesView: View {
                 return
             }
 
-            guard store.rateLimiter.allowWrite() else {
-                writeError = WriteError(
-                    title: "Rate limited",
-                    message: "Please wait a few seconds between actions.",
-                    suggestion: nil
-                )
-                showErrorAlert = true
-                return
-            }
             showConfirmation = true
         } label: {
             HStack {
@@ -136,6 +128,8 @@ struct FlushStatesView: View {
             .padding(.vertical, 10)
             .background(theme.bad.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
         }
+        .disabled(!store.canAdminister || isExecuting)
+        .opacity(store.canAdminister ? 1 : 0.55)
     }
 
     private var flushMessage: String {
@@ -159,12 +153,18 @@ struct FlushStatesView: View {
         isExecuting = true
         defer { isExecuting = false }
 
-        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
+        guard store.rateLimiter.allowWrite() else {
+            writeError = WriteError(
+                title: "Rate limited",
+                message: "Please wait a few seconds between actions.",
+                suggestion: nil
+            )
+            showErrorAlert = true
+            return
+        }
 
         do {
-            let status = try await retrier.retry {
-                try await store.client.flushStates(interface: interface)
-            }
+            let status = try await store.client.flushStates(interface: interface)
 
             let target = flushAll ? "all interfaces" : (selectedInterface?.device ?? "unknown")
             let summary = "Flushed states on \(target) (status: \(status))"

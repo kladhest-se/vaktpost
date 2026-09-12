@@ -499,6 +499,8 @@ struct RuleDetailView: View {
                     }
                 }
 
+                AdministrationModeNotice()
+
                 if !isSaving {
                     VStack(spacing: 8) {
                         Button {
@@ -525,6 +527,8 @@ struct RuleDetailView: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    .disabled(!store.canAdminister)
+                    .opacity(store.canAdminister ? 1 : 0.55)
                 }
             }
             .padding(.horizontal, 16)
@@ -583,12 +587,8 @@ struct RuleDetailView: View {
             return
         }
 
-        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
-
         do {
-            _ = try await retrier.retry {
-                try await store.client.deleteRule(tracker: rule.tracker)
-            }
+            _ = try await store.client.deleteRule(tracker: rule.tracker)
 
             store.auditTrail.log(
                 action: .deleteRule,
@@ -631,16 +631,12 @@ struct RuleDetailView: View {
 
         let before = rule
         let after = changes.apply(to: rule)
-        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
-
         do {
-            _ = try await retrier.retry {
-                // The interface comes from the form now. It was taken from the
-                // rule, so moving a rule between interfaces in the editor
-                // changed the screen and not the firewall.
-                try await store.client.saveRule(
-                    rule: changes.toDict(tracker: rule.tracker, interface: changes.interface))
-            }
+            // The interface comes from the form now. It was taken from the
+            // rule, so moving a rule between interfaces in the editor
+            // changed the screen and not the firewall.
+            _ = try await store.client.saveRule(
+                rule: changes.toDict(tracker: rule.tracker, interface: changes.interface))
 
             store.auditTrail.log(
                 action: .editRule,
@@ -788,6 +784,8 @@ struct PortForwardDetailView: View {
                     }
                 }
 
+                AdministrationModeNotice()
+
                 if !isSaving {
                     VStack(spacing: 8) {
                         Button {
@@ -814,6 +812,8 @@ struct PortForwardDetailView: View {
                         }
                         .buttonStyle(.plain)
                     }
+                    .disabled(!store.canAdminister)
+                    .opacity(store.canAdminister ? 1 : 0.55)
                 }
             }
             .padding(.horizontal, 16)
@@ -857,6 +857,16 @@ struct PortForwardDetailView: View {
         isSaving = true
         defer { isSaving = false }
 
+        guard !forward.tracker.isEmpty else {
+            writeError = WriteError(
+                title: "Cannot identify port forward",
+                message: "The firewall did not provide a tracker ID, so Vaktpost will not risk deleting a different rule.",
+                suggestion: "Refresh the firewall data and try again."
+            )
+            showErrorAlert = true
+            return
+        }
+
         if !store.rateLimiter.allowWrite() {
             writeError = WriteError(
                 title: "Rate limited",
@@ -867,12 +877,8 @@ struct PortForwardDetailView: View {
             return
         }
 
-        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
-
         do {
-            _ = try await retrier.retry {
-                try await store.client.deleteNatRule(tracker: forward.id)
-            }
+            _ = try await store.client.deleteNatRule(tracker: forward.tracker)
 
             store.auditTrail.log(
                 action: .deletePortForward,
@@ -906,15 +912,11 @@ struct PortForwardDetailView: View {
             return false
         }
 
-        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
-
         do {
-            _ = try await retrier.retry {
-                // From the form, not the forward: the editor offers an
-                // interface field and it was being ignored on save.
-                try await store.client.saveNatRule(
-                    rule: changes.toDict(interface: changes.interface))
-            }
+            // From the form, not the forward: the editor offers an
+            // interface field and it was being ignored on save.
+            _ = try await store.client.saveNatRule(
+                rule: changes.toDict(interface: changes.interface))
 
             store.auditTrail.log(
                 action: .editPortForward,
@@ -1158,6 +1160,7 @@ struct RuleEditSheet: View {
 }
 
 struct PortForwardEditForm: Equatable {
+    var tracker: String
     var descr: String
     var proto: String
     var interface: String
@@ -1170,6 +1173,7 @@ struct PortForwardEditForm: Equatable {
     var addressFamily: String
 
     init(from forward: PortForward) {
+        tracker = forward.tracker
         descr = forward.descr
         proto = forward.proto ?? ""
         interface = forward.interfaceName
@@ -1185,6 +1189,7 @@ struct PortForwardEditForm: Equatable {
 
     func toDict(interface: String) -> JSONDict {
         var dict: [String: JSONValue] = [
+            "tracker": .string(tracker),
             "interface": .string(interface),
             "protocol": .string(proto.isEmpty ? "any" : proto),
             "ipprotocol": .string(addressFamily),

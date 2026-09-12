@@ -6,6 +6,7 @@ enum RPCError: LocalizedError, Equatable {
     case notConfigured
     case badURL
     case noCredentials
+    case administrationDisabled
     case unauthorized
     case forbidden
     case tls
@@ -48,6 +49,8 @@ enum RPCError: LocalizedError, Equatable {
         case .notConfigured: return "No firewall configured yet."
         case .badURL: return "That base URL isn't valid."
         case .noCredentials: return "No password stored."
+        case .administrationDisabled:
+            return "This firewall is in monitor-only mode. Enable administrative actions in its firewall settings first."
         case .unauthorized:
             return "Sign-in was rejected (401). Check the username, password, and that the account holds the System - HA node sync privilege."
         case .forbidden:

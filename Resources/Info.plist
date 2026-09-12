@@ -31,7 +31,7 @@
     <key>NSAppTransportSecurity</key>
     <dict/>
     <key>NSFaceIDUsageDescription</key>
-    <string>Use Face ID to quickly and securely unlock Vaktpost</string>
+    <string>Use Face ID to unlock Vaktpost and enable firewall administrative actions</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

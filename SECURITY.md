@@ -134,7 +134,7 @@ differ from Swift's, and getting it wrong looks like working code.
   takes two closed enums and an index clamped to 0...63. Nothing a person types
   reaches PHP.
 
-`vaktpost-tools/tests/readonly.sh` enforces all of it and runs before every
+`vaktpost-tools/tests/write-boundary.sh` enforces all of it and runs before every
 publish. `Tests/VaktpostTests/XMLRPCTests.swift` covers the same rules in Xcode.
 
 ## How this compares to the REST build
@@ -152,6 +152,13 @@ than with how the difference is checked. It can delete a firewall rule. What it
 offers instead is an **enumerated** surface: eight operations, named in one
 file, each one a line somebody had to add on purpose, with a check that fails if
 a ninth appears or if one of the eight quietly stops being used.
+
+Every newly added or migrated firewall nevertheless starts in **monitor-only
+mode**. The client rejects all eight mutation methods before transport in that
+mode. Enabling administration is stored per firewall and requires both an
+explicit risk acknowledgement and a fresh Face ID or Touch ID evaluation.
+This is an application safety boundary, not a reduction in the credential's
+pfSense privileges.
 
 That is a meaningfully weaker promise in two directions. A maintainer who edits
 the snippet and the manifest together has defeated it. And an enumerated write

@@ -21,6 +21,8 @@ struct ServiceManagerView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
+                    AdministrationModeNotice()
+
                     if store.services.isEmpty {
                         placeholder
                     } else {
@@ -99,7 +101,7 @@ struct ServiceManagerView: View {
 
     private func serviceRow(_ service: ServiceStatus) -> some View {
         let isRunning = service.running
-        let canRestart = !isRestarting
+        let canRestart = store.canAdminister && !isRestarting
 
         return VStack(spacing: 0) {
             HStack(spacing: 12) {
@@ -164,12 +166,8 @@ struct ServiceManagerView: View {
             return
         }
 
-        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
-
         do {
-            let status = try await retrier.retry {
-                try await store.client.restartService(named: service.name)
-            }
+            let status = try await store.client.restartService(named: service.name)
 
             let summary = "Restarted service \(service.name)"
             store.auditTrail.log(

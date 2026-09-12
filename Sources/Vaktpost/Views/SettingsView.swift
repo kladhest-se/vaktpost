@@ -312,14 +312,15 @@ struct SettingsView: View {
     private var aboutSlab: some View {
         Slab(rail: .info, title: "Vaktpost") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("A read-only dashboard for pfSense CE and Plus, talking to the firewall's built-in XML-RPC service. Nothing to install.")
+                Text("A monitoring and administration app for pfSense CE and Plus, talking to the firewall's built-in XML-RPC service. Nothing to install.")
                     .scaledFont(13)
                     .foregroundStyle(theme.labelMuted)
                 Hairline()
                 FieldRow(key: "Transport", value: "xmlrpc.php", mono: false)
                 FieldRow(key: "Auth", value: "webConfigurator login", mono: false)
                 FieldRow(key: "Privilege", value: "System - HA node sync", mono: false)
-                FieldRow(key: "Writes", value: "none", mono: false)
+                FieldRow(key: "Active mode", value: store.canAdminister ? "administration enabled" : "monitor only", mono: false)
+                FieldRow(key: "Writes", value: "confirmed admin actions", mono: false)
                 FieldRow(key: "Firewalls", value: "\(store.registry.servers.count)", mono: false)
                 Text("Not affiliated with Netgate or the Catppuccin project. pfSense is a trademark of Netgate.")
                     .scaledFont(11)

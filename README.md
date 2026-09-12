@@ -1,8 +1,8 @@
 # Vaktpost
 
-A read-only iOS dashboard for **pfSense CE / pfSense Plus**, built in SwiftUI, themed with all four Catppuccin flavours.
+A monitoring and administration app for **pfSense CE / pfSense Plus**, built in SwiftUI and themed with all four Catppuccin flavours.
 
-*Vaktpost* is Swedish for a sentry post — somewhere you watch the perimeter from and report what you see, without touching the wall itself. That is exactly the scope of this app.
+*Vaktpost* is Swedish for a sentry post — somewhere you watch the perimeter from, report what you see, and take a small set of deliberate, confirmed actions.
 
 It talks to pfSense's **built-in XML-RPC service**. Nothing needs to be
 installed on the firewall.
@@ -10,9 +10,15 @@ installed on the firewall.
 **Read [SECURITY.md](SECURITY.md) before using this.** XML-RPC requires an
 account with the "System - HA node sync" privilege, which is
 administrator-equivalent, and that password is stored on the phone and sent on
-every request. The app's read-only behaviour is enforced by an audited
-allowlist of PHP snippets rather than by the transport, which is a weaker
-guarantee than the REST build it replaced.
+every request. Most snippets only inspect the firewall; the complete mutation
+surface is declared and audited in `PHPSnippet.writeOperations`. Destructive
+actions require confirmation in the app, but the credential itself remains
+administrator-equivalent.
+
+Every firewall starts in **monitor-only mode**. In that mode the client blocks
+all mutation methods before any request is sent. Administration is enabled per
+firewall from its edit screen only after a risk acknowledgement and a fresh
+Face ID or Touch ID check.
 
 **Tabs:** Overview · Clients · Network · Logs · More (Alerts, VPN, Firewall, System, Firewalls, Settings).
 
@@ -91,11 +97,10 @@ cd ../vaktpost-tools
 
 Every push runs a gate first: nothing generated would be committed, the
 structural suites pass, no internal hostname appears in the tree, and the app
-compiles. The suite worth knowing about is `readonly`, which asserts that this
-app still cannot write to a firewall — no non-GET method literal, `httpMethod`
-only ever `"GET"`, no write helper on `XMLRPCClient`, and no `URLSession`
-constructed outside it. The claim on the website is checked rather than
-remembered.
+compiles. The `write-boundary` suite audits the declared mutation surface:
+only named operations may mutate configuration, arguments cross into PHP as
+encoded data, and no snippet may reach a shell or arbitrary filesystem write
+primitive.
 
 ## Firewall setup (XML-RPC)
 
@@ -109,6 +114,9 @@ remembered.
    that makes XML-RPC work, and it is administrator-equivalent.
 4. In Vaktpost, enter the firewall address, that username and its password.
 5. Connect once, then **Pin last seen certificate** in the firewall's settings.
+6. Leave the profile in monitor-only mode unless you need administration. To
+   enable writes, edit that firewall, review the warning, and authenticate
+   with Face ID or Touch ID.
 
 ## What it runs
 

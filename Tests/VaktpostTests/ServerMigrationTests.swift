@@ -118,6 +118,33 @@ final class ServerMigrationTests: XCTestCase {
         }
     }
 
+    func testProfileFromOlderBuildDefaultsToMonitorOnly() throws {
+        let current = ServerProfile(baseURL: "https://old.example", label: "Old")
+        let encoded = try JSONEncoder().encode(current)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "administrationEnabled")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(ServerProfile.self, from: legacyData)
+        XCTAssertFalse(decoded.isAdministrationEnabled)
+    }
+
+    func testAdministrationSettingIsPerFirewallAndPersists() throws {
+        var administrator = ServerProfile(baseURL: "https://admin.example")
+        let monitor = ServerProfile(baseURL: "https://monitor.example")
+        administrator.administrationEnabled = true
+
+        let decoded = try JSONDecoder().decode(
+            [ServerProfile].self,
+            from: JSONEncoder().encode([administrator, monitor])
+        )
+
+        XCTAssertTrue(decoded[0].isAdministrationEnabled)
+        XCTAssertFalse(decoded[1].isAdministrationEnabled)
+    }
+
     /// When neither legacy nor new data exists, the registry starts clean.
     func testEmptyStateProducesNoServers() async {
         await MainActor.run {

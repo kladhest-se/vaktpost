@@ -134,6 +134,10 @@ struct ServerRow: View {
                             .scaledFont(11)
                             .foregroundStyle(theme.warn)
                     }
+
+                    Text(server.isAdministrationEnabled ? "Administration enabled" : "Monitor only")
+                        .scaledFont(11, weight: .medium)
+                        .foregroundStyle(server.isAdministrationEnabled ? theme.warn : theme.ok)
                 }
 
                 Spacer(minLength: 8)
@@ -169,6 +173,8 @@ struct ServerEditView: View {
     @State private var message: String?
     @State private var messageHealth: Health = .idle
     @State private var confirmDelete = false
+    @State private var showAdministrationRisk = false
+    @State private var isAuthenticatingAdministration = false
 
     private var isExisting: Bool { registry.servers.contains { $0.id == profile.id } }
 
@@ -251,6 +257,8 @@ struct ServerEditView: View {
                     }
                 }
 
+                administrationSlab
+
                 if message != nil {
                     messageView
                 }
@@ -287,7 +295,7 @@ struct ServerEditView: View {
                 } label: {
                     if isTesting { ProgressView().controlSize(.small) } else { Text("Save") }
                 }
-                .disabled(isTesting || profile.baseURL.isEmpty)
+                .disabled(isTesting || isAuthenticatingAdministration || profile.baseURL.isEmpty)
             }
         }
         .onAppear { password = Keychain.password(for: profile.id) ?? "" }
@@ -317,6 +325,86 @@ struct ServerEditView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Its password is deleted from the keychain.")
+        }
+        .confirmationDialog("Enable administrative actions?",
+                            isPresented: $showAdministrationRisk,
+                            titleVisibility: .visible) {
+            Button("Authenticate and enable", role: .destructive) {
+                Task { await authenticateForAdministration() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This firewall uses an administrator-equivalent XML-RPC credential. Enabling this mode allows Vaktpost to change rules, delete port forwards, reload the firewall, restart services, and drop active states. Face ID or Touch ID is required to enable it.")
+        }
+    }
+
+    private var administrationSlab: some View {
+        Slab(rail: profile.isAdministrationEnabled ? .warn : .ok,
+             title: "Administration") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: profile.isAdministrationEnabled ? "lock.open.fill" : "eye.fill")
+                        .foregroundStyle(profile.isAdministrationEnabled ? theme.warn : theme.ok)
+                    Text(profile.isAdministrationEnabled ? "Administrative actions enabled" : "Monitor-only mode")
+                        .scaledFont(14, weight: .semibold)
+                        .foregroundStyle(theme.label)
+                }
+
+                Text(profile.isAdministrationEnabled
+                     ? "Vaktpost may perform its declared, confirmed firewall mutations for this profile."
+                     : "Vaktpost can inspect this firewall, but every mutation is blocked before a request is sent.")
+                    .scaledFont(12)
+                    .foregroundStyle(theme.labelMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if profile.isAdministrationEnabled {
+                    Button("Return to monitor-only") {
+                        profile.administrationEnabled = false
+                        message = "Monitor-only mode selected. Tap Save to apply it."
+                        messageHealth = .ok
+                    }
+                    .scaledFont(13, weight: .medium)
+                    .foregroundStyle(theme.accentColor)
+                } else {
+                    Button {
+                        showAdministrationRisk = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isAuthenticatingAdministration {
+                                ProgressView().controlSize(.small)
+                            }
+                            Text(isAuthenticatingAdministration
+                                 ? "Authenticating…"
+                                 : "Enable administrative actions")
+                        }
+                        .scaledFont(13, weight: .semibold)
+                        .foregroundStyle(theme.warn)
+                    }
+                    .disabled(isAuthenticatingAdministration)
+                }
+            }
+        }
+    }
+
+    private func authenticateForAdministration() async {
+        guard !isAuthenticatingAdministration else { return }
+        isAuthenticatingAdministration = true
+        defer { isAuthenticatingAdministration = false }
+
+        switch await BiometricAuth.authenticate(
+            reason: "Enable administrative actions for \(profile.displayName)",
+            allowPasscode: false
+        ) {
+        case .success:
+            profile.administrationEnabled = true
+            message = "Identity verified. Tap Save to enable administrative actions for this firewall."
+            messageHealth = .warn
+        case let .failed(text), let .unavailable(text):
+            profile.administrationEnabled = false
+            message = "Administrative actions remain disabled. \(text)"
+            messageHealth = .bad
+        case .cancelled:
+            profile.administrationEnabled = false
         }
     }
 

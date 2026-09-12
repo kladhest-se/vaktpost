@@ -16,6 +16,8 @@ enum WriteErrorFormatter {
         let rpcError = error as? RPCError
 
         switch (rpcError, operation) {
+        case (.administrationDisabled, _):
+            return "This firewall is in monitor-only mode. No change was sent."
         case (.unauthorized, _):
             return "Authentication failed. Check your credentials and that the account has the 'System - HA node sync' privilege."
         case (.forbidden, _):
@@ -60,6 +62,8 @@ enum WriteErrorFormatter {
         guard let rpcError = error as? RPCError else { return nil }
 
         switch rpcError {
+        case .administrationDisabled:
+            return "Open Firewalls, edit this firewall, and authenticate to enable administrative actions."
         case .unauthorized, .forbidden:
             return "Contact your firewall administrator to verify the account has the required privileges."
         case .offline:

@@ -2,12 +2,12 @@ import Foundation
 
 /// Every piece of PHP this app will ever send to a firewall.
 ///
-/// This file is the security boundary. Under the REST transport the read-only
-/// guarantee was structural — the client had no write verb, and a grep could
-/// prove it. `exec_php` has no such property: it runs whatever it is given, so
-/// the guarantee has to come from the contents of this file instead.
+/// This file is the security boundary. Under the REST transport the old
+/// read-only guarantee was structural — the client had no write verb, and a
+/// grep could prove it. `exec_php` has no such property: it runs whatever it is
+/// given, so the mutation boundary has to come from this file instead.
 ///
-/// The rules, enforced by `vaktpost-tools/tests/readonly.sh` on every publish:
+/// The rules, enforced by `vaktpost-tools/tests/write-boundary.sh` on every publish:
 ///
 ///   1. Snippets are constants here. Nothing may build one by interpolating a
 ///      value at runtime — a snippet assembled from input is not a snippet
@@ -45,7 +45,7 @@ struct PHPSnippet: Sendable {
     /// Every snippet permitted to change a firewall, by name.
     ///
     /// This is the app's complete write surface, and it is deliberately short
-    /// enough to read. `readonly.sh` checks it in both directions: a snippet
+    /// enough to read. `write-boundary.sh` checks it in both directions: a snippet
     /// that writes and is not named here fails, and a name here whose snippet
     /// no longer writes fails too — so the list cannot quietly grow, and it
     /// cannot rot into a set of permissions nothing uses any more.
@@ -152,10 +152,10 @@ struct PHPSnippet: Sendable {
 
     /// PHP functions any snippet in this file is permitted to call.
     ///
-    /// Read-only by inspection: each either returns a value from `$config`,
-    /// reads a status file, or asks the kernel for a counter. The publish check
-    /// parses this list out of the source, so adding a call without adding it
-    /// here fails rather than passing quietly.
+    /// Constrained by inspection. The publish check parses this list out of
+    /// the source, so adding a call without adding it here fails rather than
+    /// passing quietly. Write snippets still use only the explicitly audited
+    /// pfSense mutation functions.
     static let allowedFunctions: Set<String> = [
         // plumbing present in every snippet
         "ini_set", "require_once", "unlock", "json_encode", "json_decode",
@@ -211,7 +211,7 @@ struct PHPSnippet: Sendable {
         // Removing one element from a local array, which is how a rule is
         // deleted from a copy before the copy is assigned back. Neither can
         // reach disk. `unset` pointed at `$config` would be a different thing
-        // and `readonly.sh` fails on it separately.
+        // and `write-boundary.sh` fails on it separately.
         "array_filter", "unset",
         // Decoding a base64 payload back into an array. Neither reads a file
         // nor evaluates anything: `json_decode` is a parser, and the second
@@ -220,7 +220,7 @@ struct PHPSnippet: Sendable {
         // The writes.
         //
         // Reachable only from the snippets named in `writeOperations` above —
-        // `readonly.sh` fails if one of these appears anywhere else. They are
+        // `write-boundary.sh` fails if one of these appears anywhere else. They are
         // additionally gated in the app by the write rate limiter, a
         // confirmation step, and the audit trail.
         //
@@ -2620,7 +2620,7 @@ struct PHPSnippet: Sendable {
             // is a parse error and an HTTP 500 — and it is exactly what the
             // first version of this comment did to itself.
             //
-            // Constants avoid the whole class of problem. readonly.sh checks
+            // Constants avoid the whole class of problem. write-boundary.sh checks
             // the source file for backslashes, because by the time the string
             // exists at runtime the evidence has already been consumed.
             $lines = explode(PHP_EOL, $chunk);
@@ -2699,23 +2699,37 @@ struct PHPSnippet: Sendable {
         $vaktpost_addr = strval($vaktpost_input["address"] ?? "");
         if ($vaktpost_if === "" || $vaktpost_addr === "") {
           $toreturn["status"] = "invalid";
+          $toreturn["error"] = "Interface and address are required";
         } else {
+          $section = $config["filter"];
+          $vaktpost_rules = (is_array($section) && is_iterable($section["rule"])) ? $section["rule"] : [];
+          $vaktpost_tracker = strval(time());
+          $vaktpost_collision = true;
+          while ($vaktpost_collision) {
+            $vaktpost_collision = false;
+            foreach ($vaktpost_rules as $vaktpost_existing) {
+              if (is_array($vaktpost_existing) && strval($vaktpost_existing["tracker"] ?? "") === $vaktpost_tracker) {
+                $vaktpost_tracker = strval(intval($vaktpost_tracker) + 1);
+                $vaktpost_collision = true;
+                break;
+              }
+            }
+          }
+          $vaktpost_source = (strpos($vaktpost_addr, "/") !== false)
+            ? ["network" => $vaktpost_addr]
+            : ["address" => $vaktpost_addr];
           $block_rule = [
             'type' => 'block',
             'interface' => $vaktpost_if,
-            'address' => $vaktpost_addr,
             'descr' => strval($vaktpost_input["descr"] ?? ""),
+            'ipprotocol' => (strpos($vaktpost_addr, ":") !== false) ? 'inet6' : 'inet',
             'protocol' => 'any',
-            'source' => ['network' => $vaktpost_addr],
-            'destination' => ['network' => "any"],
+            'source' => $vaktpost_source,
+            'destination' => ['any' => true],
+            'tracker' => $vaktpost_tracker,
           ];
-          $vaktpost_rules = $config['rules'];
-          if (!is_array($vaktpost_rules)) { $vaktpost_rules = []; }
-          $vaktpost_on = $vaktpost_rules[$vaktpost_if] ?? [];
-          if (!is_array($vaktpost_on)) { $vaktpost_on = []; }
-          $vaktpost_on[] = $block_rule;
-          $vaktpost_rules[$vaktpost_if] = $vaktpost_on;
-          $config['rules'] = $vaktpost_rules;
+          $vaktpost_rules[] = $block_rule;
+          $config['filter']['rule'] = array_values($vaktpost_rules);
           write_config("Vaktpost: quick-block rule added");
           write_filter();
           $toreturn["status"] = "ok";
@@ -2847,12 +2861,13 @@ struct PHPSnippet: Sendable {
         $section = $config["filter"];
         $rules = (is_array($section) && is_iterable($section["rule"])) ? $section["rule"] : [];
         $found = false;
+        $vaktpost_index = null;
         $rule = [];
         if ($tracker !== "") {
           foreach ($rules as $idx => $r) {
             if (is_array($r) && ($r["tracker"] ?? "") === $tracker) {
               $rule = $r;
-              unset($rules[$idx]);
+              $vaktpost_index = $idx;
               $found = true;
               break;
             }
@@ -2887,7 +2902,11 @@ struct PHPSnippet: Sendable {
           unset($rule["destination_port"]);
         }
 
-        if (!$found) { $rules[] = $rule; }
+        if ($found) {
+          $rules[$vaktpost_index] = $rule;
+        } else {
+          $rules[] = $rule;
+        }
         $config["filter"]["rule"] = array_values($rules);
         write_config("Vaktpost: saved a rule");
         write_filter();
@@ -2904,20 +2923,17 @@ struct PHPSnippet: Sendable {
     /// the same description and left the original in place, so "save" grew the
     /// NAT table by one every time it was pressed.
     ///
-    /// Matching it back is the awkward part, because `PortForward` carries no
-    /// tracker — the app has never read one, so the tracker branch here is for
-    /// a future where it does, and today every match falls to the second
-    /// branch. That branch uses interface, destination address, destination
-    /// port and target, which is what `PortForward.id` has always been.
+    /// Existing forwards are matched by their pfSense tracker. The composite
+    /// match remains as a compatibility fallback for older payloads that do
+    /// not contain one.
     ///
     /// The port is load-bearing. Left out, two forwards to one host on one
     /// interface — 80 and 443 to 10.0.0.5 — match identically, and editing
     /// either one replaces the other.
     ///
-    /// Changing the destination or the target of an existing forward will not
-    /// match it and will append instead. That is a real limitation and the
-    /// safe direction to fail in: a duplicate is visible and removable, a
-    /// wrongly-replaced rule is neither.
+    /// With a tracker, changing the destination or target still replaces the
+    /// original. Without one, the compatibility match intentionally fails
+    /// toward an append rather than risking replacement of a different rule.
     static func saveNatRule(rule: JSONDict) -> PHPSnippet {
         let encoded = payload(rule)
         return PHPSnippet("save_nat_rule", """

@@ -24,6 +24,8 @@ struct FirewallReloadView: View {
                 VStack(spacing: 24) {
                     statusCard
 
+                    AdministrationModeNotice()
+
                     reloadCard
 
                     historySection
@@ -131,19 +133,6 @@ struct FirewallReloadView: View {
 
             Button {
                 writeError = nil
-                isReloading = true
-                defer { isReloading = false }
-
-                if !store.rateLimiter.allowWrite() {
-                    writeError = WriteError(
-                        title: "Rate limited",
-                        message: "Please wait a few seconds between actions.",
-                        suggestion: nil
-                    )
-                    showErrorAlert = true
-                    return
-                }
-
                 showConfirmation = true
             } label: {
                 HStack {
@@ -163,7 +152,8 @@ struct FirewallReloadView: View {
                 .padding(.vertical, 12)
                 .background(theme.warn.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
-            .disabled(isReloading)
+            .disabled(isReloading || !store.canAdminister)
+            .opacity(store.canAdminister ? 1 : 0.55)
 
             if let lastTime = lastReloadTime {
                 HStack {
@@ -220,12 +210,21 @@ struct FirewallReloadView: View {
     // MARK: - Reload handler
 
     private func confirmReload() async {
-        let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
+        isReloading = true
+        defer { isReloading = false }
+
+        guard store.rateLimiter.allowWrite() else {
+            writeError = WriteError(
+                title: "Rate limited",
+                message: "Please wait a few seconds between actions.",
+                suggestion: nil
+            )
+            showErrorAlert = true
+            return
+        }
 
         do {
-            let status = try await retrier.retry {
-                try await store.client.reloadFirewall()
-            }
+            let status = try await store.client.reloadFirewall()
 
             let summary = "Reloaded firewall ruleset (status: \(status))"
             store.auditTrail.log(

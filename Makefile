@@ -1,4 +1,4 @@
-# Vaktpost — a read-only pfSense dashboard for iOS.
+# Vaktpost — pfSense monitoring and administration for iOS.
 #
 # One platform, so the verbs are unprefixed: `make build`, `make run`,
 # `make archive`. The .xcodeproj is generated and never committed, so every

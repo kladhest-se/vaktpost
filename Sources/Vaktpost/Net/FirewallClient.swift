@@ -9,8 +9,10 @@ import Foundation
 actor FirewallClient {
 
     private let rpc: XMLRPCClient
+    private let administrationEnabled: Bool
 
     init(profile: ServerProfile, allowsTrustPrompt: Bool = true, onPin: @escaping TrustEvaluator.PinHandler) {
+        self.administrationEnabled = profile.isAdministrationEnabled
         self.rpc = XMLRPCClient(profile: profile, allowsTrustPrompt: allowsTrustPrompt, onPin: onPin)
     }
 
@@ -332,17 +334,40 @@ actor FirewallClient {
 
     // MARK: Write operations
 
+    private func requireAdministration() throws {
+        guard administrationEnabled else { throw RPCError.administrationDisabled }
+    }
+
+    /// pfSense snippets report domain failures in their payload even when the
+    /// XML-RPC request itself succeeded. Treat only an explicit `ok` as a
+    /// successful mutation so callers cannot log or display a false success.
+    @discardableResult
+    static func validatedWriteResponse(_ dict: JSONDict, operation: String) throws -> JSONDict {
+        guard let status = dict.string("status"), status == "ok" else {
+            let status = dict.string("status") ?? "missing status"
+            let detail = dict.string("error").flatMap { $0.isEmpty ? nil : $0 }
+            let message = detail.map { "\(operation) failed (\(status)): \($0)" }
+                ?? "\(operation) failed (\(status))."
+            throw RPCError.fault(0, message)
+        }
+        return dict
+    }
+
     /// Reloads the firewall ruleset.
     func reloadFirewall() async throws -> String {
+        try requireAdministration()
         let dict = try await rpc.runObject(.reloadFirewall)
-        return dict.string("status") ?? "unknown"
+        _ = try Self.validatedWriteResponse(dict, operation: "Firewall reload")
+        return "ok"
     }
 
     /// Restarts a pfSense service by name.
     func restartService(named serviceName: String) async throws -> String {
+        try requireAdministration()
         let snippet = PHPSnippet.restartService(serviceName: serviceName)
         let dict = try await rpc.runObject(snippet)
-        return dict.string("status") ?? "unknown"
+        _ = try Self.validatedWriteResponse(dict, operation: "Service restart")
+        return "ok"
     }
 
     /// Adds a quick-block rule to block an IP address.
@@ -352,45 +377,60 @@ actor FirewallClient {
     ///   - address: The IP address or subnet to block.
     ///   - description: A description for the rule.
     func quickBlock(interface: String, address: String, description: String) async throws -> JSONDict {
+        try requireAdministration()
         let snippet = PHPSnippet.quickBlock(interface: interface, address: address, description: description)
-        return try await rpc.runObject(snippet)
+        let dict = try await rpc.runObject(snippet)
+        return try Self.validatedWriteResponse(dict, operation: "Quick block")
     }
 
     /// Flushes the firewall state table.
     ///
     /// - Parameter interface: Optional interface to flush states for. Empty means all.
     func flushStates(interface: String = "") async throws -> String {
+        try requireAdministration()
         let snippet = PHPSnippet.flushStates(interface: interface)
         let dict = try await rpc.runObject(snippet)
-        return dict.string("status") ?? "unknown"
+        _ = try Self.validatedWriteResponse(dict, operation: "State flush")
+        return "ok"
     }
 
     /// Deletes a firewall rule by tracker ID.
     func deleteRule(tracker: String) async throws -> String {
+        try requireAdministration()
         let snippet = PHPSnippet.deleteRule(tracker: tracker)
         let dict = try await rpc.runObject(snippet)
-        return dict.string("status") ?? "unknown"
+        _ = try Self.validatedWriteResponse(dict, operation: "Rule deletion")
+        return "ok"
     }
 
     /// Deletes a NAT/port forward rule by tracker ID.
     func deleteNatRule(tracker: String) async throws -> String {
+        try requireAdministration()
+        guard !tracker.isEmpty else {
+            throw RPCError.malformed("Port-forward deletion requires a tracker ID.")
+        }
         let snippet = PHPSnippet.deleteNatRule(tracker: tracker)
         let dict = try await rpc.runObject(snippet)
-        return dict.string("status") ?? "unknown"
+        _ = try Self.validatedWriteResponse(dict, operation: "Port-forward deletion")
+        return "ok"
     }
 
     /// Saves (creates or updates) a firewall rule.
     func saveRule(rule: JSONDict) async throws -> String {
+        try requireAdministration()
         let snippet = PHPSnippet.saveRule(rule: rule)
         let dict = try await rpc.runObject(snippet)
-        return dict.string("status") ?? "unknown"
+        _ = try Self.validatedWriteResponse(dict, operation: "Rule save")
+        return "ok"
     }
 
     /// Saves (creates or updates) a NAT/port forward rule.
     func saveNatRule(rule: JSONDict) async throws -> String {
+        try requireAdministration()
         let snippet = PHPSnippet.saveNatRule(rule: rule)
         let dict = try await rpc.runObject(snippet)
-        return dict.string("status") ?? "unknown"
+        _ = try Self.validatedWriteResponse(dict, operation: "Port-forward save")
+        return "ok"
     }
 
     // MARK: - Staged operations
