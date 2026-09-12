@@ -10,7 +10,20 @@ import Observation
 final class FirewallDiffViewer {
     
     struct ConfigSnapshot: Identifiable, Codable, Hashable {
-        let id = UUID()
+        /// Derived from the snapshot, not generated.
+        ///
+        /// This was `let id = UUID()`, which a decoder cannot overwrite — so
+        /// every snapshot read back from disk got a new identity. Two decodes
+        /// of one snapshot compared unequal, `ForEach` treated the same row as
+        /// a different row after a relaunch, and any diff that matched
+        /// snapshots by identity matched nothing.
+        ///
+        /// The timestamp and the counts are what a snapshot *is*, so they are
+        /// what identifies it, and it round-trips for free.
+        var id: String {
+            "\(timestamp.timeIntervalSince1970)-\(ruleCount)-\(aliasCount)-\(portForwardCount)"
+        }
+
         let timestamp: Date
         let ruleCount: Int
         let aliasCount: Int

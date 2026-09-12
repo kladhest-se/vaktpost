@@ -396,45 +396,4 @@ actor FirewallClient {
     // MARK: - Staged operations
 
     /// Represents a staged write operation ready for batch apply.
-    struct StagedOperation {
-        let action: String
-        let target: String?
-        let description: String
-    }
-
-    /// Stages a quick-block operation without executing it.
-    static func stageQuickBlock(interface: String, address: String, description: String) -> StagedOperation {
-        StagedOperation(
-            action: "quick_block",
-            target: address,
-            description: "Block \(address) on \(interface)"
-        )
-    }
-
-    /// Stages a service restart operation without executing it.
-    static func stageRestartService(named serviceName: String) -> StagedOperation {
-        StagedOperation(
-            action: "restart_service",
-            target: serviceName,
-            description: "Restart \(serviceName)"
-        )
-    }
-
-    /// Stages a firewall reload operation without executing it.
-    static func stageReloadFirewall() -> StagedOperation {
-        StagedOperation(
-            action: "reload_firewall",
-            target: nil,
-            description: "Reload firewall ruleset"
-        )
-    }
-
-    /// Stages a state flush operation without executing it.
-    static func stageFlushStates(interface: String = "") -> StagedOperation {
-        StagedOperation(
-            action: "flush_states",
-            target: interface.isEmpty ? nil : interface,
-            description: interface.isEmpty ? "Flush all firewall states" : "Flush states on \(interface)"
-        )
-    }
 }

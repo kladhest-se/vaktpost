@@ -439,7 +439,6 @@ struct RuleDetailView: View {
     @State private var isSaving = false
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
-    @State private var editForm: RuleEditForm?
 
     /// Every address or port behind a value, one per line.
     ///
@@ -554,22 +553,18 @@ struct RuleDetailView: View {
             onConfirm: confirmDelete,
             onCancel: {}
         )
+        // Built here, at presentation, rather than in `onAppear`.
+        //
+        // This is why the editor felt slow. The form was assembled in the
+        // detail view's `onAppear` and the sheet rendered "Loading…" until it
+        // arrived — for a struct copied synchronously out of a rule the view
+        // already held. There was never anything to load; the spinner was the
+        // whole delay, and on a fast tap it was what you got.
         .sheet(isPresented: $showEditSheet) {
-            if let form = editForm {
-                RuleEditSheet(rule: rule, form: form, onSave: { saved in
-                    isSaving = true
-                    defer { isSaving = false }
-                    confirmEdit(rule: rule, changes: saved)
-                }, onCancel: { dismiss() })
-            } else {
-                NavigationStack {
-                    ProgressView("Loading...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-        }
-        .onAppear {
-            editForm = RuleEditForm(from: rule)
+            RuleEditSheet(form: RuleEditForm(from: rule),
+                          interfaces: store.interfaces.map(\.internalName).compactMap { $0 },
+                          aliases: Set(store.aliases.map(\.name)),
+                          onSave: { saved in await save(changes: saved) })
         }
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
     }
@@ -615,10 +610,15 @@ struct RuleDetailView: View {
         }
     }
 
-    private func confirmEdit(rule: FirewallRule, changes: RuleEditForm) {
-        isSaving = true
-        defer { isSaving = false }
-
+    /// Save, and say whether it worked.
+    ///
+    /// Was synchronous, with `isSaving = true` and a `defer` that put it back
+    /// before the `Task` inside had started — so the flag was never observed
+    /// true, the spinner never appeared, and Save stayed tappable through the
+    /// whole write. It returns a result now, and the sheet closes itself on
+    /// success rather than the detail view dismissing out from under it.
+    @discardableResult
+    private func save(changes: RuleEditForm) async -> Bool {
         if !store.rateLimiter.allowWrite() {
             writeError = WriteError(
                 title: "Rate limited",
@@ -626,42 +626,40 @@ struct RuleDetailView: View {
                 suggestion: nil
             )
             showErrorAlert = true
-            return
+            return false
         }
 
         let before = rule
         let after = changes.apply(to: rule)
-
         let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
 
-        Task {
-            do {
-                _ = try await retrier.retry {
-                    try await store.client.saveRule(rule: changes.toDict(tracker: rule.tracker, interface: rule.interfaceName))
-                }
-
-                store.auditTrail.log(
-                    action: .editRule,
-                    summary: "Edited rule \(rule.tracker)",
-                    target: rule.descr.isEmpty ? rule.tracker : rule.descr,
-                    before: json(from: before),
-                    after: json(from: after)
-                )
-
-                store.analytics.record(operation: "edit_rule", success: true)
-
-                await MainActor.run {
-                    dismiss()
-                    Task { await store.refresh() }
-                }
-
-            } catch {
-                store.analytics.record(operation: "edit_rule", success: false)
-                await MainActor.run {
-                    writeError = WriteError.from(error, operation: .other)
-                    showErrorAlert = true
-                }
+        do {
+            _ = try await retrier.retry {
+                // The interface comes from the form now. It was taken from the
+                // rule, so moving a rule between interfaces in the editor
+                // changed the screen and not the firewall.
+                try await store.client.saveRule(
+                    rule: changes.toDict(tracker: rule.tracker, interface: changes.interface))
             }
+
+            store.auditTrail.log(
+                action: .editRule,
+                summary: "Edited rule \(rule.tracker)",
+                target: rule.descr.isEmpty ? rule.tracker : rule.descr,
+                before: json(from: before),
+                after: json(from: after)
+            )
+            store.analytics.record(operation: "edit_rule", success: true)
+
+            // Refreshed but not dismissed. The rule that was just edited is
+            // the thing somebody wants to look at to check it took.
+            Task { await store.refresh() }
+            return true
+        } catch {
+            store.analytics.record(operation: "edit_rule", success: false)
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
+            return false
         }
     }
 
@@ -729,7 +727,6 @@ struct PortForwardDetailView: View {
     @State private var isSaving = false
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
-    @State private var editForm: PortForwardEditForm?
 
     @ViewBuilder
     private func detailField(_ label: String, _ value: String) -> some View {
@@ -835,22 +832,13 @@ struct PortForwardDetailView: View {
                 }
             }
         }
+        // Same as the rule editor: assembled at presentation, because there is
+        // nothing to fetch and the spinner was the entire delay.
         .sheet(isPresented: $showEditSheet) {
-            if let form = editForm {
-                PortForwardEditSheet(forward: forward, form: form, onSave: { saved in
-                    isSaving = true
-                    defer { isSaving = false }
-                    confirmEdit(forward: forward, changes: saved)
-                }, onCancel: { dismiss() })
-            } else {
-                NavigationStack {
-                    ProgressView("Loading...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-        }
-        .onAppear {
-            editForm = PortForwardEditForm(from: forward)
+            PortForwardEditSheet(form: PortForwardEditForm(from: forward),
+                                 interfaces: store.interfaces.map(\.internalName).compactMap { $0 },
+                                 aliases: Set(store.aliases.map(\.name)),
+                                 onSave: { saved in await save(changes: saved) })
         }
         .confirmationSheet(
             isPresented: $showDeleteConfirm,
@@ -906,10 +894,8 @@ struct PortForwardDetailView: View {
         }
     }
 
-    private func confirmEdit(forward: PortForward, changes: PortForwardEditForm) {
-        isSaving = true
-        defer { isSaving = false }
-
+    @discardableResult
+    private func save(changes: PortForwardEditForm) async -> Bool {
         if !store.rateLimiter.allowWrite() {
             writeError = WriteError(
                 title: "Rate limited",
@@ -917,39 +903,35 @@ struct PortForwardDetailView: View {
                 suggestion: nil
             )
             showErrorAlert = true
-            return
+            return false
         }
 
         let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
 
-        Task {
-            do {
-                _ = try await retrier.retry {
-                    try await store.client.saveNatRule(rule: changes.toDict(interface: forward.interfaceName))
-                }
-
-                store.auditTrail.log(
-                    action: .editPortForward,
-                    summary: "Edited port forward \(forward.id)",
-                    target: forward.descr.isEmpty ? forward.id : forward.descr,
-                    before: nil,
-                    after: nil
-                )
-
-                store.analytics.record(operation: "edit_nat", success: true)
-
-                await MainActor.run {
-                    dismiss()
-                    Task { await store.refresh() }
-                }
-
-            } catch {
-                store.analytics.record(operation: "edit_nat", success: false)
-                await MainActor.run {
-                    writeError = WriteError.from(error, operation: .other)
-                    showErrorAlert = true
-                }
+        do {
+            _ = try await retrier.retry {
+                // From the form, not the forward: the editor offers an
+                // interface field and it was being ignored on save.
+                try await store.client.saveNatRule(
+                    rule: changes.toDict(interface: changes.interface))
             }
+
+            store.auditTrail.log(
+                action: .editPortForward,
+                summary: "Edited port forward \(forward.id)",
+                target: forward.descr.isEmpty ? forward.id : forward.descr,
+                before: nil,
+                after: nil
+            )
+            store.analytics.record(operation: "edit_nat", success: true)
+
+            Task { await store.refresh() }
+            return true
+        } catch {
+            store.analytics.record(operation: "edit_nat", success: false)
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
+            return false
         }
     }
 
@@ -961,7 +943,7 @@ struct PortForwardDetailView: View {
 }
 
 /// Editable representation of a firewall rule.
-struct RuleEditForm {
+struct RuleEditForm: Equatable {
     var descr: String
     var type: String
     var proto: String
@@ -972,12 +954,21 @@ struct RuleEditForm {
     var destinationPort: String
     var disabled: Bool
     var logged: Bool
+    /// inet / inet6 / inet46, carried through rather than derived.
+    ///
+    /// `toDict` used to compute this from `proto`, comparing a transport
+    /// protocol against the strings "inet" and "inet6" — so it was nil for
+    /// every real rule, `ipprotocol` was left out of the payload, and saving
+    /// an IPv6 rule silently dropped its address family. The value is the
+    /// rule's own and is kept as one.
+    var addressFamily: String
 
     init(from rule: FirewallRule) {
         descr = rule.descr
         type = rule.type
         proto = rule.proto ?? ""
         interface = rule.interfaceName
+        addressFamily = rule.ipProtocol ?? "inet"
         sourceAddress = rule.sourceSide.address
         sourcePort = rule.sourceSide.port ?? ""
         destinationAddress = rule.destinationSide.address
@@ -991,7 +982,7 @@ struct RuleEditForm {
             "tracker": .string(rule.tracker),
             "interface": .string(interface),
             "type": .string(type),
-            "ipprotocol": rule.ipProtocol.map { .string($0) } ?? .null,
+            "ipprotocol": .string(addressFamily),
             "protocol": proto.isEmpty ? .string("any") : .string(proto),
             "source": .object(["address": .string(sourceAddress)]),
             "source_port": sourcePort.isEmpty ? .null : .string(sourcePort),
@@ -1021,70 +1012,152 @@ struct RuleEditForm {
         if !destinationPort.isEmpty {
             dict["destination_port"] = .string(destinationPort)
         }
-        if let ipProtocol {
-            dict["ipprotocol"] = .string(ipProtocol)
-        }
+        // Always sent. Omitting it does not mean "unchanged" to pfSense.
+        dict["ipprotocol"] = .string(addressFamily)
         return JSONDict(dict)
-    }
-
-    var ipProtocol: String? {
-        ["inet": "inet", "inet6": "inet6"].first(where: { $0.value == proto })?.key
     }
 }
 
+/// Editing one rule.
+///
+/// Was a bare SwiftUI `Form`, which is where the theming went: `Form` brings
+/// its own background, insets and typography, so the editor arrived in system
+/// grey with system fonts in the middle of a Catppuccin dashboard, and nothing
+/// in the theme could reach it. This is the app's own scroll view and slabs.
+///
+/// The closed vocabularies are pickers rather than text fields with the
+/// accepted values written into the placeholder. "Type (pass/block/reject)"
+/// puts the validation in the hint text, and a typo there is a malformed rule
+/// that the firewall is the first to find out about.
 struct RuleEditSheet: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dismiss) private var dismiss
-    let form: RuleEditForm
-    let onSave: (RuleEditForm) async -> Void
+
+    /// Interface handles this firewall actually has, so the field cannot name
+    /// one that does not exist.
+    let interfaces: [String]
+    /// Alias names this firewall has, so a field naming one that does not
+    /// exist is caught here rather than by pfSense refusing to load the rule.
+    let aliases: Set<String>
+    let onSave: (RuleEditForm) async -> Bool
 
     @State private var edited: RuleEditForm
     @State private var isSaving = false
 
-    init(rule: FirewallRule, form: RuleEditForm, onSave: @escaping (RuleEditForm) async -> Void, onCancel: @escaping () -> Void) {
-        self.form = form
+    init(form: RuleEditForm, interfaces: [String], aliases: Set<String>,
+         onSave: @escaping (RuleEditForm) async -> Bool) {
+        self.interfaces = interfaces
+        self.aliases = aliases
         self.onSave = onSave
+        self.original = form
         _edited = State(initialValue: form)
     }
 
+    private var problems: [FieldValidator.Problem] {
+        FieldValidator.problems(inRule: edited, aliases: aliases)
+    }
+
+    /// What the rule looked like when the sheet opened.
+    ///
+    /// Kept so Save can be disabled until something actually changed. An
+    /// unchanged save is a write to a firewall that alters nothing, spends the
+    /// rate limit, and puts a line in the audit trail saying an edit happened.
+    private let original: RuleEditForm
+
+    private var isDirty: Bool { edited != original }
+
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("Description", text: $edited.descr)
-                    TextField("Type (pass/block/reject)", text: $edited.type)
-                    TextField("Protocol", text: $edited.proto)
-                    TextField("Source address", text: $edited.sourceAddress)
-                    TextField("Source port", text: $edited.sourcePort)
-                    TextField("Destination address", text: $edited.destinationAddress)
-                    TextField("Destination port", text: $edited.destinationPort)
-                    Toggle("Disabled", isOn: $edited.disabled)
-                    Toggle("Log", isOn: $edited.logged)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Slab(rail: .info, title: "Rule") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            EditField(label: "Description", text: $edited.descr,
+                                      prompt: "What this rule is for", mono: false)
+                            EditChoice(label: "Action", options: FirewallVocabulary.ruleTypes,
+                                       selection: $edited.type)
+                            EditChoice(label: "Interface", options: interfaces,
+                                       selection: $edited.interface)
+                            EditChoice(label: "Protocol", options: FirewallVocabulary.protocols,
+                                       selection: $edited.proto)
+                            EditChoice(label: "IP version",
+                                       options: FirewallVocabulary.addressFamilies,
+                                       selection: $edited.addressFamily)
+                        }
+                    }
+
+                    Slab(rail: .info, title: "Source") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            EditField(label: "Address", text: $edited.sourceAddress,
+                                      prompt: "any, an address, or an alias")
+                            EditField(label: "Port", text: $edited.sourcePort,
+                                      prompt: "blank for any")
+                        }
+                    }
+
+                    Slab(rail: .info, title: "Destination") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            EditField(label: "Address", text: $edited.destinationAddress,
+                                      prompt: "any, an address, or an alias")
+                            EditField(label: "Port", text: $edited.destinationPort,
+                                      prompt: "blank for any")
+                        }
+                    }
+
+                    Slab(rail: .info, title: "Options") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            EditToggle(label: "Disabled",
+                                       detail: "Kept in the ruleset and not evaluated.",
+                                       isOn: $edited.disabled)
+                            EditToggle(label: "Log",
+                                       detail: "Matches appear in the filter log.",
+                                       isOn: $edited.logged)
+                        }
+                    }
+
+                    ProblemList(problems: problems)
                 }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 28)
             }
-            .navigationTitle("Edit")
+            .background(theme.bg.ignoresSafeArea())
+            .navigationTitle("Edit rule")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSaving {
                         ProgressView()
                     } else {
+                        // Awaits the write and closes on success. It used to
+                        // set a flag and return, so the button stayed live
+                        // through the whole save and a second tap sent a
+                        // second write.
                         Button("Save") {
-                            isSaving = true
                             Task {
-                                await onSave(edited)
+                                isSaving = true
+                                let saved = await onSave(edited)
+                                isSaving = false
+                                if saved { dismiss() }
                             }
                         }
+                        // Nothing invalid leaves this screen. pfSense takes
+                        // most of it and then quietly fails to load the
+                        // rule, which is a rule enforcing nothing while
+                        // the app says "saved".
+                        .disabled(!isDirty || !problems.isEmpty)
                     }
                 }
             }
+            .interactiveDismissDisabled(isSaving)
         }
     }
 }
 
-struct PortForwardEditForm {
+struct PortForwardEditForm: Equatable {
     var descr: String
     var proto: String
     var interface: String
@@ -1106,7 +1179,8 @@ struct PortForwardEditForm {
         targetAddress = forward.target
         localPort = forward.localPort ?? ""
         disabled = forward.disabled
-        addressFamily = forward.proto == "inet6" ? "inet6" : "inet"
+        // The forward's own field, not a guess from its protocol.
+        addressFamily = forward.ipProtocol ?? "inet"
     }
 
     func toDict(interface: String) -> JSONDict {
@@ -1130,56 +1204,151 @@ struct PortForwardEditForm {
     }
 }
 
+/// What is wrong with the form, if anything.
+///
+/// Listed at the bottom rather than beside each field: the fields are short and
+/// a message under one of them pushes the rest of the form around as somebody
+/// types, which is worse than reading a few lines in one place.
+struct ProblemList: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+
+    let problems: [FieldValidator.Problem]
+
+    var body: some View {
+        if !problems.isEmpty {
+            Slab(rail: .warn,
+                 title: problems.count == 1 ? "One problem" : "\(problems.count) problems") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(problems, id: \.field) { problem in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(problem.field.uppercased())
+                                .scaledFont(9, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                            Text(problem.message)
+                                .scaledFont(12)
+                                .foregroundStyle(theme.label)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Editing one port forward.
+///
+/// Same treatment as the rule editor, and the same reasons. The `interface`
+/// field here was worse than untidy: it was a text field the save path
+/// ignored, so moving a forward to another interface appeared to work and
+/// changed nothing on the firewall.
 struct PortForwardEditSheet: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dismiss) private var dismiss
-    let form: PortForwardEditForm
-    let onSave: (PortForwardEditForm) async -> Void
+
+    let interfaces: [String]
+    let aliases: Set<String>
+    let onSave: (PortForwardEditForm) async -> Bool
 
     @State private var edited: PortForwardEditForm
     @State private var isSaving = false
 
-    init(forward: PortForward, form: PortForwardEditForm, onSave: @escaping (PortForwardEditForm) async -> Void, onCancel: @escaping () -> Void) {
-        self.form = form
+    private let original: PortForwardEditForm
+
+    private var isDirty: Bool { edited != original }
+
+    init(form: PortForwardEditForm, interfaces: [String], aliases: Set<String>,
+         onSave: @escaping (PortForwardEditForm) async -> Bool) {
+        self.interfaces = interfaces
+        self.aliases = aliases
         self.onSave = onSave
+        self.original = form
         _edited = State(initialValue: form)
+    }
+
+    private var problems: [FieldValidator.Problem] {
+        FieldValidator.problems(inForward: edited, aliases: aliases)
     }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField("Description", text: $edited.descr)
-                    TextField("Interface", text: $edited.interface)
-                    TextField("Protocol (tcp/udp/tcp+udp/icmp/any)", text: $edited.proto)
-                    Toggle("Disabled", isOn: $edited.disabled)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Slab(rail: .info, title: "Forward") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            EditField(label: "Description", text: $edited.descr,
+                                      prompt: "What this forward is for", mono: false)
+                            EditChoice(label: "Interface", options: interfaces,
+                                       selection: $edited.interface)
+                            EditChoice(label: "Protocol", options: FirewallVocabulary.protocols,
+                                       selection: $edited.proto)
+                            EditChoice(label: "IP version",
+                                       options: FirewallVocabulary.addressFamilies,
+                                       selection: $edited.addressFamily)
+                        }
+                    }
+
+                    Slab(rail: .info, title: "Matched traffic") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            EditField(label: "Source address", text: $edited.sourceAddress,
+                                      prompt: "any, an address, or an alias")
+                            EditField(label: "Destination address",
+                                      text: $edited.destinationAddress,
+                                      prompt: "usually this interface's address")
+                            EditField(label: "Destination port",
+                                      text: $edited.destinationPort,
+                                      prompt: "the port on the outside")
+                        }
+                    }
+
+                    Slab(rail: .info, title: "Sent to") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            EditField(label: "Target address", text: $edited.targetAddress,
+                                      prompt: "the host inside")
+                            EditField(label: "Local port", text: $edited.localPort,
+                                      prompt: "blank to keep the same port")
+                        }
+                    }
+
+                    Slab(rail: .info, title: "Options") {
+                        EditToggle(label: "Disabled",
+                                   detail: "Kept in the NAT table and not applied.",
+                                   isOn: $edited.disabled)
+                    }
+
+                    ProblemList(problems: problems)
                 }
-                Section {
-                    TextField("Source address", text: $edited.sourceAddress)
-                    TextField("Destination address", text: $edited.destinationAddress)
-                    TextField("Destination port", text: $edited.destinationPort)
-                    TextField("Target IP", text: $edited.targetAddress)
-                    TextField("Local port", text: $edited.localPort)
-                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 28)
             }
-            .navigationTitle("Edit")
+            .background(theme.bg.ignoresSafeArea())
+            .navigationTitle("Edit port forward")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .disabled(isSaving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSaving {
                         ProgressView()
                     } else {
                         Button("Save") {
-                            isSaving = true
                             Task {
-                                await onSave(edited)
+                                isSaving = true
+                                let saved = await onSave(edited)
+                                isSaving = false
+                                if saved { dismiss() }
                             }
                         }
+                        // Nothing invalid leaves this screen. pfSense takes
+                        // most of it and then quietly fails to load the
+                        // rule, which is a rule enforcing nothing while
+                        // the app says "saved".
+                        .disabled(!isDirty || !problems.isEmpty)
                     }
                 }
             }
+            .interactiveDismissDisabled(isSaving)
         }
     }
 }

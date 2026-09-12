@@ -9,18 +9,31 @@ import Foundation
 ///
 /// The rules, enforced by `vaktpost-tools/tests/readonly.sh` on every publish:
 ///
-///   1. Snippets are `static let` constants here. Nothing may build one by
-///      interpolating a value at runtime — a snippet assembled from input is
-///      not a snippet anybody reviewed.
-///   2. None may contain `write_config`, `mwexec`, `exec(`, `shell_exec`,
-///      `system(`, `passthru`, `popen`, `proc_open`, `unlink`, `file_put_contents`,
-///      `rename`, `mkdir`, `rmdir`, `chmod`, `chown`, `fopen` in a write mode,
-///      or `eval`.
+///   1. Snippets are constants here. Nothing may build one by interpolating a
+///      value at runtime — a snippet assembled from input is not a snippet
+///      anybody reviewed.
+///   2. A snippet may write **only** if its name appears in `writeOperations`
+///      below, and then only through `write_config` and `write_filter`.
+///      Everything else that can change a box — `mwexec`, `exec(`,
+///      `shell_exec`, `system(`, `passthru`, `popen`, `proc_open`, `unlink`,
+///      `file_put_contents`, `rename`, `mkdir`, `rmdir`, `chmod`, `chown`,
+///      `fopen` in a write mode, `eval` — is forbidden everywhere, including
+///      in the write snippets.
 ///   3. Only functions on the allowlist below may be called.
 ///
-/// That is a weaker guarantee than the REST client's. There, a violation meant
-/// inventing a write verb that did not exist; here it means adding a line to a
-/// file. The check is real and runs in CI, but it is an allowlist somebody
+/// Rule 2 used to be "none may write", and for a long time that was true. When
+/// the app gained an editor it stopped being true, and the gate was answered
+/// with a `READONLY=0` switch that turned the whole suite off. That is the
+/// worst available shape: the promise is not weakened, it is unobservable, and
+/// a write added by accident looks exactly like the five added on purpose.
+///
+/// So the writes are named instead. The list below is the complete set of
+/// operations this app can perform on a firewall. Adding to it is a one-line
+/// change in a reviewed file, which is the point — it cannot happen quietly.
+///
+/// That is still a weaker guarantee than the REST client's. There, a violation
+/// meant inventing a write verb that did not exist; here it means adding a
+/// line. The check is real and runs in CI, but it is an allowlist somebody
 /// could extend rather than an absence somebody would have to manufacture, and
 /// that difference is worth being honest about.
 ///
@@ -28,6 +41,71 @@ import Foundation
 /// line count — it is drawn from a closed enum here, never from user input.
 /// String interpolation into PHP is how a read-only snippet becomes a shell.
 struct PHPSnippet: Sendable {
+
+    /// Every snippet permitted to change a firewall, by name.
+    ///
+    /// This is the app's complete write surface, and it is deliberately short
+    /// enough to read. `readonly.sh` checks it in both directions: a snippet
+    /// that writes and is not named here fails, and a name here whose snippet
+    /// no longer writes fails too — so the list cannot quietly grow, and it
+    /// cannot rot into a set of permissions nothing uses any more.
+    ///
+    /// Adding an entry is the moment to ask whether the operation belongs in
+    /// an app that people point at production firewalls from a phone.
+    static let writeOperations: Set<String> = [
+        "reload_firewall",      // write_filter() — reloads the ruleset in place
+        "quick_block",          // adds a block rule for one address
+        "delete_rule",          // removes one filter rule by tracker
+        "delete_nat_rule",      // removes one NAT rule by tracker
+        "save_rule",            // replaces one filter rule by tracker
+        "save_nat_rule",        // replaces one NAT rule
+        "restart_service",      // restarts one named service
+        "flush_states"          // drops the state table, or one interface's
+    ]
+
+    // The last two were not on this list when it was first written, and the
+    // check found them. That is the argument for having it: the app's write
+    // surface was believed to be six operations and was eight, and nothing
+    // anywhere said so.
+    //
+    // The names these snippets carried made that worse — `delete_rule_\(tracker)`
+    // and `save_nat_\(descr)` meant every call produced a different name, so
+    // the write surface could not be enumerated by name at all. The tracker is
+    // in the audit trail, which is where it belongs; the name identifies the
+    // operation.
+
+    /// A value on its way into a snippet, encoded so it cannot be read as code.
+    ///
+    /// This is the fix for the sharpest edge in the app. The write snippets
+    /// interpolated their arguments straight into PHP source — a rule's
+    /// description went into the middle of a double-quoted PHP string, and a
+    /// description containing a quote ended that string. A description
+    /// containing the right quote, a semicolon and a call ran it on the
+    /// firewall, as root, from a text field in the editor.
+    ///
+    /// Base64 closes it structurally rather than by escaping. The alphabet is
+    /// `A-Z a-z 0-9 + / =` and nothing in it can terminate a PHP string
+    /// literal, so the snippet text stays exactly what was reviewed no matter
+    /// what a person types. The snippet decodes it back into an array on the
+    /// other side.
+    ///
+    /// Escaping would have been the obvious alternative and is the wrong one:
+    /// it has to be right every time, in a language whose string rules differ
+    /// from Swift's, and getting it wrong looks like working code.
+    static func payload(_ value: JSONDict) -> String {
+        let object = JSONValue.object(value.raw)
+        guard let data = try? JSONEncoder().encode(object) else { return "" }
+        return data.base64EncodedString()
+    }
+
+    /// The PHP that turns one of those back into an array.
+    ///
+    /// Kept here so every write snippet decodes it the same way, and so the
+    /// name of the variable it lands in is the app's rather than a guess.
+    static let decodePayload = """
+    $vaktpost_input = json_decode(base64_decode($vaktpost_payload), true);
+    if (!is_array($vaktpost_input)) { $vaktpost_input = []; }
+    """
 
     /// Named so failures can be reported against something a person recognises.
     let name: String
@@ -118,9 +196,6 @@ struct PHPSnippet: Sendable {
         // Output buffering, so a pfSense function that echoes can be called
         // without its output landing in the XML-RPC response body.
         "ob_start", "ob_get_clean",
-        // Safe writes: config mutation + filter reload, gated by our app's
-        // write rate limiter and user confirmation dialog.
-        "write_config", "write_filter",
         // The one entry on this list that is not a counter read.
         //
         // `printBandwidth` shells out to `/usr/local/bin/rate` for a
@@ -133,7 +208,24 @@ struct PHPSnippet: Sendable {
         // buried: it is exactly what status_graph.php does when that page is
         // open, and there is no other source for per-host rates on pfSense.
         "printBandwidth",
-        // Write operations (guarded by UI confirmations and audit trail)
+        // Removing one element from a local array, which is how a rule is
+        // deleted from a copy before the copy is assigned back. Neither can
+        // reach disk. `unset` pointed at `$config` would be a different thing
+        // and `readonly.sh` fails on it separately.
+        "array_filter", "unset",
+        // Decoding a base64 payload back into an array. Neither reads a file
+        // nor evaluates anything: `json_decode` is a parser, and the second
+        // argument makes it return arrays rather than objects.
+        "base64_decode", "json_decode",
+        // The writes.
+        //
+        // Reachable only from the snippets named in `writeOperations` above —
+        // `readonly.sh` fails if one of these appears anywhere else. They are
+        // additionally gated in the app by the write rate limiter, a
+        // confirmation step, and the audit trail.
+        //
+        // Listed once. They were here twice, from two separate edits, which is
+        // how an allowlist stops being something anybody reads.
         "write_config", "write_filter", "pfctl_clear_states", "pfctl_clear_states_by_if",
         "restart_service",
     ]
@@ -2567,11 +2659,15 @@ struct PHPSnippet: Sendable {
     ///
     /// - Parameter serviceName: The service name (e.g. "dnsresolver", "dhcpd").
     static func restartService(serviceName: String) -> PHPSnippet {
-        PHPSnippet("restart_service_\(serviceName)", """
+        let encoded = payload(JSONDict(["name": .string(serviceName)]))
+        return PHPSnippet("restart_service", """
         ini_set('display_errors', 0);
         $toreturn = [];
-        if (function_exists('restart_service')) {
-          $result = restart_service("\(serviceName)");
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_name = strval($vaktpost_input["name"] ?? "");
+        if ($vaktpost_name !== "" && function_exists('restart_service')) {
+          $result = restart_service($vaktpost_name);
           $toreturn["status"] = $result ? "ok" : "failed";
         } else {
           $toreturn["status"] = "service_not_found";
@@ -2587,27 +2683,44 @@ struct PHPSnippet: Sendable {
     ///   - address: The IP address or subnet to block.
     ///   - description: A description for the rule.
     static func quickBlock(interface: String, address: String, description: String) -> PHPSnippet {
-        PHPSnippet("quick_block", """
+        let encoded = payload(JSONDict([
+            "interface": .string(interface),
+            "address": .string(address),
+            "descr": .string(description)
+        ]))
+        return PHPSnippet("quick_block", """
         ini_set('display_errors', 0);
         require_once '/etc/inc/util.inc';
         require_once '/etc/inc/filter.inc';
         $toreturn = [];
-        $block_rule = [
-          'type' => 'block',
-          'interface' => "\(interface)",
-          'address' => "\(address)",
-          'descr' => "\(description)",
-          'protocol' => 'any',
-          'source' => ['network' => "\(address)"],
-          'destination' => ['network' => "any"],
-        ];
-        if (!is_array($config['rules'])) { $config['rules'] = []; }
-        if (!is_array($config['rules']["\(interface)"])) { $config['rules']["\(interface)"] = []; }
-        $config['rules']["\(interface)"][] = $block_rule;
-        write_config("Vaktpost: quick-block rule added");
-        write_filter();
-        $toreturn["status"] = "ok";
-        $toreturn["rule"] = $block_rule;
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_if = strval($vaktpost_input["interface"] ?? "");
+        $vaktpost_addr = strval($vaktpost_input["address"] ?? "");
+        if ($vaktpost_if === "" || $vaktpost_addr === "") {
+          $toreturn["status"] = "invalid";
+        } else {
+          $block_rule = [
+            'type' => 'block',
+            'interface' => $vaktpost_if,
+            'address' => $vaktpost_addr,
+            'descr' => strval($vaktpost_input["descr"] ?? ""),
+            'protocol' => 'any',
+            'source' => ['network' => $vaktpost_addr],
+            'destination' => ['network' => "any"],
+          ];
+          $vaktpost_rules = $config['rules'];
+          if (!is_array($vaktpost_rules)) { $vaktpost_rules = []; }
+          $vaktpost_on = $vaktpost_rules[$vaktpost_if] ?? [];
+          if (!is_array($vaktpost_on)) { $vaktpost_on = []; }
+          $vaktpost_on[] = $block_rule;
+          $vaktpost_rules[$vaktpost_if] = $vaktpost_on;
+          $config['rules'] = $vaktpost_rules;
+          write_config("Vaktpost: quick-block rule added");
+          write_filter();
+          $toreturn["status"] = "ok";
+          $toreturn["rule"] = $block_rule;
+        }
         """)
     }
 
@@ -2615,41 +2728,54 @@ struct PHPSnippet: Sendable {
     ///
     /// - Parameter interface: Optional interface to flush states for. Empty means all interfaces.
     static func flushStates(interface: String = "") -> PHPSnippet {
-        PHPSnippet("flush_states", """
+        let encoded = payload(JSONDict(["interface": .string(interface)]))
+        return PHPSnippet("flush_states", """
         ini_set('display_errors', 0);
         require_once '/etc/inc/filter.inc';
         $toreturn = [];
-        if ("\(interface)" === "") {
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_if = strval($vaktpost_input["interface"] ?? "");
+        if ($vaktpost_if === "") {
           pfctl_clear_states();
-          $toreturn["status"] = "all_flushed";
+          $toreturn["scope"] = "all";
         } else {
-          pfctl_clear_states_by_if("\(interface)");
-          $toreturn["status"] = "interface_flushed";
+          pfctl_clear_states_by_if($vaktpost_if);
+          $toreturn["scope"] = $vaktpost_if;
         }
+        $toreturn["status"] = "ok";
         """)
     }
 
-    /// Deletes a firewall rule by tracker ID.
     static func deleteRule(tracker: String) -> PHPSnippet {
-        PHPSnippet("delete_rule_\(tracker)", """
+        let encoded = payload(JSONDict(["tracker": .string(tracker)]))
+        return PHPSnippet("delete_rule", """
         ini_set('display_errors', 0);
         require_once '/etc/inc/util.inc';
         require_once '/etc/inc/filter.inc';
         $toreturn = [];
-        $tracker = "\(tracker)";
-        $filter = $config["filter"];
-        $rules = (is_array($filter) && is_iterable($filter["rule"])) ? $filter["rule"] : [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $tracker = strval($vaktpost_input["tracker"] ?? "");
+        $section = $config["filter"];
+        $rules = (is_array($section) && is_iterable($section["rule"])) ? $section["rule"] : [];
         $found = false;
-        foreach ($rules as $idx => $rule) {
-          if (is_array($rule) && ($rule["tracker"] ?? "") === $tracker) {
-            unset($rules[$idx]);
-            $found = true;
-            break;
+        if ($tracker !== "") {
+          foreach ($rules as $idx => $rule) {
+            if (is_array($rule) && ($rule["tracker"] ?? "") === $tracker) {
+              unset($rules[$idx]);
+              $found = true;
+              break;
+            }
           }
         }
         if ($found) {
           $config["filter"]["rule"] = array_values($rules);
-          write_config("Vaktpost: deleted rule \(tracker)");
+          // The tracker is no longer spliced into this message. It came from
+          // the caller and went straight into a PHP string literal, which is
+          // the same hole as everywhere else; the audit trail records which
+          // rule went, which is where that belongs.
+          write_config("Vaktpost: deleted a rule");
           write_filter();
           $toreturn["status"] = "ok";
         } else {
@@ -2660,25 +2786,34 @@ struct PHPSnippet: Sendable {
 
     /// Deletes a NAT/port forward rule by tracker ID.
     static func deleteNatRule(tracker: String) -> PHPSnippet {
-        PHPSnippet("delete_nat_\(tracker)", """
+        let encoded = payload(JSONDict(["tracker": .string(tracker)]))
+        return PHPSnippet("delete_nat_rule", """
         ini_set('display_errors', 0);
         require_once '/etc/inc/util.inc';
         require_once '/etc/inc/filter.inc';
         $toreturn = [];
-        $tracker = "\(tracker)";
-        $nat = $config["nat"];
-        $rules = (is_array($nat) && is_iterable($nat["rule"])) ? $nat["rule"] : [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $tracker = strval($vaktpost_input["tracker"] ?? "");
+        $section = $config["nat"];
+        $rules = (is_array($section) && is_iterable($section["rule"])) ? $section["rule"] : [];
         $found = false;
-        foreach ($rules as $idx => $rule) {
-          if (is_array($rule) && ($rule["tracker"] ?? "") === $tracker) {
-            unset($rules[$idx]);
-            $found = true;
-            break;
+        if ($tracker !== "") {
+          foreach ($rules as $idx => $rule) {
+            if (is_array($rule) && ($rule["tracker"] ?? "") === $tracker) {
+              unset($rules[$idx]);
+              $found = true;
+              break;
+            }
           }
         }
         if ($found) {
           $config["nat"]["rule"] = array_values($rules);
-          write_config("Vaktpost: deleted nat rule \(tracker)");
+          // The tracker is no longer spliced into this message. It came from
+          // the caller and went straight into a PHP string literal, which is
+          // the same hole as everywhere else; the audit trail records which
+          // rule went, which is where that belongs.
+          write_config("Vaktpost: deleted a nat rule");
           write_filter();
           $toreturn["status"] = "ok";
         } else {
@@ -2688,136 +2823,184 @@ struct PHPSnippet: Sendable {
     }
 
     /// Saves a firewall rule by tracker ID.
+    ///
+    /// The whole rule crosses as one encoded payload. It used to cross as a
+    /// dozen interpolations *and three generated fragments of PHP* — the
+    /// optional fields were assembled as source text, so the snippet's own
+    /// shape depended on the values it carried. A description containing a
+    /// double quote ended a PHP string literal; one containing the right
+    /// characters ran as code, as root, typed into the editor.
+    ///
+    /// What is sent is now data, and the snippet below is fixed text that does
+    /// the same thing whatever the data says.
     static func saveRule(rule: JSONDict) -> PHPSnippet {
-        let tracker = rule.string("tracker") ?? ""
-        let interface = rule.string("interface") ?? ""
-        let type = rule.string("type") ?? "pass"
-        let protocol_val = rule.string("protocol") ?? "any"
-        let ipprotocol = rule.string("ipprotocol")
-        let source = rule.dict("source") ?? JSONDict(["address": .string("any")])
-        let source_port = rule.string("source_port")
-        let destination = rule.dict("destination") ?? JSONDict(["address": .string("any")])
-        let destination_port = rule.string("destination_port")
-        let descr = rule.string("descr") ?? ""
-        let disabled = rule.bool("disabled") ?? false
-        let logged = rule.bool("log") ?? false
-
-        let sourceAddress = source.string("address") ?? "any"
-        let destAddress = destination.string("address") ?? "any"
-
-        var ipprotocolLine = ""
-        if let ipprotocol {
-            ipprotocolLine = "[\"ipprotocol\"] = \"\(ipprotocol)\""
-        } else {
-            ipprotocolLine = "// ipprotocol not set"
-        }
-        var sourcePortLine = ""
-        if let source_port {
-            sourcePortLine = "[\"source_port\"] = \"\(source_port)\""
-        } else {
-            sourcePortLine = "unset($rule[\"source_port\"])"
-        }
-        var destPortLine = ""
-        if let destination_port {
-            destPortLine = "[\"destination_port\"] = \"\(destination_port)\""
-        } else {
-            destPortLine = "unset($rule[\"destination_port\"])"
-        }
-
-        return PHPSnippet("save_rule_\(tracker)", """
+        let encoded = payload(rule)
+        return PHPSnippet("save_rule", """
         ini_set('display_errors', 0);
         require_once '/etc/inc/util.inc';
         require_once '/etc/inc/filter.inc';
         $toreturn = [];
-        $tracker = "\(tracker)";
-        $filter = $config["filter"];
-        $rules = (is_array($filter) && is_iterable($filter["rule"])) ? $filter["rule"] : [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+
+        $tracker = strval($vaktpost_input["tracker"] ?? "");
+        $section = $config["filter"];
+        $rules = (is_array($section) && is_iterable($section["rule"])) ? $section["rule"] : [];
         $found = false;
-        $rule = null;
+        $rule = [];
+        if ($tracker !== "") {
+          foreach ($rules as $idx => $r) {
+            if (is_array($r) && ($r["tracker"] ?? "") === $tracker) {
+              $rule = $r;
+              unset($rules[$idx]);
+              $found = true;
+              break;
+            }
+          }
+        }
+
+        $rule["interface"] = strval($vaktpost_input["interface"] ?? "");
+        $rule["type"] = strval($vaktpost_input["type"] ?? "pass");
+        $rule["protocol"] = strval($vaktpost_input["protocol"] ?? "any");
+        $rule["ipprotocol"] = strval($vaktpost_input["ipprotocol"] ?? "inet");
+        $rule["descr"] = strval($vaktpost_input["descr"] ?? "");
+        $rule["disabled"] = ($vaktpost_input["disabled"] ?? false) ? true : false;
+        $rule["log"] = ($vaktpost_input["log"] ?? false) ? true : false;
+
+        $vaktpost_src = $vaktpost_input["source"] ?? [];
+        $vaktpost_dst = $vaktpost_input["destination"] ?? [];
+        $rule["source"] = ["address" => strval(is_array($vaktpost_src) ? ($vaktpost_src["address"] ?? "any") : "any")];
+        $rule["destination"] = ["address" => strval(is_array($vaktpost_dst) ? ($vaktpost_dst["address"] ?? "any") : "any")];
+
+        // Absent means absent. A port key left behind with an empty value is a
+        // rule pfSense reads differently from one without the key at all.
+        $vaktpost_sport = strval($vaktpost_input["source_port"] ?? "");
+        if ($vaktpost_sport !== "") {
+          $rule["source_port"] = $vaktpost_sport;
+        } else {
+          unset($rule["source_port"]);
+        }
+        $vaktpost_dport = strval($vaktpost_input["destination_port"] ?? "");
+        if ($vaktpost_dport !== "") {
+          $rule["destination_port"] = $vaktpost_dport;
+        } else {
+          unset($rule["destination_port"]);
+        }
+
+        if (!$found) { $rules[] = $rule; }
+        $config["filter"]["rule"] = array_values($rules);
+        write_config("Vaktpost: saved a rule");
+        write_filter();
+        $toreturn["status"] = "ok";
+        $toreturn["created"] = !$found;
+        """)
+    }
+
+    /// Saves a NAT/port forward rule.
+    ///
+    /// Same treatment as `saveRule`, and it had the same hole.
+    ///
+    /// It also only ever appended. Editing a forward added a second one with
+    /// the same description and left the original in place, so "save" grew the
+    /// NAT table by one every time it was pressed.
+    ///
+    /// Matching it back is the awkward part, because `PortForward` carries no
+    /// tracker — the app has never read one, so the tracker branch here is for
+    /// a future where it does, and today every match falls to the second
+    /// branch. That branch uses interface, destination address, destination
+    /// port and target, which is what `PortForward.id` has always been.
+    ///
+    /// The port is load-bearing. Left out, two forwards to one host on one
+    /// interface — 80 and 443 to 10.0.0.5 — match identically, and editing
+    /// either one replaces the other.
+    ///
+    /// Changing the destination or the target of an existing forward will not
+    /// match it and will append instead. That is a real limitation and the
+    /// safe direction to fail in: a duplicate is visible and removable, a
+    /// wrongly-replaced rule is neither.
+    static func saveNatRule(rule: JSONDict) -> PHPSnippet {
+        let encoded = payload(rule)
+        return PHPSnippet("save_nat_rule", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        $toreturn = [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+
+        $section = $config["nat"];
+        $rules = (is_array($section) && is_iterable($section["rule"])) ? $section["rule"] : [];
+
+        $tracker = strval($vaktpost_input["tracker"] ?? "");
+        $vaktpost_if = strval($vaktpost_input["interface"] ?? "");
+        $vaktpost_target = strval($vaktpost_input["target"] ?? "");
+        $vaktpost_dst = $vaktpost_input["destination"] ?? [];
+        $vaktpost_dstaddr = strval(is_array($vaktpost_dst) ? ($vaktpost_dst["address"] ?? "any") : "any");
+        // The port is part of what identifies a forward.
+        //
+        // Without it, two forwards to the same host on the same interface —
+        // 80 and 443 to 10.0.0.5, which is an ordinary pair — have identical
+        // interface, destination and target, so editing one replaced the
+        // other. `PortForward.id` in the app has always included the port;
+        // this had dropped it.
+        $vaktpost_dstport = strval($vaktpost_input["destination_port"] ?? "");
+
+        $found = false;
+        $rule = [];
         foreach ($rules as $idx => $r) {
-          if (is_array($r) && ($r["tracker"] ?? "") === $tracker) {
+          if (!is_array($r)) { continue; }
+          $vaktpost_match = false;
+          if ($tracker !== "" && ($r["tracker"] ?? "") === $tracker) {
+            $vaktpost_match = true;
+          } elseif ($tracker === "") {
+            $vaktpost_rdst = $r["destination"] ?? [];
+            $vaktpost_rdstaddr = strval(is_array($vaktpost_rdst) ? ($vaktpost_rdst["address"] ?? "") : "");
+            $vaktpost_rdstport = strval($r["destination_port"] ?? "");
+            if (strval($r["interface"] ?? "") === $vaktpost_if
+                && strval($r["target"] ?? "") === $vaktpost_target
+                && $vaktpost_rdstaddr === $vaktpost_dstaddr
+                && $vaktpost_rdstport === $vaktpost_dstport) {
+              $vaktpost_match = true;
+            }
+          }
+          if ($vaktpost_match) {
             $rule = $r;
             unset($rules[$idx]);
             $found = true;
             break;
           }
         }
-        if (!$found) {
-          $rule = [];
-        }
-        $rule["interface"] = "\(interface)";
-        $rule["type"] = "\(type)";
-        $rule["protocol"] = "\(protocol_val)";
-        $rule\(ipprotocolLine);
-        $rule["source"] = array_filter(["address" => "\(sourceAddress)"], function($v) { return $v !== ""; });
-        $rule\(sourcePortLine);
-        $rule["destination"] = array_filter(["address" => "\(destAddress)"], function($v) { return $v !== ""; });
-        $rule\(destPortLine);
-        $rule["descr"] = "\(descr)";
-        $rule["disabled"] = \(disabled ? "true" : "false");
-        $rule["log"] = \(logged ? "true" : "false");
-        if (!$found) {
-          $rules[] = $rule;
-        }
-        $config["filter"]["rule"] = array_values($rules);
-        write_config("Vaktpost: saved rule \(tracker)");
-        write_filter();
-        $toreturn["status"] = "ok";
-        """)
-    }
 
-    /// Saves a NAT/port forward rule.
-    static func saveNatRule(rule: JSONDict) -> PHPSnippet {
-        let interface = rule.string("interface") ?? ""
-        let protocol_val = rule.string("protocol") ?? "any"
-        let ipprotocol = rule.string("ipprotocol") ?? "inet"
-        let source = rule.dict("source") ?? JSONDict(["address": .string("any")])
-        let destination = rule.dict("destination") ?? JSONDict(["address": .string("any")])
-        let destination_port = rule.string("destination_port")
-        let target = rule.string("target") ?? ""
-        let local_port = rule.string("local_port")
-        let descr = rule.string("descr") ?? ""
-        let disabled = rule.bool("disabled") ?? false
+        $rule["interface"] = $vaktpost_if;
+        $rule["protocol"] = strval($vaktpost_input["protocol"] ?? "any");
+        $rule["ipprotocol"] = strval($vaktpost_input["ipprotocol"] ?? "inet");
+        $rule["target"] = $vaktpost_target;
+        $rule["descr"] = strval($vaktpost_input["descr"] ?? "");
+        $rule["disabled"] = ($vaktpost_input["disabled"] ?? false) ? true : false;
 
-        let sourceAddress = source.string("address") ?? "any"
-        let destAddress = destination.string("address") ?? "any"
+        $vaktpost_src = $vaktpost_input["source"] ?? [];
+        $rule["source"] = ["address" => strval(is_array($vaktpost_src) ? ($vaktpost_src["address"] ?? "any") : "any")];
+        $rule["destination"] = ["address" => $vaktpost_dstaddr];
 
-        var destPortLine = ""
-        if let destination_port {
-            destPortLine = "[\"destination_port\"] = \"\(destination_port)\""
+        $vaktpost_dport = strval($vaktpost_input["destination_port"] ?? "");
+        if ($vaktpost_dport !== "") {
+          $rule["destination_port"] = $vaktpost_dport;
         } else {
-            destPortLine = "unset($rule[\"destination_port\"])"
+          unset($rule["destination_port"]);
         }
-        var localPortLine = ""
-        if let local_port {
-            localPortLine = "[\"local_port\"] = \"\(local_port)\""
+        $vaktpost_lport = strval($vaktpost_input["local_port"] ?? "");
+        if ($vaktpost_lport !== "") {
+          $rule["local_port"] = $vaktpost_lport;
         } else {
-            localPortLine = "unset($rule[\"local_port\"])"
+          unset($rule["local_port"]);
         }
 
-        return PHPSnippet("save_nat_\(descr)", """
-        ini_set('display_errors', 0);
-        require_once '/etc/inc/util.inc';
-        require_once '/etc/inc/filter.inc';
-        $toreturn = [];
-        $nat = $config["nat"];
-        $rules = (is_array($nat) && is_iterable($nat["rule"])) ? $nat["rule"] : [];
-        $rule = [];
-        $rule["interface"] = "\(interface)";
-        $rule["protocol"] = "\(protocol_val)";
-        $rule["srcipprotocol"] = "\(ipprotocol)";
-        $rule["source"] = array_filter(["address" => "\(sourceAddress)"], function($v) { return $v !== ""; });
-        $rule\(destPortLine);
-        $rule["destination"] = array_filter(["address" => "\(destAddress)"], function($v) { return $v !== ""; });
-        $rule["target"] = "\(target)";
-        $rule\(localPortLine);
-        $rule["descr"] = "\(descr)";
-        $rule["disabled"] = \(disabled ? "true" : "false");
         $rules[] = $rule;
         $config["nat"]["rule"] = array_values($rules);
-        write_config("Vaktpost: saved nat rule \(descr)");
+        write_config("Vaktpost: saved a nat rule");
         write_filter();
         $toreturn["status"] = "ok";
+        $toreturn["created"] = !$found;
         """)
     }
 

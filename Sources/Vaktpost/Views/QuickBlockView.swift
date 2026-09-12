@@ -18,7 +18,6 @@ struct QuickBlockView: View {
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
     @State private var lastBlockedEntry: AuditTrail.Entry?
-    @State private var useStaging = false
 
     var body: some View {
         NavigationStack {
@@ -33,7 +32,6 @@ struct QuickBlockView: View {
 
                 sectionHeader("Mode")
 
-                stagingToggle
 
                 sectionHeader("Action")
 
@@ -109,47 +107,31 @@ struct QuickBlockView: View {
         }
     }
 
-    private var stagingToggle: some View {
-        LabeledContent("Staging") {
-            Toggle("", isOn: $useStaging)
-                .labelsHidden()
-        }
-        .help(useStaging ? "Changes will be staged for batch apply" : "Tap to enable staging mode")
-    }
-
     private var executeButton: some View {
         Button {
             writeError = nil
-            isExecuting = true
-            defer { isExecuting = false }
-
-            if !address.isEmpty && selectedInterface != nil {
-                if useStaging {
-                    stageBlock()
-                } else {
-                    if !store.rateLimiter.allowWrite() {
-                        writeError = WriteError(
-                            title: "Rate limited",
-                            message: "Please wait a few seconds between actions.",
-                            suggestion: nil
-                        )
-                        showErrorAlert = true
-                        return
-                    }
-                    showConfirmation = true
-                }
+            guard !address.isEmpty, selectedInterface != nil else { return }
+            guard store.rateLimiter.allowWrite() else {
+                writeError = WriteError(
+                    title: "Rate limited",
+                    message: "Please wait a few seconds between actions.",
+                    suggestion: nil
+                )
+                showErrorAlert = true
+                return
             }
+            showConfirmation = true
         } label: {
             HStack {
                 Spacer()
-                Text(useStaging ? "Stage block rule" : "Add block rule")
-                Image(systemName: useStaging ? "square.badge.plus" : "shield.slash")
+                Text("Add block rule")
+                Image(systemName: "shield.slash")
             }
-            .foregroundStyle(useStaging ? theme.info : theme.bad)
+            .foregroundStyle(theme.bad)
             .font(.headline)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
-            .background(useStaging ? theme.info.opacity(0.1) : theme.bad.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            .background(theme.bad.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
         }
     }
 
@@ -157,6 +139,14 @@ struct QuickBlockView: View {
 
     private func confirmBlock() async {
         guard let iface = selectedInterface else { return }
+
+        // Set around the write, not around opening the sheet.
+        // It was set and cleared by a `defer` in the button's own
+        // closure, which only raised the confirmation — so the flag
+        // was never observed true and the button never showed that
+        // anything was happening.
+        isExecuting = true
+        defer { isExecuting = false }
 
         let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
 
@@ -200,23 +190,6 @@ struct QuickBlockView: View {
         }
     }
 
-    private func stageBlock() {
-        guard let iface = selectedInterface else { return }
-
-        let op = FirewallClient.stageQuickBlock(
-            interface: iface.device,
-            address: address,
-            description: description.isEmpty ? "Blocked by Vaktpost" : description
-        )
-
-        store.stagedChanges.stage(
-            action: op.action,
-            target: op.target,
-            description: op.description
-        )
-
-        writeError = nil
-    }
 
     // MARK: - Helpers
 

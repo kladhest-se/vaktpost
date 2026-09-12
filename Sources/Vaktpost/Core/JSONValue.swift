@@ -8,7 +8,7 @@ import Foundation
 /// strict `Codable` struct makes the whole screen fail on one renamed key, so
 /// responses are decoded into `JSONValue` and read through the accessors below,
 /// each of which accepts a list of candidate keys and coerces types.
-indirect enum JSONValue: Decodable, Sendable {
+indirect enum JSONValue: Codable, Sendable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -25,6 +25,30 @@ indirect enum JSONValue: Decodable, Sendable {
         if let v = try? c.decode([String: JSONValue].self) { self = .object(v); return }
         if let v = try? c.decode([JSONValue].self) { self = .array(v); return }
         self = .null
+    }
+
+    /// Encoding, which this type did not need until the app started writing.
+    ///
+    /// It was `Decodable` alone for as long as everything travelled one way.
+    /// The write path sends a rule as a base64 payload rather than
+    /// interpolating its fields into PHP, and that payload has to be produced
+    /// from the same representation everything else is read through — a second
+    /// model for values on the way out would eventually disagree with the one
+    /// on the way in about what a number or an empty value is.
+    ///
+    /// `.null` encodes as JSON null rather than being omitted. A key that
+    /// vanishes and a key that is null mean different things to pfSense, and
+    /// the snippet decides which fields to drop.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value): try container.encode(value)
+        case .number(let value): try container.encode(value)
+        case .bool(let value): try container.encode(value)
+        case .object(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
+        case .null: try container.encodeNil()
+        }
     }
 
     var objectValue: [String: JSONValue]? { if case .object(let o) = self { return o }; return nil }

@@ -18,7 +18,6 @@ struct FlushStatesView: View {
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
     @State private var lastFlushTime: Date?
-    @State private var useStaging = false
 
     var body: some View {
         NavigationStack {
@@ -31,7 +30,6 @@ struct FlushStatesView: View {
 
                 sectionHeader("Mode")
 
-                stagingToggle
 
                 sectionHeader("Action")
 
@@ -102,19 +100,9 @@ struct FlushStatesView: View {
         }
     }
 
-    private var stagingToggle: some View {
-        LabeledContent("Staging") {
-            Toggle("", isOn: $useStaging)
-                .labelsHidden()
-        }
-        .help(useStaging ? "Changes will be staged for batch apply" : "Tap to enable staging mode")
-    }
-
     private var executeButton: some View {
         Button {
             writeError = nil
-            isExecuting = true
-            defer { isExecuting = false }
 
             if !flushAll && selectedInterface == nil {
                 writeError = WriteError(
@@ -126,31 +114,27 @@ struct FlushStatesView: View {
                 return
             }
 
-            if useStaging {
-                stageFlush()
-            } else {
-                if !store.rateLimiter.allowWrite() {
-                    writeError = WriteError(
-                        title: "Rate limited",
-                        message: "Please wait a few seconds between actions.",
-                        suggestion: nil
-                    )
-                    showErrorAlert = true
-                    return
-                }
-                showConfirmation = true
+            guard store.rateLimiter.allowWrite() else {
+                writeError = WriteError(
+                    title: "Rate limited",
+                    message: "Please wait a few seconds between actions.",
+                    suggestion: nil
+                )
+                showErrorAlert = true
+                return
             }
+            showConfirmation = true
         } label: {
             HStack {
                 Spacer()
-                Text(useStaging ? "Stage flush" : "Flush states")
-                Image(systemName: useStaging ? "square.badge.plus" : "trash")
+                Text("Flush states")
+                Image(systemName: "trash")
             }
-            .foregroundStyle(useStaging ? theme.info : theme.bad)
+            .foregroundStyle(theme.bad)
             .font(.headline)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
-            .background(useStaging ? theme.info.opacity(0.1) : theme.bad.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            .background(theme.bad.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
         }
     }
 
@@ -166,6 +150,14 @@ struct FlushStatesView: View {
 
     private func confirmFlush() async {
         let interface = flushAll ? "" : (selectedInterface?.device ?? "")
+
+        // Set around the write, not around opening the sheet.
+        // It was set and cleared by a `defer` in the button's own
+        // closure, which only raised the confirmation — so the flag
+        // was never observed true and the button never showed that
+        // anything was happening.
+        isExecuting = true
+        defer { isExecuting = false }
 
         let retrier = Retrier(maxAttempts: 2, baseDelay: 1.0)
 
@@ -196,19 +188,6 @@ struct FlushStatesView: View {
         }
     }
 
-    private func stageFlush() {
-        let interface = flushAll ? "" : (selectedInterface?.device ?? "")
-
-        let op = FirewallClient.stageFlushStates(interface: interface)
-
-        store.stagedChanges.stage(
-            action: op.action,
-            target: op.target,
-            description: op.description
-        )
-
-        writeError = nil
-    }
 
     // MARK: - Helpers
 

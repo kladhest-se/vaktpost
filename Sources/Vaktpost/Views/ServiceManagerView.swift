@@ -16,7 +16,6 @@ struct ServiceManagerView: View {
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
     @State private var lastRestartedService: String?
-    @State private var useStaging = false
 
     var body: some View {
         NavigationStack {
@@ -46,12 +45,10 @@ struct ServiceManagerView: View {
             }
             .confirmationSheet(
                 isPresented: $showRestartSheet,
-                title: useStaging ? "Stage service restart" : "Restart service",
-                message: useStaging
-                    ? "This will stage a restart of \(targetService?.descr ?? targetService?.name ?? "the service") for batch apply."
-                    : "This will restart \(targetService?.descr ?? targetService?.name ?? "the service").",
-                destructive: useStaging,
-                destructiveLabel: "Stage",
+                title: "Restart service",
+                message: "This will restart \(targetService?.descr ?? targetService?.name ?? "the service").",
+                destructive: true,
+                destructiveLabel: "Restart",
                 confirmLabel: "Cancel",
                 onConfirm: confirmRestart,
                 onCancel: {}
@@ -131,11 +128,6 @@ struct ServiceManagerView: View {
                             .foregroundStyle(theme.ok)
                     }
 
-                    if store.stagedChanges.changes.contains(where: { $0.target == service.name && $0.action == "restart_service" }) {
-                        Text("staged")
-                            .scaledFont(10, weight: .semibold)
-                            .foregroundStyle(theme.info)
-                    }
                 }
                 .frame(width: 90)
             }
@@ -161,11 +153,6 @@ struct ServiceManagerView: View {
 
         isRestarting = true
         defer { isRestarting = false }
-
-        if useStaging {
-            stageRestart(service: service)
-            return
-        }
 
         if !store.rateLimiter.allowWrite() {
             writeError = WriteError(
@@ -206,15 +193,4 @@ struct ServiceManagerView: View {
         }
     }
 
-    private func stageRestart(service: ServiceStatus) {
-        let op = FirewallClient.stageRestartService(named: service.name)
-
-        store.stagedChanges.stage(
-            action: op.action,
-            target: op.target,
-            description: op.description
-        )
-
-        writeError = nil
-    }
 }

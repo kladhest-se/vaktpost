@@ -26,19 +26,76 @@ password you have to change everywhere if the phone is lost. A dedicated local
 account still holds administrator-equivalent power, but you can disable it
 without affecting anything else.
 
-## What stops the app writing
+## What this app can change
+
+**It can change a firewall.** For most of its life it could not, and this
+document said so. That stopped being true when the editor arrived, and the
+sentence stayed — which is worse than either state, because the document people
+read before pointing this at a production box was describing a different app.
+
+The write surface is exactly eight operations, named in
+`PHPSnippet.writeOperations`:
+
+| Operation | What it does |
+|---|---|
+| `reload_firewall` | `write_filter()` — reloads the ruleset in place |
+| `quick_block` | adds a block rule for one address |
+| `delete_rule` | removes one filter rule by tracker |
+| `delete_nat_rule` | removes one NAT rule by tracker |
+| `save_rule` | replaces or creates one filter rule |
+| `save_nat_rule` | replaces or creates one NAT rule |
+| `restart_service` | restarts one named service |
+| `flush_states` | drops the state table, or one interface's |
+
+That list was six when it was first written. `readonly.sh` found the other two,
+which is the argument for having the check: the write surface was believed to
+be six and was eight, and nothing anywhere said so.
+
+Each of those is additionally gated in the app by a write rate limiter, a
+confirmation step, and an entry in the audit trail.
+
+## What stops it changing anything else
 
 The transport can write. Nothing about `exec_php` prevents it. The guarantee
 comes instead from the contents of one file,
 `Sources/Vaktpost/Net/PHPSnippets.swift`, and from the checks that hold it
 there:
 
-- Every snippet is a constant. The three that take parameters build themselves
-  from a closed enum and a clamped integer and nothing else, so every line of
-  PHP that can reach a firewall is in the repository and has been reviewed.
-- No snippet may contain `write_config`, `mwexec`, `exec`, `shell_exec`,
-  `system`, `passthru`, `popen`, `proc_open`, `unlink`, `file_put_contents`,
-  `rename`, `mkdir`, `rmdir`, `chmod`, `chown` or `eval`.
+- Every snippet is a constant. The parameterised ones build themselves from a
+  closed enum, a clamped integer, or a base64 payload, so every line of PHP
+  that can reach a firewall is in the repository and has been reviewed.
+- A snippet may write **only** if its name is in `writeOperations`, and then
+  only through `write_config`, `write_filter`, `pfctl_clear_states`,
+  `pfctl_clear_states_by_if` and `restart_service`. The check runs in both
+  directions: a snippet that writes without being named fails, and a name whose
+  snippet no longer writes fails too, so the list can neither grow quietly nor
+  rot into permissions nothing uses.
+- No snippet, including the write ones, may contain `mwexec`, `exec`,
+  `shell_exec`, `system`, `passthru`, `popen`, `proc_open`, `unlink`,
+  `file_put_contents`, `rename`, `mkdir`, `rmdir`, `chmod`, `chown` or `eval`.
+  A write snippet may change the configuration; none may reach a shell.
+- `unset` is allowed, because removing an element from a local array is how a
+  rule is dropped from a copy before the copy is assigned back. Pointed at
+  `$config` it is checked separately and refused.
+
+### Values never become code
+
+This is the part worth reading twice, because it was wrong until recently.
+
+The write snippets used to interpolate their arguments directly into PHP
+source. A rule's description went into the middle of a double-quoted PHP
+string; three of the optional fields were assembled as *fragments of PHP*, so
+the snippet's own shape depended on the values it carried. A description
+containing a double quote ended that string. A description containing the right
+quote, a semicolon and a call ran on the firewall, as root, typed into a text
+field in the editor.
+
+Arguments now cross as one base64 payload, decoded on the other side with
+`json_decode(base64_decode(...), true)`. Base64's alphabet is `A-Z a-z 0-9 + /
+=`, none of which can terminate a PHP string literal, so the snippet text is
+fixed no matter what anybody types. Escaping was the obvious alternative and is
+the wrong one: it has to be right every time, in a language whose string rules
+differ from Swift's, and getting it wrong looks like working code.
 - Every PHP function called must appear on the allowlist in that file.
 - `pfsense.exec_php` is the only XML-RPC method used. pfSense also exposes
   `restore_config_section` and `merge_config_section`, which write.
@@ -47,8 +104,8 @@ there:
   `printBandwidth()` runs `/usr/local/bin/rate`. That is deliberate and worth
   stating: the rules forbid *this app* from sending `exec`, `mwexec` or a
   shell, not pfSense from using one inside its own functions. What the rules
-  protect is that every line of PHP this app sends is reviewable and cannot
-  write, which holds for all three.
+  protect is that every line of PHP this app sends is reviewable, and that only
+  the named operations write, which holds for all three.
 - `printBandwidth()` deserves its own paragraph, because it is the weakest
   entry on the allowlist and the only one that is not a value read. It is how
   `status_graph.php` fills its Host IP table, and there is no other source of
@@ -84,15 +141,23 @@ publish. `Tests/VaktpostTests/XMLRPCTests.swift` covers the same rules in Xcode.
 
 Weaker, and worth being plain about.
 
-The REST build's read-only claim was **structural**. The client contained no
-`POST`, `PUT`, `PATCH` or `DELETE`; adding a write meant inventing a method that
-did not exist, and a grep could prove its absence. The pfSense REST package also
-has its own **Read Only** setting, which enforced it at the firewall where no
-change to this app could undo it.
+The REST build was **read-only, structurally**. The client contained no `POST`,
+`PUT`, `PATCH` or `DELETE`; adding a write meant inventing a method that did not
+exist, and a grep could prove its absence. The pfSense REST package also has its
+own **Read Only** setting, which enforced it at the firewall where no change to
+this app could undo it.
 
-This build's claim is an **allowlist**. Adding a write means adding a line to a
-file — the check will fail and the publish will stop, but a maintainer who
-edits both has defeated it. That is a meaningfully different promise.
+This build **is not read-only**, and the comparison has to start there rather
+than with how the difference is checked. It can delete a firewall rule. What it
+offers instead is an **enumerated** surface: eight operations, named in one
+file, each one a line somebody had to add on purpose, with a check that fails if
+a ninth appears or if one of the eight quietly stops being used.
+
+That is a meaningfully weaker promise in two directions. A maintainer who edits
+the snippet and the manifest together has defeated it. And an enumerated write
+surface is still a write surface — the credential this app holds is
+administrator-equivalent either way, so the question a reader should ask is not
+"can it write" but "do I want a phone in my pocket that can".
 
 What you get for it: RRD-backed history, system notices, per-filesystem usage,
 real mbuf figures, dynamic DNS, and anything a package writes to disk. None of

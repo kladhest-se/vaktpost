@@ -102,7 +102,6 @@ final class DashboardStore: Observable {
     /// Safety infrastructure for write operations.
     let auditTrail = AuditTrail()
     let rateLimiter = WriteRateLimiter()
-    let stagedChanges = StagedChanges()
     let analytics = WriteAnalytics()
 
     /// Whether interface error counters are moving, refresh over refresh.

@@ -1,5 +1,230 @@
 # Changelog
 
+## Staged changes removed
+
+The app had two answers to "what happens when I press Save": the editor wrote
+immediately, and `StagedChanges` queued a change for a later batch apply. Both
+existed, neither knew about the other, and the queue did not work.
+
+- **A staged change stored no payload.** `Change` held an action, a target
+  string, a description and a timestamp, so applying one meant parsing the
+  human-readable label back into arguments:
+  `target.split(separator: " ")`, `parts[0]` as an address, `parts[1]` as an
+  interface.
+- **Staged quick-blocks could never be applied.** `stageQuickBlock` set
+  `target` to the address alone — one token — and apply guarded on
+  `parts.count >= 2` and `continue`d. The change was skipped, counted as
+  neither success nor failure, and then `clear()` removed it. Every staged
+  block was silently discarded.
+- **It could not express the operations that matter.** No case for saving or
+  deleting a rule or a port forward. Staging the editor would have meant
+  inventing payload storage, which is the whole design — the class was not a
+  head start.
+- **Its documentation described something that does not exist:** "at apply time
+  all changes are sent to the firewall in a single batch, ensuring atomicity."
+  Apply looped one at a time, each its own `write_config`, counting failures as
+  it went.
+
+Staging earns its complexity when changes are interdependent and applying half
+of them is dangerous. This app edits one rule at a time from a phone, and it
+already has a rate limiter, a confirmation step, an audit trail with
+before/after JSON, and validation that blocks an invalid save. A second,
+weaker persistence layer on top of that — one that survived restarts holding
+changes it could not apply — was subtracting safety rather than adding it.
+
+Gone: `StagedChanges`, `StagedChangesView`, the More entry, the store property,
+`FirewallClient.StagedOperation` and its four `stage*` helpers, and the staging
+toggles on Quick block, Flush states and Service manager. `AuditTrail` stays —
+it is what staging was half-duplicating, and it records what happened rather
+than what was asked for.
+
+If queueing changes offline is wanted later, it needs payload storage,
+per-change failure reporting and a story for a firewall that changed underneath.
+That is a build, not a retention.
+
+### Found while removing it
+
+- Quick block and Flush states set their progress flag in the button closure
+  and cleared it with a `defer` on the same line — and that closure only opened
+  the confirmation sheet. The flag was never observed true, so neither screen
+  ever showed that a write was in flight. It now wraps the write. Same shape as
+  the editor's save bug, in two more places.
+
+## The NAT replace could replace the wrong forward
+
+- `save_nat_rule` was changed in this session from append-only to
+  match-and-replace, and matched on interface, destination address and target.
+  `PortForward` carries no tracker, so that fallback is the only path — and it
+  left out the destination port.
+- Two forwards to one host on one interface, 80 and 443 to 10.0.0.5, then match
+  identically, and editing either one replaces the other. That is an ordinary
+  pair of forwards, not a corner case.
+- The match now includes the destination port, which is what `PortForward.id`
+  has always been.
+- Changing a forward's destination or target still will not match it and will
+  append instead. That is a real limitation and the safe direction to fail in:
+  a duplicate is visible and removable, a wrongly-replaced rule is neither.
+
+## Build fix: JSONValue could not be written
+
+- `JSONValue` was `Decodable` alone, which was right for as long as everything
+  travelled one way. The write path encodes a rule as a base64 payload instead
+  of interpolating its fields into PHP, so the type now needs to go out as well
+  as come in.
+- Encoding rather than a second model on the way out: one representation that
+  disagreed with the other about what a number or an empty value is would be a
+  bug that only appears on save.
+- `.null` encodes as JSON null rather than being omitted. A key that vanishes
+  and a key that is null mean different things to pfSense, and the snippet
+  decides which fields to drop.
+
+## The write boundary, and what the editors send
+
+### Values were being interpolated into PHP
+
+This is the serious one. The write snippets built their PHP by interpolating
+their arguments into it — a rule's description went into the middle of a
+double-quoted PHP string, and three of the optional fields were assembled as
+*fragments of PHP source*, so the snippet's own shape depended on the values it
+carried.
+
+A description containing a double quote ended that string. A description
+containing the right quote, a semicolon and a call ran on the firewall, as
+root, typed into a text field in the editor.
+
+Arguments now cross as a single base64 payload and are decoded on the other
+side. Base64's alphabet is `A-Z a-z 0-9 + / =`, none of which can terminate a
+PHP string literal, so the snippet text is fixed no matter what anybody types.
+Escaping was the obvious alternative and is the wrong one: it has to be right
+every time, in a language whose string rules differ from Swift's, and getting
+it wrong looks like working code.
+
+### The gate was switched off rather than updated
+
+`readonly.sh` proved the app could not write, by grepping for `write_config`
+and failing on any hit. When the editor arrived that stopped being true, and
+the gate was answered with a `READONLY=0` switch that turned the entire suite
+off.
+
+That is the worst available shape: the promise is not weakened by it, it is
+made unobservable — and a write added by accident looks exactly like the ones
+added on purpose. It had been red all along, so a new finding would have looked
+like the existing ones.
+
+The writes are named instead, in `PHPSnippet.writeOperations`, and checked in
+both directions: a snippet that writes without being named fails, and a name
+whose snippet no longer writes fails too. **The list was six when it was
+written and the check found two more** — `restart_service` and `flush_states`.
+The app's write surface was believed to be six operations and was eight.
+
+The snippet names made that worse: `delete_rule_\(tracker)` and
+`save_nat_\(descr)` meant every call produced a different name, so the write
+surface could not be enumerated by name at all. They have stable names now; the
+tracker is in the audit trail, which is where it belongs.
+
+Three narrower gate fixes came with it: assignment into a validated `$config`
+section is no longer treated as an unguarded read, `unset` is permitted on
+local arrays and refused on `$config`, and a multi-line constant now ends its
+own declaration rather than swallowing everything after it.
+
+### Nothing validated a field
+
+The editors took free text for every address and port and posted it to
+`write_config`. `10.0.0.256`, `8100-8000`, an alias that does not exist — all
+reached pfSense, and pfSense was the first thing to find out. A rule it refuses
+to load is a rule enforcing nothing while the app says "saved".
+
+`FieldValidator` checks addresses, networks, ports, ranges, aliases against the
+ones this firewall has, and NAT targets. Save is disabled while anything is
+wrong, and every problem is listed at once rather than one at a time. It is
+pure and has its own tests, because it is the part with all the edge cases.
+
+The cases worth naming: a reversed port range, which pfSense accepts and which
+matches nothing; a port on a protocol that has no ports, which will not load; a
+NAT target of `any`, which forwards to wherever the packet was already going;
+and an alias name that does not exist, which is the likeliest typo in the
+editor and the one that looks most correct.
+
+### Two more write bugs
+
+- **`save_nat_rule` only ever appended.** Editing a port forward added a second
+  one and left the original, so pressing Save grew the NAT table every time. It
+  matches on tracker, or on interface plus destination plus target where
+  pfSense has not given one.
+- **`members.sh` resolved members file-wide**, so a `let error: WriteError` in
+  one type claimed a `Binding<WriteError?>` parameter of the same name in
+  another. Declarations now bind inside their own type, as they do in Swift.
+
+## Two build warnings that were not cosmetic
+
+- **The legacy keychain migration could delete a credential.**
+  `Keychain.setPassword` returns a `Result` and it was discarded, then
+  `deleteLegacy()` ran regardless — so a failed write removed the only copy of
+  the password: signed out, credential gone, nothing said. The old entry is now
+  removed only once the new one is definitely stored, and a failure is logged
+  and left in place so the next launch tries again. A duplicated credential is
+  recoverable; a deleted one is not.
+- **`ConfigSnapshot.id` could not survive being decoded.** `let id = UUID()` is
+  not overwritten by a decoder, so every snapshot read back from disk got a new
+  identity. Two decodes of one snapshot compared unequal, `ForEach` treated the
+  same row as a different row after a relaunch, and any diff matching snapshots
+  by identity matched nothing. The id is derived from the timestamp and counts
+  now — what a snapshot actually is — so it round-trips for free.
+
+## The rule and port forward editors
+
+### Why they were slow to open
+
+- The form was assembled in the detail view's `onAppear`, and the sheet
+  rendered `ProgressView("Loading...")` until it arrived. `RuleEditForm(from:)`
+  copies a struct out of a rule the view already holds — there was never
+  anything to load. The spinner was the entire delay, and on a quick tap it was
+  what you got. Both forms are now built at presentation and the loading branch
+  is gone.
+- Saving set `isSaving = true` with a `defer` that put it back before the
+  `Task` inside had started, so the flag was never observed true: no spinner,
+  and Save stayed live through the whole write, where a second tap sent a
+  second one. The save is awaited, the sheet shows its own progress, and the
+  button is disabled while it runs.
+- Save is disabled until something changes. An unchanged save is a write that
+  alters nothing, spends the rate limit and puts a line in the audit trail
+  saying an edit happened.
+- On success the sheet closes and the data refreshes. It used to dismiss the
+  *detail* view from under its own sheet, so the thing you had just edited was
+  the one screen you could not check.
+
+### Theming
+
+- Both editors were bare SwiftUI `Form`s, which is where the theming went:
+  `Form` brings its own background, row insets and typography, and none of them
+  can be reached from the theme. So the editor arrived in system grey with
+  system fonts in the middle of a Catppuccin dashboard. They are now the app's
+  own scroll view, slabs and type, grouped into Rule / Source / Destination /
+  Options.
+- New `EditField`, `EditChoice` and `EditToggle` built from the same tokens
+  every other surface uses. Autocorrect and autocapitalisation are off on all
+  of them — autocorrect on an address field turns `10.0.0.1` into prose, and a
+  typo here is pushed to a firewall.
+- Action, protocol, interface and IP version are pickers instead of text
+  fields with the accepted values in the placeholder. "Type (pass/block/reject)"
+  puts the validation in the hint text, and the firewall is the first thing to
+  find out about a typo. Interfaces come from the ones this firewall has.
+
+### Two write-path bugs found on the way
+
+- **The address family was dropped when a rule was saved.** `toDict` derived
+  `ipprotocol` by comparing the *transport* protocol against the strings
+  "inet" and "inet6", so it was nil for every real rule and the key was left
+  out of the payload — saving an IPv6 rule converted it. The family is now the
+  rule's own value, carried through the form and always sent.
+- **The same fault in port forwards, plus a missing field.** `PortForward` did
+  not read `ipprotocol` at all, so the editor guessed it from the protocol and
+  always guessed IPv4. A field the app intends to write back has to be a field
+  it reads.
+- **The interface field was ignored on save.** Both editors offered one and
+  both passed the *original* interface to the firewall, so moving a rule or a
+  forward between interfaces appeared to work and changed nothing.
+
 ## Sections are independent, and there are tests that say so
 
 - The fix for the linked sections was a one-time rewrite of the stored layout,

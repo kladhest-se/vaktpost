@@ -88,9 +88,23 @@ final class ServerRegistry: Observable {
             legacy.id = UUID()
             servers = [legacy]
             // Migrate the legacy API key to the new keychain format if present.
+            //
+            // The result was discarded and `deleteLegacy()` ran regardless, so
+            // a failed write deleted the only copy of the credential: the
+            // person is signed out, the password is gone, and nothing said so.
+            // The old entry is only removed once the new one is definitely
+            // there — a duplicated credential is recoverable and a deleted one
+            // is not.
             if let apiKey = Keychain.legacyAPIKey() {
-                Keychain.setPassword(apiKey, for: legacy.id)
-                Keychain.deleteLegacy()
+                switch Keychain.setPassword(apiKey, for: legacy.id) {
+                case .success:
+                    Keychain.deleteLegacy()
+                case .failure(let error):
+                    // Left in place deliberately: the next launch tries again.
+                    os_log(.error, log: keychainLog,
+                           "Legacy credential migration failed, keeping the old entry: %{public}@",
+                           String(describing: error))
+                }
             }
             d.removeObject(forKey: "server.profile")
             persist()

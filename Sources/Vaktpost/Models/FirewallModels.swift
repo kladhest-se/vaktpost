@@ -172,6 +172,13 @@ struct PortForward: Identifiable {
     var destinationSide: FilterAddress
     var target: String
     var localPort: String?
+    /// inet / inet6, as pfSense stores it.
+    ///
+    /// Not read before, which left the editor deriving it from `protocol` —
+    /// comparing tcp or udp against the string "inet6", so it was always IPv4
+    /// and saving an IPv6 forward converted it. A field the app intends to
+    /// write back has to be a field it reads.
+    var ipProtocol: String?
 
     var destination: String { destinationSide.text }
     var descr: String
@@ -184,6 +191,7 @@ struct PortForward: Identifiable {
         destinationSide = FilterAddress(d.value("destination"), port: d.value("destination_port"))
         target = d.string("target") ?? FilterAddress(d.value("target")).text
         localPort = d.string("local_port")
+        ipProtocol = d.string("ipprotocol", "ip_protocol")
         descr = d.string("descr", "description") ?? ""
         disabled = d.bool("disabled") ?? false
     }

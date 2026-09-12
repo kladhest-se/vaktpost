@@ -22,7 +22,6 @@ struct MoreView: View {
                 link("Analytics", "chart.bar", badge: 0) { AnalyticsView() }
                 link("Service manager", "power", badge: store.overviewLayout.servicesDown.isEmpty ? 0 : store.overviewLayout.servicesDown.count) { ServiceManagerView() }
                 link("Reload firewall", "arrow.clockwise", badge: 0) { FirewallReloadView() }
-                link("Staged changes", "square.stack.3d.up", badge: store.stagedChanges.count) { StagedChangesView() }
                 link("Flush states", "trash", badge: 0) { FlushStatesView() }
                 link("Incident timeline", "point.3.connected.trianglepath.dotted", badge: 0) { IncidentTimelineView() }
                 link("Alerts", "bell.badge", badge: store.alertManager.criticalAlertCount) { AlertsView() }
