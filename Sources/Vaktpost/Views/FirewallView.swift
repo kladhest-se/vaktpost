@@ -550,7 +550,7 @@ struct RuleDetailView: View {
         .confirmationSheet(
             isPresented: $showDeleteConfirm,
             title: "Delete rule",
-            message: "This will permanently delete the rule \"\(rule.descr.isEmpty ? "untitled" : rule.descr)\".",
+            message: store.writeCoordinator.preview(for: deleteOperation),
             destructive: true,
             destructiveLabel: "Delete",
             confirmLabel: "Cancel",
@@ -573,38 +573,22 @@ struct RuleDetailView: View {
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
     }
 
+    private var deleteOperation: AdministrativeWrite {
+        .deleteRule(
+            tracker: rule.tracker,
+            displayName: rule.descr.isEmpty ? rule.tracker : rule.descr
+        )
+    }
+
     private func confirmDelete() async {
         isSaving = true
         defer { isSaving = false }
 
-        if !store.rateLimiter.allowWrite() {
-            writeError = WriteError(
-                title: "Rate limited",
-                message: "Please wait a few seconds between actions.",
-                suggestion: nil
-            )
-            showErrorAlert = true
-            return
-        }
-
         do {
-            _ = try await store.client.deleteRule(tracker: rule.tracker)
-
-            store.auditTrail.log(
-                action: .deleteRule,
-                summary: "Deleted rule \(rule.tracker)",
-                target: rule.descr.isEmpty ? rule.tracker : rule.descr,
-                before: nil,
-                after: nil
-            )
-
-            store.analytics.record(operation: "delete_rule", success: true)
-
+            _ = try await store.writeCoordinator.execute(deleteOperation)
             dismiss()
             await store.refresh()
-
         } catch {
-            store.analytics.record(operation: "delete_rule", success: false)
             writeError = WriteError.from(error, operation: .other)
             showErrorAlert = true
         }
@@ -619,71 +603,26 @@ struct RuleDetailView: View {
     /// success rather than the detail view dismissing out from under it.
     @discardableResult
     private func save(changes: RuleEditForm) async -> Bool {
-        if !store.rateLimiter.allowWrite() {
-            writeError = WriteError(
-                title: "Rate limited",
-                message: "Please wait a few seconds between actions.",
-                suggestion: nil
-            )
-            showErrorAlert = true
-            return false
-        }
-
-        let before = rule
-        let after = changes.apply(to: rule)
         do {
             // The interface comes from the form now. It was taken from the
             // rule, so moving a rule between interfaces in the editor
             // changed the screen and not the firewall.
-            _ = try await store.client.saveRule(
-                rule: changes.toDict(tracker: rule.tracker, interface: changes.interface))
-
-            store.auditTrail.log(
-                action: .editRule,
-                summary: "Edited rule \(rule.tracker)",
-                target: rule.descr.isEmpty ? rule.tracker : rule.descr,
-                before: json(from: before),
-                after: json(from: after)
+            _ = try await store.writeCoordinator.execute(
+                .saveRule(
+                    rule: changes.toDict(tracker: rule.tracker, interface: changes.interface),
+                    displayName: rule.descr.isEmpty ? rule.tracker : rule.descr
+                )
             )
-            store.analytics.record(operation: "edit_rule", success: true)
 
             // Refreshed but not dismissed. The rule that was just edited is
             // the thing somebody wants to look at to check it took.
             Task { await store.refresh() }
             return true
         } catch {
-            store.analytics.record(operation: "edit_rule", success: false)
             writeError = WriteError.from(error, operation: .other)
             showErrorAlert = true
             return false
         }
-    }
-
-    private func json(from rule: FirewallRule) -> String? {
-        struct RuleSnapshot: Encodable {
-            let tracker: String
-            let type: String
-            let proto: String
-            let interface: String
-            let source: String
-            let destination: String
-            let descr: String
-            let disabled: Bool
-            let logged: Bool
-        }
-        let snapshot = RuleSnapshot(
-            tracker: rule.tracker,
-            type: rule.type,
-            proto: rule.proto ?? "",
-            interface: rule.interfaceName,
-            source: rule.source,
-            destination: rule.destination,
-            descr: rule.descr,
-            disabled: rule.disabled,
-            logged: rule.logged
-        )
-        let data = try? JSONEncoder().encode(snapshot)
-        return data.flatMap { String(data: $0, encoding: .utf8) }
     }
 
     /// A field, with the alias name kept above its contents.
@@ -843,7 +782,7 @@ struct PortForwardDetailView: View {
         .confirmationSheet(
             isPresented: $showDeleteConfirm,
             title: "Delete port forward",
-            message: "This will permanently delete the port forward \"\(forward.descr.isEmpty ? "untitled" : forward.descr)\".",
+            message: store.writeCoordinator.preview(for: deleteOperation),
             destructive: true,
             destructiveLabel: "Delete",
             confirmLabel: "Cancel",
@@ -851,6 +790,13 @@ struct PortForwardDetailView: View {
             onCancel: {}
         )
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+    }
+
+    private var deleteOperation: AdministrativeWrite {
+        .deleteNatRule(
+            tracker: forward.tracker,
+            displayName: forward.descr.isEmpty ? forward.tracker : forward.descr
+        )
     }
 
     private func confirmDelete() async {
@@ -867,34 +813,11 @@ struct PortForwardDetailView: View {
             return
         }
 
-        if !store.rateLimiter.allowWrite() {
-            writeError = WriteError(
-                title: "Rate limited",
-                message: "Please wait a few seconds between actions.",
-                suggestion: nil
-            )
-            showErrorAlert = true
-            return
-        }
-
         do {
-            _ = try await store.client.deleteNatRule(tracker: forward.tracker)
-
-            store.auditTrail.log(
-                action: .deletePortForward,
-                summary: "Deleted port forward \(forward.id)",
-                target: forward.descr.isEmpty ? forward.id : forward.descr,
-                before: nil,
-                after: nil
-            )
-
-            store.analytics.record(operation: "delete_nat", success: true)
-
+            _ = try await store.writeCoordinator.execute(deleteOperation)
             dismiss()
             await store.refresh()
-
         } catch {
-            store.analytics.record(operation: "delete_nat", success: false)
             writeError = WriteError.from(error, operation: .other)
             showErrorAlert = true
         }
@@ -902,35 +825,19 @@ struct PortForwardDetailView: View {
 
     @discardableResult
     private func save(changes: PortForwardEditForm) async -> Bool {
-        if !store.rateLimiter.allowWrite() {
-            writeError = WriteError(
-                title: "Rate limited",
-                message: "Please wait a few seconds between actions.",
-                suggestion: nil
-            )
-            showErrorAlert = true
-            return false
-        }
-
         do {
             // From the form, not the forward: the editor offers an
             // interface field and it was being ignored on save.
-            _ = try await store.client.saveNatRule(
-                rule: changes.toDict(interface: changes.interface))
-
-            store.auditTrail.log(
-                action: .editPortForward,
-                summary: "Edited port forward \(forward.id)",
-                target: forward.descr.isEmpty ? forward.id : forward.descr,
-                before: nil,
-                after: nil
+            _ = try await store.writeCoordinator.execute(
+                .saveNatRule(
+                    rule: changes.toDict(interface: changes.interface),
+                    displayName: forward.descr.isEmpty ? forward.id : forward.descr
+                )
             )
-            store.analytics.record(operation: "edit_nat", success: true)
 
             Task { await store.refresh() }
             return true
         } catch {
-            store.analytics.record(operation: "edit_nat", success: false)
             writeError = WriteError.from(error, operation: .other)
             showErrorAlert = true
             return false
@@ -1045,6 +952,7 @@ struct RuleEditSheet: View {
 
     @State private var edited: RuleEditForm
     @State private var isSaving = false
+    @State private var showSaveConfirmation = false
 
     init(form: RuleEditForm, interfaces: [String], aliases: Set<String>,
          onSave: @escaping (RuleEditForm) async -> Bool) {
@@ -1139,12 +1047,7 @@ struct RuleEditSheet: View {
                         // through the whole save and a second tap sent a
                         // second write.
                         Button("Save") {
-                            Task {
-                                isSaving = true
-                                let saved = await onSave(edited)
-                                isSaving = false
-                                if saved { dismiss() }
-                            }
+                            showSaveConfirmation = true
                         }
                         // Nothing invalid leaves this screen. pfSense takes
                         // most of it and then quietly fails to load the
@@ -1155,7 +1058,46 @@ struct RuleEditSheet: View {
                 }
             }
             .interactiveDismissDisabled(isSaving)
+            .confirmationSheet(
+                isPresented: $showSaveConfirmation,
+                title: "Review rule changes",
+                message: changePreview,
+                destructive: false,
+                destructiveLabel: "Save rule",
+                confirmLabel: "Cancel",
+                onConfirm: saveConfirmed,
+                onCancel: {}
+            )
         }
+    }
+
+    private var changePreview: String {
+        var changes: [String] = []
+        Self.describe("Action", original.type, edited.type, into: &changes)
+        Self.describe("Interface", original.interface, edited.interface, into: &changes)
+        Self.describe("Protocol", original.proto, edited.proto, into: &changes)
+        Self.describe("IP version", original.addressFamily, edited.addressFamily, into: &changes)
+        Self.describe("Source", original.sourceAddress, edited.sourceAddress, into: &changes)
+        Self.describe("Source port", original.sourcePort, edited.sourcePort, into: &changes)
+        Self.describe("Destination", original.destinationAddress, edited.destinationAddress, into: &changes)
+        Self.describe("Destination port", original.destinationPort, edited.destinationPort, into: &changes)
+        Self.describe("Description", original.descr, edited.descr, into: &changes)
+        if original.disabled != edited.disabled { changes.append("Disabled: \(original.disabled ? "yes" : "no") → \(edited.disabled ? "yes" : "no")") }
+        if original.logged != edited.logged { changes.append("Logging: \(original.logged ? "on" : "off") → \(edited.logged ? "on" : "off")") }
+        return "The coordinator will apply and read back:\n\n" + changes.map { "• \($0)" }.joined(separator: "\n")
+    }
+
+    private static func describe(_ label: String, _ before: String, _ after: String,
+                                 into changes: inout [String]) {
+        guard before != after else { return }
+        changes.append("\(label): \(before.isEmpty ? "any" : before) → \(after.isEmpty ? "any" : after)")
+    }
+
+    private func saveConfirmed() async {
+        isSaving = true
+        let saved = await onSave(edited)
+        isSaving = false
+        if saved { dismiss() }
     }
 }
 
@@ -1256,6 +1198,7 @@ struct PortForwardEditSheet: View {
 
     @State private var edited: PortForwardEditForm
     @State private var isSaving = false
+    @State private var showSaveConfirmation = false
 
     private let original: PortForwardEditForm
 
@@ -1338,12 +1281,7 @@ struct PortForwardEditSheet: View {
                         ProgressView()
                     } else {
                         Button("Save") {
-                            Task {
-                                isSaving = true
-                                let saved = await onSave(edited)
-                                isSaving = false
-                                if saved { dismiss() }
-                            }
+                            showSaveConfirmation = true
                         }
                         // Nothing invalid leaves this screen. pfSense takes
                         // most of it and then quietly fails to load the
@@ -1354,6 +1292,44 @@ struct PortForwardEditSheet: View {
                 }
             }
             .interactiveDismissDisabled(isSaving)
+            .confirmationSheet(
+                isPresented: $showSaveConfirmation,
+                title: "Review port-forward changes",
+                message: changePreview,
+                destructive: false,
+                destructiveLabel: "Save forward",
+                confirmLabel: "Cancel",
+                onConfirm: saveConfirmed,
+                onCancel: {}
+            )
         }
+    }
+
+    private var changePreview: String {
+        var changes: [String] = []
+        Self.describe("Interface", original.interface, edited.interface, into: &changes)
+        Self.describe("Protocol", original.proto, edited.proto, into: &changes)
+        Self.describe("IP version", original.addressFamily, edited.addressFamily, into: &changes)
+        Self.describe("Source", original.sourceAddress, edited.sourceAddress, into: &changes)
+        Self.describe("Destination", original.destinationAddress, edited.destinationAddress, into: &changes)
+        Self.describe("Destination port", original.destinationPort, edited.destinationPort, into: &changes)
+        Self.describe("Target", original.targetAddress, edited.targetAddress, into: &changes)
+        Self.describe("Local port", original.localPort, edited.localPort, into: &changes)
+        Self.describe("Description", original.descr, edited.descr, into: &changes)
+        if original.disabled != edited.disabled { changes.append("Disabled: \(original.disabled ? "yes" : "no") → \(edited.disabled ? "yes" : "no")") }
+        return "The coordinator will apply and read back:\n\n" + changes.map { "• \($0)" }.joined(separator: "\n")
+    }
+
+    private static func describe(_ label: String, _ before: String, _ after: String,
+                                 into changes: inout [String]) {
+        guard before != after else { return }
+        changes.append("\(label): \(before.isEmpty ? "any" : before) → \(after.isEmpty ? "any" : after)")
+    }
+
+    private func saveConfirmed() async {
+        isSaving = true
+        let saved = await onSave(edited)
+        isSaving = false
+        if saved { dismiss() }
     }
 }

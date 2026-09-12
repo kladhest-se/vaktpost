@@ -48,7 +48,7 @@ struct ServiceManagerView: View {
             .confirmationSheet(
                 isPresented: $showRestartSheet,
                 title: "Restart service",
-                message: "This will restart \(targetService?.descr ?? targetService?.name ?? "the service").",
+                message: pendingOperation.map { store.writeCoordinator.preview(for: $0) },
                 destructive: true,
                 destructiveLabel: "Restart",
                 confirmLabel: "Cancel",
@@ -150,42 +150,26 @@ struct ServiceManagerView: View {
 
     // MARK: - Restart handler
 
+    private var pendingOperation: AdministrativeWrite? {
+        guard let service = targetService else { return nil }
+        return .restartService(
+            name: service.name,
+            displayName: service.descr ?? service.name
+        )
+    }
+
     private func confirmRestart() async {
-        guard let service = targetService else { return }
+        guard let service = targetService, let operation = pendingOperation else { return }
 
         isRestarting = true
         defer { isRestarting = false }
 
-        if !store.rateLimiter.allowWrite() {
-            writeError = WriteError(
-                title: "Rate limited",
-                message: "Please wait a few seconds between actions.",
-                suggestion: nil
-            )
-            showErrorAlert = true
-            return
-        }
-
         do {
-            let status = try await store.client.restartService(named: service.name)
-
-            let summary = "Restarted service \(service.name)"
-            store.auditTrail.log(
-                action: .restartService,
-                summary: summary,
-                target: service.name,
-                before: nil,
-                after: status
-            )
-
-            store.analytics.record(operation: "restart_service", success: true)
-
+            _ = try await store.writeCoordinator.execute(operation)
             lastRestartedService = service.name
 
             await store.refresh()
-
         } catch {
-            store.analytics.record(operation: "restart_service", success: false)
             writeError = WriteError.from(error, operation: .restartService)
             showErrorAlert = true
         }

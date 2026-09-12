@@ -17,7 +17,6 @@ struct QuickBlockView: View {
     @State private var isExecuting = false
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
-    @State private var lastBlockedEntry: AuditTrail.Entry?
 
     var body: some View {
         NavigationStack {
@@ -52,7 +51,7 @@ struct QuickBlockView: View {
             .confirmationSheet(
                 isPresented: $showConfirmation,
                 title: "Block address",
-                message: "This will add a firewall rule to block \(address) on \(selectedInterface?.device ?? "the interface").",
+                message: pendingOperation.map { store.writeCoordinator.preview(for: $0) },
                 destructive: true,
                 destructiveLabel: "Block",
                 confirmLabel: "Cancel",
@@ -131,8 +130,17 @@ struct QuickBlockView: View {
 
     // MARK: - Confirmation handler
 
+    private var pendingOperation: AdministrativeWrite? {
+        guard let iface = selectedInterface, !address.isEmpty else { return nil }
+        return .quickBlock(
+            interface: iface.device,
+            address: address,
+            description: description.isEmpty ? "Blocked by Vaktpost" : description
+        )
+    }
+
     private func confirmBlock() async {
-        guard let iface = selectedInterface else { return }
+        guard let operation = pendingOperation else { return }
 
         // Set around the write, not around opening the sheet.
         // It was set and cleared by a `defer` in the button's own
@@ -142,49 +150,11 @@ struct QuickBlockView: View {
         isExecuting = true
         defer { isExecuting = false }
 
-        guard store.rateLimiter.allowWrite() else {
-            writeError = WriteError(
-                title: "Rate limited",
-                message: "Please wait a few seconds between actions.",
-                suggestion: nil
-            )
-            showErrorAlert = true
-            return
-        }
-
         do {
-            let result = try await store.client.quickBlock(
-                interface: iface.device,
-                address: address,
-                description: description.isEmpty ? "Blocked by Vaktpost" : description
-            )
-
-            let summary = "Blocked \(address) on \(iface.device)"
-            let afterSnapshot: String? = {
-                if let ruleDict = result.dict("rule"),
-                   let descr = ruleDict.string("descr"),
-                   let interface = ruleDict.string("interface") {
-                    return "type=\(ruleDict.string("type") ?? "") interface=\(interface) descr=\(descr)"
-                }
-                return nil
-            }()
-
-            store.auditTrail.log(
-                action: .quickBlock,
-                summary: summary,
-                target: iface.device,
-                before: nil,
-                after: afterSnapshot
-            )
-
-            store.analytics.record(operation: "quick_block", success: true)
-
-            lastBlockedEntry = nil
-
+            _ = try await store.writeCoordinator.execute(operation)
+            await store.refresh()
             dismiss()
-
         } catch {
-            store.analytics.record(operation: "quick_block", success: false)
             writeError = WriteError.from(error, operation: .quickBlock)
             showErrorAlert = true
         }

@@ -9,6 +9,8 @@ struct NetworkView: View {
     @State private var showQuickBlock = false
     @State private var showReloadConfirm = false
     @State private var quickBlockInterface: InterfaceStat?
+    @State private var showWriteError = false
+    @State private var writeError: WriteError?
 
     enum InterfaceFilter: String, CaseIterable, Identifiable {
         case all = "All", up = "Up", down = "Down"
@@ -65,13 +67,14 @@ struct NetworkView: View {
             .confirmationSheet(
                 isPresented: $showReloadConfirm,
                 title: "Reload firewall rules",
-                message: "This will reload the firewall ruleset in place. Active connections may be briefly interrupted.",
+                message: store.writeCoordinator.preview(for: .reloadFirewall),
                 destructive: true,
                 destructiveLabel: "Reload",
                 confirmLabel: "Cancel",
                 onConfirm: { await reloadFirewall() },
                 onCancel: {}
             )
+            .writeErrorAlert(isErrorPresented: $showWriteError, error: $writeError)
         }
     }
 
@@ -151,28 +154,12 @@ struct NetworkView: View {
     // MARK: - Actions
 
     private func reloadFirewall() async {
-        guard store.rateLimiter.allowWrite() else {
-            return
-        }
-
         do {
-            _ = try await store.client.reloadFirewall()
-
-            store.auditTrail.log(
-                action: .reloadFirewall,
-                summary: "Reloaded firewall ruleset via network view",
-                target: nil,
-                before: nil,
-                after: nil
-            )
-
-            store.analytics.record(operation: "reload_firewall", success: true)
-
+            _ = try await store.writeCoordinator.execute(.reloadFirewall)
             await store.refresh()
-
         } catch {
-            store.analytics.record(operation: "reload_firewall", success: false)
-            // Silent failure - user won't see error for this quick action
+            writeError = WriteError.from(error, operation: .reloadFirewall)
+            showWriteError = true
         }
     }
 }

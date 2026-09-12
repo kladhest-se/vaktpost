@@ -1,5 +1,24 @@
 # Changelog
 
+## Administrative transactions and durable verification
+
+- All eight firewall mutations now pass through one `WriteCoordinator`; views
+  can no longer independently omit rate limiting, binding checks, auditing, or
+  verification.
+- Confirmations name the active firewall and exact target. Rule and
+  port-forward editors show field-by-field change previews before saving.
+- The coordinator captures current state and commits a pending audit record
+  before sending. It sends each mutation once and reads the affected object or
+  subsystem back before reporting success.
+- A lost response is reported as an unknown outcome with explicit guidance not
+  to repeat the operation until the firewall has been inspected.
+- Administrative history is encrypted with AES-GCM, protected by a
+  device-only Keychain key and complete file protection, and stored separately
+  for each firewall. Settings now provides verification status, retention,
+  deletion, and a redacted export.
+- Added persistence tests and a `write-coordinator` structural gate that fails
+  if a view bypasses the coordinator or the transaction order regresses.
+
 ## Staged changes removed
 
 The app had two answers to "what happens when I press Save": the editor wrote

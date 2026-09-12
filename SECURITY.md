@@ -51,8 +51,24 @@ That list was six when it was first written. `readonly.sh` found the other two,
 which is the argument for having the check: the write surface was believed to
 be six and was eight, and nothing anywhere said so.
 
-Each of those is additionally gated in the app by a write rate limiter, a
-confirmation step, and an entry in the audit trail.
+Each operation is called only by `WriteCoordinator`, which serializes the
+transaction and binds it to the selected firewall. The coordinator validates
+the target, consumes the rate limit, captures pre-state, and commits a pending
+audit entry before calling the client. Views do not call mutation methods
+directly.
+
+After pfSense accepts a change, the coordinator reads the affected rules,
+port forwards, service state, ruleset, or state table back. Exact edits and
+deletes must match; reload and state flush operations are marked as read back
+because their effect cannot be proven from a stable identity. A transport
+failure after sending is recorded and shown as an unknown outcome, never as a
+safe retry.
+
+Audit records are separated by firewall and encrypted with AES-GCM. The audit
+key is stored in the Keychain as `WhenUnlockedThisDeviceOnly`, and the files
+also use complete file protection. Full records remain on the device; exports
+omit firewall identity, targets, previews and verification details. A write is
+refused if its pending audit entry cannot be saved.
 
 ## What stops it changing anything else
 
@@ -136,6 +152,9 @@ differ from Swift's, and getting it wrong looks like working code.
 
 `vaktpost-tools/tests/write-boundary.sh` enforces all of it and runs before every
 publish. `Tests/VaktpostTests/XMLRPCTests.swift` covers the same rules in Xcode.
+`vaktpost-tools/tests/write-coordinator.sh` separately fails if any view calls a
+mutation directly or if the coordinator no longer follows pre-state → pending
+audit → execution → read-back → completed audit ordering.
 
 ## How this compares to the REST build
 

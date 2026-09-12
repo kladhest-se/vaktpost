@@ -93,7 +93,7 @@ indirect enum JSONValue: Codable, Sendable {
 }
 
 /// Convenience reader over a decoded JSON object.
-struct JSONDict {
+struct JSONDict: Sendable {
     let raw: [String: JSONValue]
 
     init(_ raw: [String: JSONValue]) { self.raw = raw }

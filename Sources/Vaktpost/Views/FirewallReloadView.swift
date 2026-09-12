@@ -49,7 +49,7 @@ struct FirewallReloadView: View {
             .confirmationSheet(
                 isPresented: $showConfirmation,
                 title: "Reload firewall rules",
-                message: "This will reload the firewall ruleset in place without restarting services. Active connections may be briefly interrupted.",
+                message: store.writeCoordinator.preview(for: .reloadFirewall),
                 destructive: true,
                 destructiveLabel: "Reload",
                 confirmLabel: "Cancel",
@@ -213,37 +213,13 @@ struct FirewallReloadView: View {
         isReloading = true
         defer { isReloading = false }
 
-        guard store.rateLimiter.allowWrite() else {
-            writeError = WriteError(
-                title: "Rate limited",
-                message: "Please wait a few seconds between actions.",
-                suggestion: nil
-            )
-            showErrorAlert = true
-            return
-        }
-
         do {
-            let status = try await store.client.reloadFirewall()
-
-            let summary = "Reloaded firewall ruleset (status: \(status))"
-            store.auditTrail.log(
-                action: .reloadFirewall,
-                summary: summary,
-                target: nil,
-                before: nil,
-                after: status
-            )
-
-            store.analytics.record(operation: "reload_firewall", success: true)
-
+            _ = try await store.writeCoordinator.execute(.reloadFirewall)
             lastReloadTime = Date()
             reloadCount += 1
 
             await store.refresh()
-
         } catch {
-            store.analytics.record(operation: "reload_firewall", success: false)
             writeError = WriteError.from(error, operation: .reloadFirewall)
             showErrorAlert = true
         }

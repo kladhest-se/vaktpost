@@ -100,9 +100,9 @@ final class DashboardStore: Observable {
     let topTalkers: TopTalkerRecorder
 
     /// Safety infrastructure for write operations.
-    let auditTrail = AuditTrail()
-    let rateLimiter = WriteRateLimiter()
-    let analytics = WriteAnalytics()
+    let auditTrail: AuditTrail
+    let rateLimiter: WriteRateLimiter
+    let analytics: WriteAnalytics
 
     /// Whether interface error counters are moving, refresh over refresh.
     ///
@@ -121,7 +121,7 @@ final class DashboardStore: Observable {
 
     let registry: ServerRegistry
     private let defaults: UserDefaults
-    private let generation = BindingGeneration()
+    private let generation: BindingGeneration
     var bindingID: UUID { generation.id }
 
     private func isCurrent(_ binding: UUID) -> Bool {
@@ -199,6 +199,7 @@ final class DashboardStore: Observable {
     }
 
     private(set) var client: FirewallClient
+    private(set) var writeCoordinator: WriteCoordinator
     private(set) var activeProfile: ServerProfile?
 
     // MARK: Data
@@ -379,6 +380,14 @@ final class DashboardStore: Observable {
     static let hostTrafficIntervals: [TimeInterval] = [2, 5, 10, 15]
 
     init(registry: ServerRegistry, defaults: UserDefaults = .standard) {
+        let generation = BindingGeneration()
+        let auditTrail = AuditTrail(defaults: defaults)
+        let rateLimiter = WriteRateLimiter()
+        let analytics = WriteAnalytics()
+        self.auditTrail = auditTrail
+        self.rateLimiter = rateLimiter
+        self.analytics = analytics
+        self.generation = generation
         self.defaults = defaults
         self.expiryNotifier = ExpiryNotifier(defaults: defaults)
         self.topTalkers = TopTalkerRecorder()
@@ -395,8 +404,21 @@ final class DashboardStore: Observable {
         lastPackageCheck = checkedAt > 0 ? Date(timeIntervalSince1970: checkedAt) : nil
         self.registry = registry
         let profile = registry.active ?? ServerProfile()
+        let binding = generation.id
+        let client = Self.makeClient(profile: profile, registry: registry, generation: generation)
         self.activeProfile = registry.active
-        self.client = Self.makeClient(profile: profile, registry: registry, generation: generation)
+        self.client = client
+        self.writeCoordinator = WriteCoordinator(
+            profile: profile,
+            client: client,
+            auditTrail: auditTrail,
+            rateLimiter: rateLimiter,
+            analytics: analytics,
+            isBindingCurrent: {
+                generation.id == binding && registry.active?.id == profile.id
+            }
+        )
+        auditTrail.bind(to: registry.active?.id)
     }
 
     var isConfigured: Bool { activeProfile?.isUsable ?? false }
@@ -421,6 +443,7 @@ final class DashboardStore: Observable {
     }
 
     func removed(_ profile: ServerProfile) async {
+        auditTrail.delete(for: profile.id)
         registry.remove(profile)
         await rebind()
     }
@@ -433,8 +456,22 @@ final class DashboardStore: Observable {
         let binding = bindingID
         let previousClient = client
         activeProfile = registry.active
-        client = Self.makeClient(profile: registry.active ?? ServerProfile(),
-                                 registry: registry, generation: generation)
+        let profile = registry.active ?? ServerProfile()
+        let currentGeneration = generation
+        let reboundClient = Self.makeClient(profile: profile,
+                                            registry: registry, generation: generation)
+        client = reboundClient
+        writeCoordinator = WriteCoordinator(
+            profile: profile,
+            client: reboundClient,
+            auditTrail: auditTrail,
+            rateLimiter: rateLimiter,
+            analytics: analytics,
+            isBindingCurrent: { [weak registry] in
+                currentGeneration.id == binding && registry?.active?.id == profile.id
+            }
+        )
+        auditTrail.bind(to: registry.active?.id)
         clearData()
         throughput.reset()
         liveThroughput.reset()

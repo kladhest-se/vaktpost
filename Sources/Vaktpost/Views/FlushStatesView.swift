@@ -50,7 +50,7 @@ struct FlushStatesView: View {
             .confirmationSheet(
                 isPresented: $showConfirmation,
                 title: "Flush state table",
-                message: flushMessage,
+                message: store.writeCoordinator.preview(for: pendingOperation),
                 destructive: true,
                 destructiveLabel: "Flush",
                 confirmLabel: "Cancel",
@@ -140,11 +140,13 @@ struct FlushStatesView: View {
         }
     }
 
+    private var pendingOperation: AdministrativeWrite {
+        .flushStates(interface: flushAll ? "" : (selectedInterface?.device ?? ""))
+    }
+
     // MARK: - Flush handler
 
     private func confirmFlush() async {
-        let interface = flushAll ? "" : (selectedInterface?.device ?? "")
-
         // Set around the write, not around opening the sheet.
         // It was set and cleared by a `defer` in the button's own
         // closure, which only raised the confirmation — so the flag
@@ -153,36 +155,11 @@ struct FlushStatesView: View {
         isExecuting = true
         defer { isExecuting = false }
 
-        guard store.rateLimiter.allowWrite() else {
-            writeError = WriteError(
-                title: "Rate limited",
-                message: "Please wait a few seconds between actions.",
-                suggestion: nil
-            )
-            showErrorAlert = true
-            return
-        }
-
         do {
-            let status = try await store.client.flushStates(interface: interface)
-
-            let target = flushAll ? "all interfaces" : (selectedInterface?.device ?? "unknown")
-            let summary = "Flushed states on \(target) (status: \(status))"
-
-            store.auditTrail.log(
-                action: .flushStates,
-                summary: summary,
-                target: target,
-                before: nil,
-                after: status
-            )
-
-            store.analytics.record(operation: "flush_states", success: true)
-
+            _ = try await store.writeCoordinator.execute(pendingOperation)
             lastFlushTime = Date()
-
+            await store.refresh()
         } catch {
-            store.analytics.record(operation: "flush_states", success: false)
             writeError = WriteError.from(error, operation: .flushStates)
             showErrorAlert = true
         }

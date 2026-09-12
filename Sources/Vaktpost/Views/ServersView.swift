@@ -324,7 +324,7 @@ struct ServerEditView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Its password is deleted from the keychain.")
+            Text("Its password and encrypted local administrative history are deleted from this device.")
         }
         .confirmationDialog("Enable administrative actions?",
                             isPresented: $showAdministrationRisk,

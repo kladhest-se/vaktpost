@@ -20,6 +20,13 @@ all mutation methods before any request is sent. Administration is enabled per
 firewall from its edit screen only after a risk acknowledgement and a fresh
 Face ID or Touch ID check.
 
+When administration is enabled, every change follows one transaction path:
+the app shows the exact target, captures the current state, commits an
+encrypted pending audit record, sends the operation once, and reads the
+affected state back. A lost response is reported as an unknown outcome rather
+than as a reason to repeat the change. Protected history is kept separately
+for each firewall and can be exported in a redacted form from Settings.
+
 **Tabs:** Overview · Clients · Network · Logs · More (Alerts, VPN, Firewall, System, Firewalls, Settings).
 
 ---
@@ -101,6 +108,9 @@ compiles. The `write-boundary` suite audits the declared mutation surface:
 only named operations may mutate configuration, arguments cross into PHP as
 encoded data, and no snippet may reach a shell or arbitrary filesystem write
 primitive.
+The `write-coordinator` suite additionally prevents views from calling those
+mutations directly and checks the required preview, audit, execution and
+read-back order.
 
 ## Firewall setup (XML-RPC)
 
