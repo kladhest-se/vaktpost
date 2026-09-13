@@ -13,8 +13,8 @@ import Foundation
 ///      value at runtime — a snippet assembled from input is not a snippet
 ///      anybody reviewed.
 ///   2. A snippet may write **only** if its name appears in `writeOperations`
-///      below, and then only through `write_config` and
-///      `filter_configure_sync`.
+///      below, and then only through `write_config`, a pfSense dirty marker,
+///      or the explicitly requested `filter_configure_sync` apply operation.
 ///      Everything else that can change a box — `mwexec`, `exec(`,
 ///      `shell_exec`, `system(`, `passthru`, `popen`, `proc_open`, `unlink`,
 ///      `file_put_contents`, `rename`, `mkdir`, `rmdir`, `chmod`, `chown`,
@@ -251,8 +251,10 @@ struct PHPSnippet: Sendable {
         //
         // Listed once. They were here twice, from two separate edits, which is
         // how an allowlist stops being something anybody reads.
-        "write_config", "filter_configure_sync", "pfctl_clear_states", "pfctl_clear_states_by_if",
+        "write_config", "mark_subsystem_dirty", "filter_configure_sync",
+        "pfctl_clear_states", "pfctl_clear_states_by_if",
         "auth_get_authserver",
+        "session_status", "session_start", "session_destroy", "is_subsystem_dirty",
         "restart_service",
     ]
 
@@ -2523,8 +2525,13 @@ struct PHPSnippet: Sendable {
     /// `separator_rows()`'s own `substr(..., 2)` — not a guess, not "whatever
     /// prefix, tolerantly stripped" as the first version hedged.
     static let ruleSeparators = PHPSnippet("rule_separators", """
+    require_once '/etc/inc/util.inc';
     global $config;
-    $toreturn = ["filter" => [], "nat" => []];
+    $toreturn = [
+      "filter" => [],
+      "nat" => [],
+      "apply_pending" => is_subsystem_dirty("filter") || is_subsystem_dirty("natconf"),
+    ];
 
     // Filter: genuinely grouped by interface. Position is the count of rules
     // that precede the separator within that interface's own subset,
@@ -2897,6 +2904,12 @@ struct PHPSnippet: Sendable {
           // webConfigurator session fields read by write_config(). Use only
           // pfSense's already-authenticated request identity and configured
           // provider; do not create or persist a GUI login session.
+          $vaktpost_audit_session_started = false;
+          if (session_status() !== PHP_SESSION_ACTIVE) {
+            $vaktpost_audit_session_started = session_start([
+              "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+            ]);
+          }
           $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
           if ($vaktpost_authenticated_user !== "") {
             $_SESSION["Username"] = $vaktpost_authenticated_user;
@@ -2913,14 +2926,19 @@ struct PHPSnippet: Sendable {
             }
           }
           write_config("Vaktpost: quick-block rule added");
-          $vaktpost_reload_result = filter_configure_sync();
-          if ($vaktpost_reload_result === 0) {
-            $toreturn["status"] = "ok";
-            $toreturn["rule"] = $block_rule;
-          } else {
-            $toreturn["status"] = "reload_failed";
-            $toreturn["error"] = "The rule was saved, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+          if ($vaktpost_audit_session_started) {
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+            }
+            if (session_status() === PHP_SESSION_ACTIVE) {
+              $_SESSION = [];
+              session_destroy();
+            }
           }
+          mark_subsystem_dirty("filter");
+          $toreturn["status"] = "ok";
+          $toreturn["apply_pending"] = true;
+          $toreturn["rule"] = $block_rule;
         }
         """)
     }
@@ -2981,6 +2999,12 @@ struct PHPSnippet: Sendable {
           // the caller and went straight into a PHP string literal, which is
           // the same hole as everywhere else; the audit trail records which
           // rule went, which is where that belongs.
+          $vaktpost_audit_session_started = false;
+          if (session_status() !== PHP_SESSION_ACTIVE) {
+            $vaktpost_audit_session_started = session_start([
+              "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+            ]);
+          }
           $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
           if ($vaktpost_authenticated_user !== "") {
             $_SESSION["Username"] = $vaktpost_authenticated_user;
@@ -2997,13 +3021,18 @@ struct PHPSnippet: Sendable {
             }
           }
           write_config("Vaktpost: deleted a rule");
-          $vaktpost_reload_result = filter_configure_sync();
-          if ($vaktpost_reload_result === 0) {
-            $toreturn["status"] = "ok";
-          } else {
-            $toreturn["status"] = "reload_failed";
-            $toreturn["error"] = "The rule was deleted from the saved configuration, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+          if ($vaktpost_audit_session_started) {
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+            }
+            if (session_status() === PHP_SESSION_ACTIVE) {
+              $_SESSION = [];
+              session_destroy();
+            }
           }
+          mark_subsystem_dirty("filter");
+          $toreturn["status"] = "ok";
+          $toreturn["apply_pending"] = true;
         } else {
           $toreturn["status"] = "not_found";
         }
@@ -3343,6 +3372,12 @@ struct PHPSnippet: Sendable {
             // interpolation of the caller's `interface` argument — the whole
             // point of the payload is that no runtime string reaches PHP
             // source directly.
+            $vaktpost_audit_session_started = false;
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              $vaktpost_audit_session_started = session_start([
+                "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+              ]);
+            }
             $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
             if ($vaktpost_authenticated_user !== "") {
               $_SESSION["Username"] = $vaktpost_authenticated_user;
@@ -3359,14 +3394,19 @@ struct PHPSnippet: Sendable {
               }
             }
             write_config("Vaktpost: reordered rules on " . $vaktpost_interface);
-            $vaktpost_reload_result = filter_configure_sync();
-            if ($vaktpost_reload_result === 0) {
-              $toreturn["status"] = "ok";
-              $toreturn["order"] = $vaktpost_submitted_rule_trackers;
-            } else {
-              $toreturn["status"] = "reload_failed";
-              $toreturn["error"] = "The new order was saved, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+            if ($vaktpost_audit_session_started) {
+              if (session_status() !== PHP_SESSION_ACTIVE) {
+                session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+              }
+              if (session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION = [];
+                session_destroy();
+              }
             }
+            mark_subsystem_dirty("filter");
+            $toreturn["status"] = "ok";
+            $toreturn["apply_pending"] = true;
+            $toreturn["order"] = $vaktpost_submitted_rule_trackers;
           }
         }
         """)
@@ -3401,6 +3441,12 @@ struct PHPSnippet: Sendable {
           // the caller and went straight into a PHP string literal, which is
           // the same hole as everywhere else; the audit trail records which
           // rule went, which is where that belongs.
+          $vaktpost_audit_session_started = false;
+          if (session_status() !== PHP_SESSION_ACTIVE) {
+            $vaktpost_audit_session_started = session_start([
+              "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+            ]);
+          }
           $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
           if ($vaktpost_authenticated_user !== "") {
             $_SESSION["Username"] = $vaktpost_authenticated_user;
@@ -3417,13 +3463,18 @@ struct PHPSnippet: Sendable {
             }
           }
           write_config("Vaktpost: deleted a nat rule");
-          $vaktpost_reload_result = filter_configure_sync();
-          if ($vaktpost_reload_result === 0) {
-            $toreturn["status"] = "ok";
-          } else {
-            $toreturn["status"] = "reload_failed";
-            $toreturn["error"] = "The port forward was deleted from the saved configuration, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+          if ($vaktpost_audit_session_started) {
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+            }
+            if (session_status() === PHP_SESSION_ACTIVE) {
+              $_SESSION = [];
+              session_destroy();
+            }
           }
+          mark_subsystem_dirty("natconf");
+          $toreturn["status"] = "ok";
+          $toreturn["apply_pending"] = true;
         } else {
           $toreturn["status"] = "not_found";
         }
@@ -3707,6 +3758,12 @@ struct PHPSnippet: Sendable {
           }
         }
         $config["filter"]["rule"] = array_values($rules);
+        $vaktpost_audit_session_started = false;
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+          $vaktpost_audit_session_started = session_start([
+            "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+          ]);
+        }
         $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
         if ($vaktpost_authenticated_user !== "") {
           $_SESSION["Username"] = $vaktpost_authenticated_user;
@@ -3723,18 +3780,23 @@ struct PHPSnippet: Sendable {
           }
         }
         write_config("Vaktpost: saved a rule");
-        $vaktpost_reload_result = filter_configure_sync();
-        if ($vaktpost_reload_result === 0) {
-          $toreturn["status"] = "ok";
-          $toreturn["created"] = $vaktpost_create;
-          $toreturn["tracker"] = $tracker;
-          $toreturn["placement"] = $vaktpost_placement;
-          if ($vaktpost_placement === "before") {
-            $toreturn["before_tracker"] = $vaktpost_before;
+        if ($vaktpost_audit_session_started) {
+          if (session_status() !== PHP_SESSION_ACTIVE) {
+            session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
           }
-        } else {
-          $toreturn["status"] = "reload_failed";
-          $toreturn["error"] = "The rule was saved, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+          if (session_status() === PHP_SESSION_ACTIVE) {
+            $_SESSION = [];
+            session_destroy();
+          }
+        }
+        mark_subsystem_dirty("filter");
+        $toreturn["status"] = "ok";
+        $toreturn["apply_pending"] = true;
+        $toreturn["created"] = $vaktpost_create;
+        $toreturn["tracker"] = $tracker;
+        $toreturn["placement"] = $vaktpost_placement;
+        if ($vaktpost_placement === "before") {
+          $toreturn["before_tracker"] = $vaktpost_before;
         }
         }
         """)
@@ -4048,6 +4110,12 @@ struct PHPSnippet: Sendable {
           $rules[] = $rule;
         }
         $config["nat"]["rule"] = array_values($rules);
+        $vaktpost_audit_session_started = false;
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+          $vaktpost_audit_session_started = session_start([
+            "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+          ]);
+        }
         $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
         if ($vaktpost_authenticated_user !== "") {
           $_SESSION["Username"] = $vaktpost_authenticated_user;
@@ -4064,15 +4132,20 @@ struct PHPSnippet: Sendable {
           }
         }
         write_config("Vaktpost: saved a nat rule");
-        $vaktpost_reload_result = filter_configure_sync();
-        if ($vaktpost_reload_result === 0) {
-          $toreturn["status"] = "ok";
-          $toreturn["created"] = $vaktpost_create;
-          $toreturn["tracker"] = $tracker;
-        } else {
-          $toreturn["status"] = "reload_failed";
-          $toreturn["error"] = "The port forward was saved, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+        if ($vaktpost_audit_session_started) {
+          if (session_status() !== PHP_SESSION_ACTIVE) {
+            session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+          }
+          if (session_status() === PHP_SESSION_ACTIVE) {
+            $_SESSION = [];
+            session_destroy();
+          }
         }
+        mark_subsystem_dirty("natconf");
+        $toreturn["status"] = "ok";
+        $toreturn["apply_pending"] = true;
+        $toreturn["created"] = $vaktpost_create;
+        $toreturn["tracker"] = $tracker;
         }
         """)
     }
@@ -4081,7 +4154,8 @@ struct PHPSnippet: Sendable {
     static var all: [PHPSnippet] {
         [telemetry, firmware, packages, packageUpdates, notices, interfaces, interfaceCounters, gateways, arpTable, dhcpLeases,
          staticMappings, hostOverrides, services, openvpnServers, openvpnClients, ipsecSAs,
-         wireguard, pfTables, haproxy, acme, pfBlocker, dnsblStats, firewallRules, firewallAliases, portForwards, ruleSeparators, carp,
+         wireguard, pfTables, haproxy, acme, pfBlocker, dnsblStats, firewallRules, firewallAliases, portForwards,
+         ruleSeparators, carp,
          certificates, dyndns, ping, rrdProbe, rrdTrace,
          batchCore, batchClients, batchVpn, batchSystem,
          reloadFirewall]

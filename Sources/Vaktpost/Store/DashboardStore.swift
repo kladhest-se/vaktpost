@@ -248,6 +248,10 @@ final class DashboardStore: Observable {
     var rules: [FirewallRule] = []
     var aliases: [FirewallAliasEntry] = []
     var portForwards: [PortForward] = []
+    /// Mirrors pfSense's filter/natconf dirty markers. Saved changes are
+    /// visible in the editor immediately but do not affect traffic until the
+    /// user explicitly applies them.
+    var firewallChangesPending = false
 
     var carp: CARPStatus?
     var configHistory: [ConfigRevision] = []
@@ -539,6 +543,7 @@ final class DashboardStore: Observable {
         store.openvpnServers = []; store.openvpnClients = []; store.ipsecSAs = []
         store.wireguardTunnels = []; store.wireguardPeers = []
         store.rules = []; store.aliases = []; store.portForwards = []
+        store.firewallChangesPending = false
         store.filterSeparators = []; store.natSeparators = []
         store.configHistory = []; store.certificates = []; store.packages = []; store.tables = []
         store.pfBlocker = nil; store.pfBlockerInstalled = false
@@ -1468,6 +1473,7 @@ final class DashboardStore: Observable {
         if let separators = try? await client.ruleSeparators(), isCurrent(binding) {
             filterSeparators = separators.filter
             natSeparators = separators.nat
+            firewallChangesPending = separators.applyPending
         }
     }
 

@@ -269,27 +269,23 @@ final class RuleCreationTests: XCTestCase {
         XCTAssertEqual(dict.bool("create"), true)
     }
 
-    func testADuplicateIsDistinguishableFromItsOriginal() {
-        // Two rules with the same description in a list of ninety-eight is how
-        // somebody edits the wrong one later.
-        XCTAssertEqual(RuleEditForm.duplicating(existing()).descr, "Web (copy)")
+    func testADuplicatePreservesTheOriginalDescription() {
+        XCTAssertEqual(RuleEditForm.duplicating(existing()).descr, "Web")
     }
 
-    func testAnUndescribedRuleStillGetsACopyLabel() {
+    func testAnUndescribedDuplicateRemainsUndescribed() {
         let bare = JSONDict([
             "tracker": .string("1"), "interface": .string("lan"),
             "type": .string("pass"), "descr": .string(""),
             "source": .object(["address": .string("any")]),
             "destination": .object(["address": .string("any")])
         ])
-        XCTAssertEqual(RuleEditForm.duplicating(FirewallRule(bare)).descr, "Copy")
+        XCTAssertEqual(RuleEditForm.duplicating(FirewallRule(bare)).descr, "")
     }
 
-    func testNewAndDuplicatedRulesStartDisabled() {
-        // The one thing that cannot be undone from a phone is traffic that got
-        // through while a rule was being written.
+    func testNewRulesStartDisabledAndDuplicatesPreserveState() {
         XCTAssertTrue(RuleEditForm.blank(interface: "lan").disabled)
-        XCTAssertTrue(RuleEditForm.duplicating(existing()).disabled)
+        XCTAssertFalse(RuleEditForm.duplicating(existing()).disabled)
     }
 
     func testABlankRuleCarriesTheInterfaceItWasStartedOn() {

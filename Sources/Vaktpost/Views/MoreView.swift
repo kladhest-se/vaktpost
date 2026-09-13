@@ -21,7 +21,8 @@ struct MoreView: View {
                 link("Quick Block", "shield.slash", badge: 0) { QuickBlockView() }
                 link("Analytics", "chart.bar", badge: 0) { AnalyticsView() }
                 link("Service manager", "power", badge: store.overviewLayout.servicesDown.isEmpty ? 0 : store.overviewLayout.servicesDown.count) { ServiceManagerView() }
-                link("Reload firewall", "arrow.clockwise", badge: 0) { FirewallReloadView() }
+                link("Apply firewall changes", "arrow.clockwise",
+                     badge: store.firewallChangesPending ? 1 : 0) { FirewallReloadView() }
                 link("Flush states", "trash", badge: 0) { FlushStatesView() }
                 link("Incident timeline", "point.3.connected.trianglepath.dotted", badge: 0) { IncidentTimelineView() }
                 link("Alerts", "bell.badge", badge: store.alertManager.criticalAlertCount) { AlertsView() }

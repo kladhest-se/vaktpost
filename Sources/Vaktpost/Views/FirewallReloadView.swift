@@ -35,7 +35,7 @@ struct FirewallReloadView: View {
                 .padding(.bottom, 28)
             }
             .background(theme.bg.ignoresSafeArea())
-            .navigationTitle("Reload firewall")
+            .navigationTitle("Apply firewall changes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -48,10 +48,10 @@ struct FirewallReloadView: View {
             }
             .confirmationSheet(
                 isPresented: $showConfirmation,
-                title: "Reload firewall rules",
+                title: "Apply firewall changes",
                 message: store.writeCoordinator.preview(for: .reloadFirewall),
                 destructive: true,
-                destructiveLabel: "Reload",
+                destructiveLabel: "Apply Changes",
                 confirmLabel: "Cancel",
                 onConfirm: confirmReload,
                 onCancel: {}
@@ -106,6 +106,16 @@ struct FirewallReloadView: View {
                         .scaledFont(13, weight: .semibold)
                         .foregroundStyle(theme.label)
                 }
+
+                HStack {
+                    Text("Pending changes")
+                        .scaledFont(13)
+                        .foregroundStyle(theme.labelMuted)
+                    Spacer()
+                    Text(store.firewallChangesPending ? "Waiting to be applied" : "None")
+                        .scaledFont(13, weight: .semibold)
+                        .foregroundStyle(store.firewallChangesPending ? theme.warn : theme.ok)
+                }
             }
         }
         .padding(16)
@@ -121,11 +131,11 @@ struct FirewallReloadView: View {
                     Image(systemName: "arrow.clockwise")
                         .scaledFont(14)
                         .foregroundStyle(theme.warn)
-                    Text("Reload ruleset")
+                    Text("Apply Changes")
                         .scaledFont(14, weight: .semibold)
                 }
 
-                Text("Apply pending configuration changes without restarting services. This reloads the pf ruleset in place.")
+                Text("Apply all pending filter and NAT changes saved on pfSense, including changes made in the web UI or by another administrator.")
                     .scaledFont(13)
                     .foregroundStyle(theme.labelMuted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -139,10 +149,10 @@ struct FirewallReloadView: View {
                     if isReloading {
                         ProgressView()
                             .progressViewStyle(.circular)
-                        Text("Reloading…")
+                        Text("Applying…")
                     } else {
                         Spacer()
-                        Text("Reload now")
+                        Text("Apply Changes")
                         Image(systemName: "arrow.clockwise")
                     }
                 }

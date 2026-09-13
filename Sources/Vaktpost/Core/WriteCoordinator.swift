@@ -52,7 +52,7 @@ enum AdministrativeWrite: Sendable {
     var summary: String {
         switch self {
         case .reloadFirewall:
-            return "Reload firewall ruleset"
+            return "Apply pending firewall changes"
         case .restartService(_, let displayName):
             return "Restart service \(displayName)"
         case .quickBlock(let interface, let address, _):
@@ -81,7 +81,7 @@ enum AdministrativeWrite: Sendable {
     var preview: String {
         switch self {
         case .reloadFirewall:
-            return "Reload the active pf ruleset. Existing connections may be briefly interrupted."
+            return "Apply every pending filter and NAT change currently saved on this firewall, including changes made in the web UI or by another administrator. Existing connections may be briefly interrupted."
         case .restartService(_, let displayName):
             return "Restart \(displayName). The service will be temporarily unavailable."
         case .quickBlock(let interface, let address, let description):

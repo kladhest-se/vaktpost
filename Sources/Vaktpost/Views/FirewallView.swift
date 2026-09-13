@@ -93,6 +93,37 @@ struct FirewallView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
 
+            if store.firewallChangesPending {
+                NavigationLink {
+                    FirewallReloadView()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(theme.warn)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Firewall changes are waiting")
+                                .scaledFont(13, weight: .semibold)
+                                .foregroundStyle(theme.label)
+                            Text("Saved, but not active. Review and apply changes.")
+                                .scaledFont(11)
+                                .foregroundStyle(theme.labelMuted)
+                        }
+                        Spacer()
+                        Text("Apply Changes")
+                            .scaledFont(12, weight: .semibold)
+                            .foregroundStyle(theme.warn)
+                        Image(systemName: "chevron.right")
+                            .scaledFont(10, weight: .semibold)
+                            .foregroundStyle(theme.labelFaint)
+                    }
+                    .padding(12)
+                    .background(theme.warn.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+            }
+
             Picker("", selection: $pane) {
                 ForEach(Pane.allCases) { Text($0.rawValue).tag($0) }
             }
@@ -958,7 +989,6 @@ struct RuleDetailView: View {
     let rule: FirewallRule
 
     @State private var showDeleteConfirm = false
-    @State private var showEditSheet = false
     /// The form the sheet opens with — an edit of this rule, or a copy of it.
     @State private var editorForm: RuleEditForm?
     @State private var showSimulation = false
@@ -1031,7 +1061,6 @@ struct RuleDetailView: View {
                     VStack(spacing: 8) {
                         Button {
                             editorForm = RuleEditForm(from: rule)
-                            showEditSheet = true
                         } label: {
                             Label("Edit Rule", systemImage: "pencil")
                                 .scaledFont(14, weight: .medium)
@@ -1073,7 +1102,6 @@ struct RuleDetailView: View {
                 Menu {
                     Button {
                         editorForm = RuleEditForm.duplicating(rule)
-                        showEditSheet = true
                     } label: {
                         Label("Duplicate", systemImage: "plus.square.on.square")
                     }
@@ -1114,8 +1142,11 @@ struct RuleDetailView: View {
         // arrived — for a struct copied synchronously out of a rule the view
         // already held. There was never anything to load; the spinner was the
         // whole delay, and on a fast tap it was what you got.
-        .sheet(isPresented: $showEditSheet) {
-            RuleEditSheet(form: editorForm ?? RuleEditForm(from: rule),
+        // Key the presentation by the actual draft. A Boolean sheet reused
+        // the editor's @State between an edit and a later duplicate, turning
+        // that duplicate back into an edit of the source rule.
+        .sheet(item: $editorForm) { form in
+            RuleEditSheet(form: form,
                           interfaces: store.interfaces,
                           aliases: store.aliases,
                           ruleset: store.rules,
@@ -1213,7 +1244,6 @@ struct PortForwardDetailView: View {
     let forward: PortForward
 
     @State private var showDeleteConfirm = false
-    @State private var showEditSheet = false
     /// The form the sheet opens with — an edit of this forward, or a copy.
     @State private var editorForm: PortForwardEditForm?
     @State private var isSaving = false
@@ -1286,7 +1316,6 @@ struct PortForwardDetailView: View {
                     VStack(spacing: 8) {
                         Button {
                             editorForm = PortForwardEditForm(from: forward)
-                            showEditSheet = true
                         } label: {
                             Label("Edit Forward", systemImage: "pencil")
                                 .scaledFont(14, weight: .medium)
@@ -1328,7 +1357,6 @@ struct PortForwardDetailView: View {
                 // and only one of them will work.
                 Button {
                     editorForm = PortForwardEditForm.duplicating(forward)
-                    showEditSheet = true
                 } label: {
                     Label("Duplicate", systemImage: "plus.square.on.square")
                 }
@@ -1344,8 +1372,8 @@ struct PortForwardDetailView: View {
         }
         // Same as the rule editor: assembled at presentation, because there is
         // nothing to fetch and the spinner was the entire delay.
-        .sheet(isPresented: $showEditSheet) {
-            PortForwardEditSheet(form: editorForm ?? PortForwardEditForm(from: forward),
+        .sheet(item: $editorForm) { form in
+            PortForwardEditSheet(form: form,
                                  interfaces: store.interfaces,
                                  aliases: store.aliases,
                                  onSave: { saved in try await save(changes: saved) })
@@ -1495,18 +1523,13 @@ struct RuleEditForm: Equatable, Identifiable {
         return form
     }
 
-    /// A copy of an existing rule, ready to be saved as another one.
-    ///
-    /// The description is marked rather than left identical. Two rules with
-    /// the same description in a list of ninety-eight is how somebody edits
-    /// the wrong one later.
+    /// An exact copy of an existing rule, ready to be saved as another one.
+    /// Identity is the one field it must not copy: `isCreating` makes the
+    /// payload omit the source tracker and pfSense assigns a new one.
     static func duplicating(_ rule: FirewallRule) -> RuleEditForm {
         var form = RuleEditForm(from: rule)
         form.isCreating = true
         form.placementTarget = .last
-        form.descr = rule.descr.isEmpty ? "Copy" : "\(rule.descr) (copy)"
-        // A copy starts disabled for the same reason a new rule does.
-        form.disabled = true
         return form
     }
 
@@ -1693,7 +1716,10 @@ struct RuleEditSheet: View {
     /// rate limit, and puts a line in the audit trail saying an edit happened.
     private let original: RuleEditForm
 
-    private var isDirty: Bool { edited != original }
+    // A create is itself a change even when the duplicated fields are left
+    // untouched. Requiring a text edit before Save made Duplicate look like a
+    // rename operation instead of allowing an exact copy.
+    private var isDirty: Bool { edited.isCreating || edited != original }
 
     var body: some View {
         NavigationStack {
@@ -1863,7 +1889,7 @@ struct RuleEditSheet: View {
         if original.disabled != edited.disabled { changes.append("Disabled: \(original.disabled ? "yes" : "no") → \(edited.disabled ? "yes" : "no")") }
         if original.logged != edited.logged { changes.append("Logging: \(original.logged ? "on" : "off") → \(edited.logged ? "on" : "off")") }
 
-        var text = "The coordinator will apply and read back:\n\n"
+        var text = "The coordinator will save and read back:\n\n"
             + changes.map { "• \($0)" }.joined(separator: "\n")
 
         // Position belongs here as much as in the editor. A rule is only as
@@ -2150,7 +2176,7 @@ struct PortForwardEditSheet: View {
 
     private let original: PortForwardEditForm
 
-    private var isDirty: Bool { edited != original }
+    private var isDirty: Bool { edited.isCreating || edited != original }
 
     init(form: PortForwardEditForm, interfaces: [InterfaceStat],
          aliases: [FirewallAliasEntry],
@@ -2301,7 +2327,7 @@ struct PortForwardEditSheet: View {
         Self.describe("Local port", original.localPort, edited.localPort, into: &changes)
         Self.describe("Description", original.descr, edited.descr, into: &changes)
         if original.disabled != edited.disabled { changes.append("Disabled: \(original.disabled ? "yes" : "no") → \(edited.disabled ? "yes" : "no")") }
-        return "The coordinator will apply and read back:\n\n" + changes.map { "• \($0)" }.joined(separator: "\n")
+        return "The coordinator will save and read back:\n\n" + changes.map { "• \($0)" }.joined(separator: "\n")
     }
 
     private static func describe(_ label: String, _ before: String, _ after: String,

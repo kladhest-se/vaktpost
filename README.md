@@ -137,7 +137,15 @@ an exact lab-host confirmation and explicit state-loss acknowledgement. See
 Administrative writes retain `Vaktpost:` in their description and attribute
 the pfSense Configuration History revision to the XML-RPC user, the source IP
 observed by pfSense, and the configured authentication provider. Vaktpost does
-not submit an audit username of its own or create a webConfigurator session.
+not accept an audit username in its payload. It starts a short-lived,
+cookie-free PHP session from pfSense's already-authenticated XML-RPC identity
+for `write_config()`, then destroys that session before returning.
+
+Rule and NAT edits follow the pfSense WebUI workflow: Save writes `config.xml`
+and leaves the relevant subsystem pending. The live ruleset changes only when
+an administrator opens **Apply firewall changes** and confirms **Apply
+Changes**; that action applies every pending firewall change on the appliance,
+including changes made in the WebUI by another administrator.
 
 ## What it runs
 

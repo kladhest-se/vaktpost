@@ -271,12 +271,13 @@ actor FirewallClient {
         try await rpc.runList(.portForwards).map(PortForward.init)
     }
 
-    /// Filter-rule and NAT separators, together, since one call reads both.
-    func ruleSeparators() async throws -> (filter: [RuleSeparator], nat: [RuleSeparator]) {
+    /// Filter-rule and NAT separators plus pfSense's pending-apply marker,
+    /// together, since the same lightweight call reads all three.
+    func ruleSeparators() async throws -> (filter: [RuleSeparator], nat: [RuleSeparator], applyPending: Bool) {
         let payload = try await rpc.runObject(.ruleSeparators)
         let filter = payload.list("filter").compactMap(JSONDict.init).map(RuleSeparator.init)
         let nat = payload.list("nat").compactMap(JSONDict.init).map(RuleSeparator.init)
-        return (filter, nat)
+        return (filter, nat, payload.bool("apply_pending") ?? false)
     }
 
     // MARK: High availability
@@ -361,13 +362,25 @@ actor FirewallClient {
         return dict
     }
 
+    /// Configuration writes are saves, not applies. Require the snippet to
+    /// confirm that pfSense was left dirty so a missing marker cannot be
+    /// presented as a successful WebUI-style staged change.
+    static func validatedPendingWriteResponse(_ dict: JSONDict,
+                                              operation: String) throws -> JSONDict {
+        let result = try validatedWriteResponse(dict, operation: operation)
+        guard result.bool("apply_pending") == true else {
+            throw RPCError.fault(0, "\(operation) did not leave changes pending for Apply Changes.")
+        }
+        return result
+    }
+
     /// A save is not complete until pfSense confirms whether it created or
     /// edited the object and returns the stable identity used for read-back.
     static func validatedSaveResponse(_ dict: JSONDict,
                                       operation: String,
                                       requestedTracker: String,
                                       isCreate: Bool) throws -> JSONDict {
-        let result = try validatedWriteResponse(dict, operation: operation)
+        let result = try validatedPendingWriteResponse(dict, operation: operation)
         guard result.bool("created") == isCreate else {
             throw RPCError.fault(0, "\(operation) returned an inconsistent create/edit result.")
         }
@@ -414,7 +427,7 @@ actor FirewallClient {
         try requireAdministration()
         let snippet = PHPSnippet.quickBlock(interface: interface, address: address, description: description)
         let dict = try await rpc.runObjectOnce(snippet)
-        return try Self.validatedWriteResponse(dict, operation: "Quick block")
+        return try Self.validatedPendingWriteResponse(dict, operation: "Quick block")
     }
 
     /// Flushes the firewall state table.
@@ -433,7 +446,7 @@ actor FirewallClient {
         try requireAdministration()
         let snippet = PHPSnippet.deleteRule(tracker: tracker)
         let dict = try await rpc.runObjectOnce(snippet)
-        _ = try Self.validatedWriteResponse(dict, operation: "Rule deletion")
+        _ = try Self.validatedPendingWriteResponse(dict, operation: "Rule deletion")
         return "ok"
     }
 
@@ -445,7 +458,7 @@ actor FirewallClient {
         }
         let snippet = PHPSnippet.deleteNatRule(tracker: tracker)
         let dict = try await rpc.runObjectOnce(snippet)
-        _ = try Self.validatedWriteResponse(dict, operation: "Port-forward deletion")
+        _ = try Self.validatedPendingWriteResponse(dict, operation: "Port-forward deletion")
         return "ok"
     }
 
@@ -544,7 +557,7 @@ actor FirewallClient {
         }
         let snippet = PHPSnippet.reorderFilterRules(interface: interface, items: items.map(\.json))
         let dict = try await rpc.runObjectOnce(snippet)
-        return try Self.validatedWriteResponse(dict, operation: "Rule reorder")
+        return try Self.validatedPendingWriteResponse(dict, operation: "Rule reorder")
     }
 
 

@@ -1,5 +1,33 @@
 # Changelog
 
+## Saved firewall edits now wait for Apply Changes
+
+Quick Block, filter-rule save/delete/reorder, and port-forward save/delete no
+longer reload the live ruleset. They write the configuration and set pfSense's
+native `filter` or `natconf` dirty marker, like the corresponding WebUI pages.
+The Firewall screen reads those markers, shows a pending-changes banner, and
+links to **Apply firewall changes**. Its confirmation warns that applying
+activates every pending filter and NAT edit on the appliance, including WebUI
+changes from another administrator.
+
+## XML-RPC attribution survives pfSense Plus session startup
+
+The first attribution fix populated `$_SESSION` before `write_config()`, but
+pfSense Plus can start its own session inside that function and replace those
+values. Each configuration write now starts a temporary, cookie-free session
+first, derives the username from the authenticated `PHP_AUTH_USER`, sets the
+configured authentication source, and destroys the temporary session after
+the revision is recorded. The executable contract simulates the old
+session-clobbering behavior.
+
+## Duplicate is an exact new rule, not a renamed edit
+
+Rule and port-forward detail screens now key their editor sheet to the actual
+draft. The previous Boolean presentation could retain an ordinary edit's
+state and reuse it for a later Duplicate, which updated the source rule.
+Duplicating a filter rule preserves its description and enabled state, sends
+no source tracker, and can be saved unchanged with a new tracker.
+
 ## pfSense configuration history names the authenticated Vaktpost user
 
 Configuration writes made through `pfsense.exec_php` appeared in pfSense as
@@ -13,7 +41,7 @@ request-local audit context first. The username comes from pfSense's
 already-authenticated `PHP_AUTH_USER`, the address remains pfSense's observed
 remote address, and the authentication-source label comes from the firewall's
 configured provider. No username or provider is accepted from an app payload,
-and no webConfigurator session is started or persisted. An LDAP write now reads
+and the temporary attribution session is never persisted. An LDAP write reads
 like `user@address (LDAP/provider): Vaktpost: reordered rules on opt5` in
 Configuration History. Quick Block, rule and port-forward save/delete, and rule
 reorder all use the same attribution.
@@ -35,21 +63,9 @@ in flight, the post-write path waits for it and then starts its own forced
 read; `force: true` alone still returns early while another load is active and
 would leave precisely the race this change is meant to remove.
 
-Every ruleset-changing snippet now checks `filter_configure_sync()`'s return
-value. pfSense returns `0` only after the synchronous filter configuration
-reaches its successful end; an early reload failure returns without that
-value. Such a request now reports `reload_failed` and explains that the saved
-configuration may already have changed, instead of returning `ok` merely
-because `write_config()` completed. The local PHP contract covers both return
-paths.
-
-This does not adopt pfSense's dirty-flag workflow. Its Apply button is an
-activation boundary, not a transaction boundary: edits have already been
-written to `config.xml`, and Apply reloads the combined current configuration.
-Using that global flag from the app could also activate a different
-administrator's pending WebUI changes. A future batch mode should therefore
-queue an app-owned, per-firewall change set, review it as one diff, revalidate
-it against fresh configuration, and perform one write plus one reload.
+The later staged-apply change above supersedes the original immediate-reload
+behavior: only the explicit Apply Changes operation calls the synchronous
+filter reload now.
 
 ## Ruleset reloads now call pfSense's actual filter API
 
@@ -59,13 +75,9 @@ successfully, but `write_filter()` did not exist. This was not caused by the
 length of the reorder snippet or by loading `util.inc` first. The app was
 calling the wrong function.
 
-All seven call sites now use `filter_configure_sync()`: the standalone reload,
-Quick Block, rule delete, rule reorder, port-forward delete, rule save and
-port-forward save paths. That is the function declared by pfSense's
-`filter.inc`, and it is the same synchronous reload used by pfSense's bundled
-`enableallowallwan` PHP shell playback immediately after `write_config()`.
-Keeping the reload synchronous is intentional: an administrative operation
-must not report success merely because a reload event was queued.
+The explicit Apply Changes call uses `filter_configure_sync()`, the function
+declared by pfSense's `filter.inc`. Save operations now use pfSense's WebUI
+dirty markers and do not call the reload function.
 
 The snippet function allowlist, write-boundary audit and executable PHP
 contract fixture now name the real function too. This matters beyond making
