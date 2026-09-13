@@ -23,9 +23,9 @@ enum AdministrativeWrite: Sendable {
         case .quickBlock: return .quickBlock
         case .flushStates: return .flushStates
         case .deleteRule: return .deleteRule
-        case .saveRule: return .editRule
+        case .saveRule(let rule, _): return Self.isCreate(rule) ? .addRule : .editRule
         case .deleteNatRule: return .deletePortForward
-        case .saveNatRule: return .editPortForward
+        case .saveNatRule(let rule, _): return Self.isCreate(rule) ? .addPortForward : .editPortForward
         }
     }
 
@@ -55,12 +55,12 @@ enum AdministrativeWrite: Sendable {
             return interface.isEmpty ? "Flush all firewall states" : "Flush states on \(interface)"
         case .deleteRule(let tracker, let displayName):
             return "Delete rule \(displayName.isEmpty ? tracker : displayName)"
-        case .saveRule(_, let displayName):
-            return "Edit rule \(displayName)"
+        case .saveRule(let rule, let displayName):
+            return "\(Self.isCreate(rule) ? "Add" : "Edit") rule \(displayName)"
         case .deleteNatRule(let tracker, let displayName):
             return "Delete port forward \(displayName.isEmpty ? tracker : displayName)"
-        case .saveNatRule(_, let displayName):
-            return "Edit port forward \(displayName)"
+        case .saveNatRule(let rule, let displayName):
+            return "\(Self.isCreate(rule) ? "Add" : "Edit") port forward \(displayName)"
         }
     }
 
@@ -82,11 +82,13 @@ enum AdministrativeWrite: Sendable {
         case .deleteRule(let tracker, let displayName):
             return "Permanently delete rule “\(displayName.isEmpty ? tracker : displayName)” (tracker \(tracker))."
         case .saveRule(let rule, let displayName):
-            return "Update rule “\(displayName)” to \(Self.ruleDescription(rule))."
+            let verb = Self.isCreate(rule) ? "Add" : "Update"
+            return "\(verb) rule “\(displayName)” as \(Self.ruleDescription(rule))."
         case .deleteNatRule(let tracker, let displayName):
             return "Permanently delete port forward “\(displayName.isEmpty ? tracker : displayName)” (tracker \(tracker))."
         case .saveNatRule(let rule, let displayName):
-            return "Update port forward “\(displayName)” to \(Self.natDescription(rule))."
+            let verb = Self.isCreate(rule) ? "Add" : "Update"
+            return "\(verb) port forward “\(displayName)” as \(Self.natDescription(rule))."
         }
     }
 
@@ -103,6 +105,10 @@ enum AdministrativeWrite: Sendable {
         let target = rule.string("target") ?? "unknown target"
         let localPort = rule.string("local_port").map { ":\($0)" } ?? ""
         return "\(destination)\(destinationPort) → \(target)\(localPort) on \(rule.string("interface") ?? "unknown interface")"
+    }
+
+    private static func isCreate(_ rule: JSONDict) -> Bool {
+        rule.bool("create") ?? false
     }
 }
 
@@ -338,11 +344,13 @@ final class WriteCoordinator {
         case .deleteRule(let tracker, _):
             return Receipt(status: try await client.deleteRule(tracker: tracker), tracker: tracker)
         case .saveRule(let rule, _):
-            return Receipt(status: try await client.saveRule(rule: rule), tracker: rule.string("tracker"))
+            let result = try await client.saveRule(rule: rule)
+            return Receipt(status: result.string("status") ?? "ok", tracker: result.string("tracker"))
         case .deleteNatRule(let tracker, _):
             return Receipt(status: try await client.deleteNatRule(tracker: tracker), tracker: tracker)
         case .saveNatRule(let rule, _):
-            return Receipt(status: try await client.saveNatRule(rule: rule), tracker: rule.string("tracker"))
+            let result = try await client.saveNatRule(rule: rule)
+            return Receipt(status: result.string("status") ?? "ok", tracker: result.string("tracker"))
         }
     }
 
@@ -359,6 +367,8 @@ final class WriteCoordinator {
             return Self.serviceSnapshot(service)
         case .flushStates:
             return Self.stateSnapshot(try await client.stateTableSize())
+        case .saveRule(let rule, _) where rule.bool("create") == true:
+            return "rules=\((try await client.firewallRules()).count);new_tracker=unassigned"
         case .deleteRule, .saveRule:
             guard let tracker = operation.tracker else {
                 throw WriteCoordinatorError.invalidOperation("a stable rule tracker is required")
@@ -367,6 +377,8 @@ final class WriteCoordinator {
                 throw WriteCoordinatorError.invalidOperation("the rule is no longer present")
             }
             return Self.ruleSnapshot(rule)
+        case .saveNatRule(let rule, _) where rule.bool("create") == true:
+            return "port_forwards=\((try await client.portForwards()).count);new_tracker=unassigned"
         case .deleteNatRule, .saveNatRule:
             guard let tracker = operation.tracker else {
                 throw WriteCoordinatorError.invalidOperation("a stable port-forward tracker is required")
@@ -427,14 +439,15 @@ final class WriteCoordinator {
                                 detail: exists ? "The deleted rule is still present." : "The rule is absent during read-back.",
                                 snapshot: exists ? "tracker=\(tracker);present=true" : "tracker=\(tracker);present=false")
         case .saveRule(let expected, _):
-            guard let tracker = expected.string("tracker"),
+            let isCreate = expected.bool("create") ?? false
+            guard let tracker = receipt.tracker, !tracker.isEmpty,
                   let actual = try await client.firewallRules().first(where: { $0.tracker == tracker }) else {
                 return Verification(state: .mismatch,
-                                    detail: "The edited rule was not found during read-back.", snapshot: nil)
+                                    detail: "The \(isCreate ? "new" : "edited") rule was not found during read-back.", snapshot: nil)
             }
             let matches = Self.rule(actual, matches: expected)
             return Verification(state: matches ? .verified : .mismatch,
-                                detail: matches ? "The edited rule matches the requested values." : "The rule returned different values after saving.",
+                                detail: matches ? "The \(isCreate ? "new" : "edited") rule matches the requested values." : "The rule returned different values after saving.",
                                 snapshot: Self.ruleSnapshot(actual))
         case .deleteNatRule(let tracker, _):
             let exists = try await client.portForwards().contains { $0.tracker == tracker }
@@ -442,14 +455,15 @@ final class WriteCoordinator {
                                 detail: exists ? "The deleted port forward is still present." : "The port forward is absent during read-back.",
                                 snapshot: exists ? "tracker=\(tracker);present=true" : "tracker=\(tracker);present=false")
         case .saveNatRule(let expected, _):
-            guard let tracker = expected.string("tracker"),
+            let isCreate = expected.bool("create") ?? false
+            guard let tracker = receipt.tracker, !tracker.isEmpty,
                   let actual = try await client.portForwards().first(where: { $0.tracker == tracker }) else {
                 return Verification(state: .mismatch,
-                                    detail: "The edited port forward was not found during read-back.", snapshot: nil)
+                                    detail: "The \(isCreate ? "new" : "edited") port forward was not found during read-back.", snapshot: nil)
             }
             let matches = Self.nat(actual, matches: expected)
             return Verification(state: matches ? .verified : .mismatch,
-                                detail: matches ? "The edited port forward matches the requested values." : "The port forward returned different values after saving.",
+                                detail: matches ? "The \(isCreate ? "new" : "edited") port forward matches the requested values." : "The port forward returned different values after saving.",
                                 snapshot: Self.natSnapshot(actual))
         }
     }

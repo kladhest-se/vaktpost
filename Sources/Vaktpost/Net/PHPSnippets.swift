@@ -2897,6 +2897,12 @@ struct PHPSnippet: Sendable {
           }
         }
 
+        if (!$vaktpost_create && !$found) {
+          // Never turn a stale edit into an append. The rule may have been
+          // removed after the app's preflight read and before this write.
+          $toreturn["status"] = "not_found";
+          $toreturn["error"] = "The rule tracker no longer exists";
+        } else {
         $rule["interface"] = strval($vaktpost_input["interface"] ?? "");
         $rule["type"] = strval($vaktpost_input["type"] ?? "pass");
         $rule["protocol"] = strval($vaktpost_input["protocol"] ?? "any");
@@ -2940,8 +2946,9 @@ struct PHPSnippet: Sendable {
         write_config("Vaktpost: saved a rule");
         write_filter();
         $toreturn["status"] = "ok";
-        $toreturn["created"] = !$found;
+        $toreturn["created"] = $vaktpost_create;
         $toreturn["tracker"] = $tracker;
+        }
         """)
     }
 
@@ -2953,17 +2960,8 @@ struct PHPSnippet: Sendable {
     /// the same description and left the original in place, so "save" grew the
     /// NAT table by one every time it was pressed.
     ///
-    /// Existing forwards are matched by their pfSense tracker. The composite
-    /// match remains as a compatibility fallback for older payloads that do
-    /// not contain one.
-    ///
-    /// The port is load-bearing. Left out, two forwards to one host on one
-    /// interface — 80 and 443 to 10.0.0.5 — match identically, and editing
-    /// either one replaces the other.
-    ///
-    /// With a tracker, changing the destination or target still replaces the
-    /// original. Without one, the compatibility match intentionally fails
-    /// toward an append rather than risking replacement of a different rule.
+    /// Existing forwards are matched only by their pfSense tracker. An edit
+    /// whose tracker disappeared is rejected rather than becoming an append.
     static func saveNatRule(rule: JSONDict) -> PHPSnippet {
         let encoded = payload(rule)
         return PHPSnippet("save_nat_rule", """
@@ -2993,35 +2991,41 @@ struct PHPSnippet: Sendable {
 
         $vaktpost_create = ($vaktpost_input["create"] ?? false) ? true : false;
         $found = false;
+        $vaktpost_index = null;
         $rule = [];
-        // Creating means never matching. A duplicate of an existing forward is
-        // identical to it in every field the fallback compares — interface,
-        // destination, port and target — so without this a "duplicate" would
-        // match its own original and replace it.
-        foreach (($vaktpost_create ? [] : $rules) as $idx => $r) {
-          if (!is_array($r)) { continue; }
-          $vaktpost_match = false;
-          if ($tracker !== "" && ($r["tracker"] ?? "") === $tracker) {
-            $vaktpost_match = true;
-          } elseif ($tracker === "") {
-            $vaktpost_rdst = $r["destination"] ?? [];
-            $vaktpost_rdstaddr = strval(is_array($vaktpost_rdst) ? ($vaktpost_rdst["address"] ?? "") : "");
-            $vaktpost_rdstport = strval($r["destination_port"] ?? "");
-            if (strval($r["interface"] ?? "") === $vaktpost_if
-                && strval($r["target"] ?? "") === $vaktpost_target
-                && $vaktpost_rdstaddr === $vaktpost_dstaddr
-                && $vaktpost_rdstport === $vaktpost_dstport) {
-              $vaktpost_match = true;
+        if ($vaktpost_create) {
+          // Allocate on the firewall, against the current NAT table. A value
+          // chosen by the phone could collide with a rule added since refresh.
+          $tracker = strval(time());
+          $vaktpost_collision = true;
+          while ($vaktpost_collision) {
+            $vaktpost_collision = false;
+            foreach ($rules as $vaktpost_existing) {
+              if (is_array($vaktpost_existing) && strval($vaktpost_existing["tracker"] ?? "") === $tracker) {
+                $tracker = strval(intval($tracker) + 1);
+                $vaktpost_collision = true;
+                break;
+              }
             }
           }
+        }
+        // Creating means never matching. In particular, a duplicate must not
+        // match the tracker of the forward it was copied from.
+        foreach (($vaktpost_create ? [] : $rules) as $idx => $r) {
+          if (!is_array($r)) { continue; }
+          $vaktpost_match = $tracker !== "" && strval($r["tracker"] ?? "") === $tracker;
           if ($vaktpost_match) {
             $rule = $r;
-            unset($rules[$idx]);
+            $vaktpost_index = $idx;
             $found = true;
             break;
           }
         }
 
+        if (!$vaktpost_create && !$found) {
+          $toreturn["status"] = "not_found";
+          $toreturn["error"] = "The port-forward tracker no longer exists";
+        } else {
         $rule["interface"] = $vaktpost_if;
         $rule["protocol"] = strval($vaktpost_input["protocol"] ?? "any");
         $rule["ipprotocol"] = strval($vaktpost_input["ipprotocol"] ?? "inet");
@@ -3049,12 +3053,18 @@ struct PHPSnippet: Sendable {
           unset($rule["local_port"]);
         }
 
-        $rules[] = $rule;
+        if ($found) {
+          $rules[$vaktpost_index] = $rule;
+        } else {
+          $rules[] = $rule;
+        }
         $config["nat"]["rule"] = array_values($rules);
         write_config("Vaktpost: saved a nat rule");
         write_filter();
         $toreturn["status"] = "ok";
-        $toreturn["created"] = !$found;
+        $toreturn["created"] = $vaktpost_create;
+        $toreturn["tracker"] = $tracker;
+        }
         """)
     }
 

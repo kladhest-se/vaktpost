@@ -1,5 +1,23 @@
 # Changelog
 
+## Creation is now a complete administrative transaction
+
+- Rule and port-forward creation now keep their server-issued tracker from the
+  write response and use it for read-back verification, the receipt and the
+  protected audit result.
+- The coordinator records creates as `add_rule` and `add_port_forward`, while
+  edits retain their edit categories and wording.
+- Create preflight records the current collection rather than trying to find an
+  object whose tracker has not been allocated yet.
+- Both pfSense save snippets allocate a collision-safe tracker for creates and
+  return it. NAT creation no longer appends an untracked forward.
+- A stale edit is rejected server-side instead of silently becoming a new rule.
+  NAT edits also retain their original position rather than moving to the end.
+- Add and Duplicate failures are shown in the editor instead of leaving Save to
+  appear unresponsive.
+- The client rejects save responses that omit the tracker, misreport create vs
+  edit, or return a different tracker for an edit.
+
 ## Rule simulation: reachable, and answering a real question
 
 `RuleSimulationView` was referenced exactly once in the whole tree — by its own

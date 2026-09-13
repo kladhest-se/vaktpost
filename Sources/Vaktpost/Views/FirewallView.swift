@@ -20,6 +20,8 @@ struct FirewallView: View {
     @State private var newRule: RuleEditForm?
     /// A new port forward being drafted.
     @State private var newForward: PortForwardEditForm?
+    @State private var writeError: WriteError?
+    @State private var showErrorAlert = false
 
     var body: some View {
         MasterDetail(
@@ -181,6 +183,7 @@ struct FirewallView: View {
                                  aliases: Set(store.aliases.map(\.name)),
                                  onSave: { saved in await createForward(saved) })
         }
+        .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
     }
 
     /// Write a new port forward and refresh.
@@ -198,6 +201,8 @@ struct FirewallView: View {
             await store.refreshManually()
             return true
         } catch {
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
             return false
         }
     }
@@ -219,6 +224,8 @@ struct FirewallView: View {
             await store.refreshManually()
             return true
         } catch {
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
             return false
         }
     }

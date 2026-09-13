@@ -353,6 +353,25 @@ actor FirewallClient {
         return dict
     }
 
+    /// A save is not complete until pfSense confirms whether it created or
+    /// edited the object and returns the stable identity used for read-back.
+    static func validatedSaveResponse(_ dict: JSONDict,
+                                      operation: String,
+                                      requestedTracker: String,
+                                      isCreate: Bool) throws -> JSONDict {
+        let result = try validatedWriteResponse(dict, operation: operation)
+        guard result.bool("created") == isCreate else {
+            throw RPCError.fault(0, "\(operation) returned an inconsistent create/edit result.")
+        }
+        guard let tracker = result.string("tracker"), !tracker.isEmpty else {
+            throw RPCError.malformed("\(operation) did not return a tracker ID.")
+        }
+        if !isCreate, tracker != requestedTracker {
+            throw RPCError.fault(0, "\(operation) returned a different tracker ID.")
+        }
+        return result
+    }
+
     /// Reloads the firewall ruleset.
     func reloadFirewall() async throws -> String {
         try requireAdministration()
@@ -416,27 +435,37 @@ actor FirewallClient {
     }
 
     /// Saves (creates or updates) a firewall rule.
-    func saveRule(rule: JSONDict) async throws -> String {
+    func saveRule(rule: JSONDict) async throws -> JSONDict {
         try requireAdministration()
-        guard !(rule.string("tracker") ?? "").isEmpty else {
-            throw RPCError.malformed("Rule save requires a tracker ID.")
+        let tracker = rule.string("tracker") ?? ""
+        let isCreate = rule.bool("create") ?? false
+        guard (isCreate && tracker.isEmpty) || (!isCreate && !tracker.isEmpty) else {
+            throw RPCError.malformed(isCreate
+                                     ? "Rule creation must not supply a tracker ID."
+                                     : "Rule editing requires a tracker ID.")
         }
         let snippet = PHPSnippet.saveRule(rule: rule)
         let dict = try await rpc.runObjectOnce(snippet)
-        _ = try Self.validatedWriteResponse(dict, operation: "Rule save")
-        return "ok"
+        return try Self.validatedSaveResponse(
+            dict, operation: "Rule save", requestedTracker: tracker, isCreate: isCreate
+        )
     }
 
     /// Saves (creates or updates) a NAT/port forward rule.
-    func saveNatRule(rule: JSONDict) async throws -> String {
+    func saveNatRule(rule: JSONDict) async throws -> JSONDict {
         try requireAdministration()
-        guard !(rule.string("tracker") ?? "").isEmpty else {
-            throw RPCError.malformed("Port-forward save requires a tracker ID.")
+        let tracker = rule.string("tracker") ?? ""
+        let isCreate = rule.bool("create") ?? false
+        guard (isCreate && tracker.isEmpty) || (!isCreate && !tracker.isEmpty) else {
+            throw RPCError.malformed(isCreate
+                                     ? "Port-forward creation must not supply a tracker ID."
+                                     : "Port-forward editing requires a tracker ID.")
         }
         let snippet = PHPSnippet.saveNatRule(rule: rule)
         let dict = try await rpc.runObjectOnce(snippet)
-        _ = try Self.validatedWriteResponse(dict, operation: "Port-forward save")
-        return "ok"
+        return try Self.validatedSaveResponse(
+            dict, operation: "Port-forward save", requestedTracker: tracker, isCreate: isCreate
+        )
     }
 
     // MARK: - Staged operations
