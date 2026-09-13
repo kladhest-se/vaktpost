@@ -3,7 +3,7 @@ import SwiftUI
 /// Quick-block an IP address on a specific interface.
 ///
 /// Presents a form that collects the target interface, address, and optional
-/// description, then presents a confirmation sheet before writing the rule.
+/// description, then saves a staged rule for the Apply Changes screen.
 struct QuickBlockView: View {
 
     @Environment(\.themeManager) private var theme: ThemeManager
@@ -13,7 +13,6 @@ struct QuickBlockView: View {
     @State private var selectedInterface: InterfaceStat?
     @State private var address = ""
     @State private var description = ""
-    @State private var showConfirmation = false
     @State private var isExecuting = false
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
@@ -55,16 +54,6 @@ struct QuickBlockView: View {
                     }
                 }
             }
-            .confirmationSheet(
-                isPresented: $showConfirmation,
-                title: "Block address",
-                message: pendingOperation.map { store.writeCoordinator.preview(for: $0) },
-                destructive: true,
-                destructiveLabel: "Block",
-                confirmLabel: "Cancel",
-                onConfirm: confirmBlock,
-                onCancel: {}
-            )
             .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
             .onAppear {
                 if let firstUp = store.overviewLayout.interfaces.first(where: {
@@ -138,7 +127,7 @@ struct QuickBlockView: View {
         Button {
             writeError = nil
             guard addressProblem == nil, selectedInterface?.internalName != nil else { return }
-            showConfirmation = true
+            Task { await confirmBlock() }
         } label: {
             HStack {
                 Spacer()
@@ -157,7 +146,7 @@ struct QuickBlockView: View {
                  && selectedInterface?.internalName != nil ? 1 : 0.55)
     }
 
-    // MARK: - Confirmation handler
+    // MARK: - Save handler
 
     private var pendingOperation: AdministrativeWrite? {
         guard let interface = selectedInterface?.internalName,
@@ -191,8 +180,7 @@ struct QuickBlockView: View {
             // Quick Block changes the ruleset. The ordinary lazy loader keeps
             // its cached result, so force the new rule into every screen
             // before this sheet closes.
-            await store.loadFirewallObjects(force: true)
-            await store.refresh()
+            await store.refreshFirewallObjectsAfterWrite()
             dismiss()
         } catch {
             writeError = WriteError.from(error, operation: .quickBlock)

@@ -16,7 +16,6 @@ struct FirewallReloadView: View {
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
     @State private var lastReloadTime: Date?
-    @State private var reloadCount = 0
 
     var body: some View {
         NavigationStack {
@@ -25,6 +24,8 @@ struct FirewallReloadView: View {
                     statusCard
 
                     AdministrationModeNotice()
+
+                    pendingChangesSection
 
                     reloadCard
 
@@ -49,7 +50,7 @@ struct FirewallReloadView: View {
             .confirmationSheet(
                 isPresented: $showConfirmation,
                 title: "Apply firewall changes",
-                message: store.writeCoordinator.preview(for: .reloadFirewall),
+                message: applyPreview,
                 destructive: true,
                 destructiveLabel: "Apply Changes",
                 confirmLabel: "Cancel",
@@ -62,6 +63,149 @@ struct FirewallReloadView: View {
                 await store.refresh()
             }
         }
+    }
+
+    // MARK: - Pending changes
+
+    private var pendingVaktpostChanges: [AuditTrail.Entry] {
+        guard store.firewallChangesPending else { return [] }
+        return store.auditTrail.entries.filter { entry in
+            isStagedFirewallChange(entry.action)
+                && isSuccessful(entry)
+                && entry.timestamp > latestSuccessfulApply
+        }
+    }
+
+    private var latestSuccessfulApply: Date {
+        store.auditTrail.entries
+            .last(where: { $0.action == .reloadFirewall && isSuccessful($0) })
+            .map { $0.completedAt ?? $0.timestamp }
+            ?? .distantPast
+    }
+
+    private func isSuccessful(_ entry: AuditTrail.Entry) -> Bool {
+        entry.verification == .verified || entry.verification == .readBack
+    }
+
+    private func isStagedFirewallChange(_ action: AuditAction) -> Bool {
+        switch action {
+        case .addRule, .editRule, .deleteRule, .reorderRules,
+             .addPortForward, .editPortForward, .deletePortForward, .quickBlock:
+            return true
+        default:
+            return false
+        }
+    }
+
+    @ViewBuilder
+    private var pendingChangesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Changes to apply")
+                    .scaledFont(12, weight: .semibold)
+                    .foregroundStyle(theme.labelMuted)
+                Spacer()
+                if !pendingVaktpostChanges.isEmpty {
+                    Text("\(pendingVaktpostChanges.count)")
+                        .scaledFont(11, weight: .bold, design: .monospaced)
+                        .foregroundStyle(theme.warn)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
+                if !store.firewallChangesPending {
+                    pendingMessage(icon: "checkmark.circle.fill",
+                                   title: "Everything is active",
+                                   detail: "pfSense reports no filter or NAT changes waiting.",
+                                   color: theme.ok)
+                } else if pendingVaktpostChanges.isEmpty {
+                    pendingMessage(icon: "questionmark.circle",
+                                   title: "Pending pfSense changes",
+                                   detail: "These changes were made in the pfSense web UI, by another administrator, or before Vaktpost's retained audit history. pfSense does not expose an itemised pending-change list.",
+                                   color: theme.warn)
+                } else {
+                    ForEach(Array(pendingVaktpostChanges.enumerated()), id: \.element.id) { index, entry in
+                        pendingChangeRow(entry)
+                        if index < pendingVaktpostChanges.count - 1 {
+                            Divider().overlay(theme.hairline)
+                        }
+                    }
+
+                    Text("The pfSense pending marker is global. Additional web UI or administrator changes may be included when this ruleset is applied.")
+                        .scaledFont(11)
+                        .foregroundStyle(theme.labelFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                }
+            }
+            .background(theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    private func pendingChangeRow(_ entry: AuditTrail.Entry) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon(for: entry.action))
+                .scaledFont(12, weight: .semibold)
+                .foregroundStyle(theme.warn)
+                .frame(width: 20, height: 20)
+                .background(theme.warn.opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.summary)
+                    .scaledFont(13, weight: .medium)
+                    .foregroundStyle(theme.label)
+                if let target = entry.target, !target.isEmpty {
+                    Text(target)
+                        .scaledFont(11, design: .monospaced)
+                        .foregroundStyle(theme.labelMuted)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 8)
+            Text(entry.timestamp, style: .time)
+                .scaledFont(10, design: .monospaced)
+                .foregroundStyle(theme.labelFaint)
+        }
+        .padding(12)
+    }
+
+    private func pendingMessage(icon: String, title: String, detail: String, color: Color) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .scaledFont(15)
+                .foregroundStyle(color)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .scaledFont(13, weight: .semibold)
+                Text(detail)
+                    .scaledFont(12)
+                    .foregroundStyle(theme.labelMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+    }
+
+    private func icon(for action: AuditAction) -> String {
+        switch action {
+        case .addRule, .addPortForward, .quickBlock: return "plus"
+        case .editRule, .editPortForward: return "pencil"
+        case .deleteRule, .deletePortForward: return "trash"
+        case .reorderRules: return "arrow.up.arrow.down"
+        default: return "circle"
+        }
+    }
+
+    private var applyPreview: String {
+        var text = store.writeCoordinator.preview(for: .reloadFirewall)
+        if !pendingVaktpostChanges.isEmpty {
+            text += "\n\nVaktpost changes since the last apply:"
+            for entry in pendingVaktpostChanges {
+                text += "\n• \(entry.summary)"
+            }
+        }
+        text += "\n\nThis applies pfSense's complete pending ruleset, which may also contain changes made outside Vaktpost."
+        return text
     }
 
     // MARK: - Status card
@@ -152,8 +296,8 @@ struct FirewallReloadView: View {
                         Text("Applying…")
                     } else {
                         Spacer()
-                        Text("Apply Changes")
-                        Image(systemName: "arrow.clockwise")
+                        Text(store.firewallChangesPending ? "Apply Changes" : "No changes to apply")
+                        Image(systemName: store.firewallChangesPending ? "arrow.clockwise" : "checkmark")
                     }
                 }
                 .foregroundStyle(theme.warn)
@@ -162,15 +306,15 @@ struct FirewallReloadView: View {
                 .padding(.vertical, 12)
                 .background(theme.warn.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
-            .disabled(isReloading || !store.canAdminister)
-            .opacity(store.canAdminister ? 1 : 0.55)
+            .disabled(isReloading || !store.canAdminister || !store.firewallChangesPending)
+            .opacity(store.canAdminister && store.firewallChangesPending ? 1 : 0.55)
 
             if let lastTime = lastReloadTime {
                 HStack {
                     Image(systemName: "checkmark.circle")
                         .scaledFont(12)
                         .foregroundStyle(theme.ok)
-                    Text("Last reload: \(formatDate(lastTime))")
+                    Text("Last applied: \(formatDate(lastTime))")
                         .scaledFont(12)
                         .foregroundStyle(theme.labelMuted)
                 }
@@ -182,22 +326,23 @@ struct FirewallReloadView: View {
 
     // MARK: - History section
 
+    @ViewBuilder
     private var historySection: some View {
-        guard !store.auditTrail.entries.isEmpty else { return AnyView(Text("")) }
-
-        return AnyView(
+        if !recentApplies.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Recent reloads")
+                Text("Recent applies")
                     .scaledFont(12, weight: .semibold)
                     .foregroundStyle(theme.labelMuted)
 
-                ForEach(store.auditTrail.entries.prefix(10).reversed()) { entry in
-                    if entry.action == .reloadFirewall {
-                        auditRow(entry)
-                    }
+                ForEach(recentApplies.reversed()) { entry in
+                    auditRow(entry)
                 }
             }
-        )
+        }
+    }
+
+    private var recentApplies: [AuditTrail.Entry] {
+        Array(store.auditTrail.entries.filter { $0.action == .reloadFirewall }.suffix(5))
     }
 
     private func auditRow(_ entry: AuditTrail.Entry) -> some View {
@@ -226,9 +371,7 @@ struct FirewallReloadView: View {
         do {
             _ = try await store.writeCoordinator.execute(.reloadFirewall)
             lastReloadTime = Date()
-            reloadCount += 1
-
-            await store.refresh()
+            await store.refreshFirewallObjectsAfterWrite()
         } catch {
             writeError = WriteError.from(error, operation: .reloadFirewall)
             showErrorAlert = true

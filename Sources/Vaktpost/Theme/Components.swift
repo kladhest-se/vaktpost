@@ -48,6 +48,7 @@ struct Slab<Content: View>: View {
     @Environment(\.themeManager) private var theme: ThemeManager
 
     var rail: Health = .info
+    var muted = false
     var title: String?
     var trailing: String?
     @ViewBuilder var content: Content
@@ -81,7 +82,7 @@ struct Slab<Content: View>: View {
             .padding(.vertical, 13)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(theme.card)
+        .background(muted ? theme.bgSunken : theme.card)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }

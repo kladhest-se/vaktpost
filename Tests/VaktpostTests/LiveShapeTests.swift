@@ -266,6 +266,39 @@ final class LiveShapeTests2: XCTestCase {
         XCTAssertFalse(selector.isConfiguredHostBlock)
     }
 
+    func testPfSenseEmptyConfigurationMarkersMeanEnabledFlags() throws {
+        // config.xml serialises presence flags as `<disabled/>` and `<log/>`.
+        // XML-RPC turns those elements into empty strings, not JSON booleans.
+        let rule = FirewallRule(try dict("""
+        {
+          "tracker": "1757720010", "type": "pass", "interface": "opt5",
+          "source": {"any": true}, "destination": {"any": true},
+          "disabled": "", "log": ""
+        }
+        """))
+        XCTAssertTrue(rule.disabled)
+        XCTAssertTrue(rule.logged)
+
+        let explicitlyFalse = FirewallRule(try dict("""
+        {
+          "tracker": "1757720011", "type": "pass", "interface": "opt5",
+          "source": {"any": true}, "destination": {"any": true},
+          "disabled": "false", "log": 0
+        }
+        """))
+        XCTAssertFalse(explicitlyFalse.disabled)
+        XCTAssertFalse(explicitlyFalse.logged)
+
+        let forward = PortForward(try dict("""
+        {
+          "tracker": "1757720012", "interface": "wan", "protocol": "tcp",
+          "source": {"any": true}, "destination": {"any": true},
+          "target": "192.0.2.10", "disabled": ""
+        }
+        """))
+        XCTAssertTrue(forward.disabled)
+    }
+
     func testHugeTablesAreCappedButStillCountedHonestly() throws {
         // `bogons` runs to thousands of rows. Keeping them all on a phone to
         // render a list nobody scrolls is pointless, but the count must not lie.

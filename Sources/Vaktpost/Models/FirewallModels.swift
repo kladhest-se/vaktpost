@@ -112,6 +112,11 @@ struct FirewallRule: Identifiable {
     var descr: String
     var disabled: Bool
     var logged: Bool
+    var gateway: String
+    var defaultQueue: String
+    var ackQueue: String
+    var schedule: String
+    var stateType: String
 
     var source: String { sourceSide.text }
     var destination: String { destinationSide.text }
@@ -126,8 +131,18 @@ struct FirewallRule: Identifiable {
         sourceSide = FilterAddress(d.value("source"), port: d.value("source_port"))
         destinationSide = FilterAddress(d.value("destination"), port: d.value("destination_port"))
         descr = d.string("descr", "description") ?? ""
-        disabled = d.bool("disabled") ?? false
-        logged = d.bool("log") ?? false
+        // In config.xml these are presence markers. After an XML round trip
+        // pfSense commonly returns `<disabled/>` and `<log/>` as empty
+        // strings, not JSON true. Treating the empty string as false made a
+        // successful disable read back as enabled and raised a false
+        // verification error.
+        disabled = Self.configMarker("disabled", in: d)
+        logged = Self.configMarker("log", in: d)
+        gateway = d.string("gateway") ?? ""
+        defaultQueue = d.string("defaultqueue") ?? ""
+        ackQueue = d.string("ackqueue") ?? ""
+        schedule = d.string("sched") ?? ""
+        stateType = d.string("statetype") ?? "keep state"
     }
 
     var health: Health {
@@ -141,6 +156,23 @@ struct FirewallRule: Identifiable {
     }
 
     var protoLabel: String { (proto ?? "any").uppercased() }
+
+    var queueLabel: String {
+        if !ackQueue.isEmpty && !defaultQueue.isEmpty { return "\(ackQueue) / \(defaultQueue)" }
+        return defaultQueue.isEmpty ? "none" : defaultQueue
+    }
+
+    private static func configMarker(_ key: String, in d: JSONDict) -> Bool {
+        guard let value = d.raw[key], !value.isNull else { return false }
+        switch value {
+        case .bool(let flag): return flag
+        case .number(let number): return number != 0
+        case .string(let text):
+            // Empty is pfSense's normal `<key/>` representation: present.
+            return !["false", "no", "0", "off"].contains(text.lowercased())
+        default: return true
+        }
+    }
 
     var isFloating: Bool {
         interfaceName.components(separatedBy: ",").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count > 1
@@ -255,7 +287,7 @@ struct PortForward: Identifiable {
         localPort = d.string("local_port")
         ipProtocol = d.string("ipprotocol", "ip_protocol")
         descr = d.string("descr", "description") ?? ""
-        disabled = d.bool("disabled") ?? false
+        disabled = Self.configMarker("disabled", in: d)
     }
 
     var targetLabel: String {
@@ -264,6 +296,16 @@ struct PortForward: Identifiable {
     }
 
     var health: Health { disabled ? .idle : .info }
+
+    private static func configMarker(_ key: String, in d: JSONDict) -> Bool {
+        guard let value = d.raw[key], !value.isNull else { return false }
+        switch value {
+        case .bool(let flag): return flag
+        case .number(let number): return number != 0
+        case .string(let text): return !["false", "no", "0", "off"].contains(text.lowercased())
+        default: return true
+        }
+    }
 }
 
 // MARK: - pfBlockerNG

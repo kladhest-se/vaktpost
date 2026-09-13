@@ -1,5 +1,26 @@
 # Changelog
 
+## Disabled rules, staged editing, and Apply review now match pfSense
+
+pfSense represents configuration presence flags such as `<disabled/>` and
+`<log/>` as empty strings over XML-RPC. Vaktpost now treats those present
+markers as true, so disabling a rule no longer succeeds on the firewall and
+then raises a false read-back mismatch in the app. Disabled filter rules and
+port forwards use a muted, grey presentation and an explicit Disabled badge.
+
+Rule details now expose the pfSense fields used by the WebUI rules table,
+including status, action, protocol, gateway, queues, schedule, state type,
+logging, and tracker. Duplicate Rule is a full-width action between Edit Rule
+and Delete Rule instead of an item in the toolbar menu.
+
+Saving, deleting, duplicating, Quick Block, and reordering no longer show a
+second confirmation before staging. Apply Changes is the single confirmation
+boundary. Its screen itemises verified Vaktpost edits since the previous apply,
+labels changes it cannot identify as external, and explains that pfSense's
+dirty marker is global. All post-write paths force a targeted rules/NAT refresh
+before returning, avoiding the delayed list update of a coalesced dashboard
+refresh.
+
 ## Saved firewall edits now wait for Apply Changes
 
 Quick Block, filter-rule save/delete/reorder, and port-forward save/delete no

@@ -11,9 +11,11 @@ installed on the firewall.
 account with the "System - HA node sync" privilege, which is
 administrator-equivalent, and that password is stored on the phone and sent on
 every request. Most snippets only inspect the firewall; the complete mutation
-surface is declared and audited in `PHPSnippet.writeOperations`. Destructive
-actions require confirmation in the app, but the credential itself remains
-administrator-equivalent.
+surface is declared and audited in `PHPSnippet.writeOperations`. Firewall and
+NAT edits are staged using pfSense's native pending-change markers and require
+one explicit Apply Changes confirmation before they become active. Immediate
+operations such as service restart and state flush retain their own
+confirmation. The credential itself remains administrator-equivalent.
 
 Every firewall starts in **monitor-only mode**. In that mode the client blocks
 all mutation methods before any request is sent. Administration is enabled per
@@ -21,11 +23,13 @@ firewall from its edit screen after an explicit risk acknowledgement. Enabling
 it does not require Face ID or Touch ID.
 
 When administration is enabled, every change follows one transaction path:
-the app shows the exact target, captures the current state, commits an
-encrypted pending audit record, sends the operation once, and reads the
-affected state back. A lost response is reported as an unknown outcome rather
-than as a reason to repeat the change. Protected history is kept separately
-for each firewall and can be exported in a redacted form from Settings.
+the app captures the current state, commits an encrypted pending audit record,
+sends the operation once, and reads the affected state back. The Apply Changes
+screen lists the staged Vaktpost edits it can identify and warns when pfSense's
+global pending ruleset may also include WebUI or other administrator changes.
+A lost response is reported as an unknown outcome rather than as a reason to
+repeat the change. Protected history is kept separately for each firewall and
+can be exported in a redacted form from Settings.
 
 **Tabs:** Overview · Clients · Network · Logs · More (Alerts, VPN, Firewall, System, Firewalls, Settings).
 

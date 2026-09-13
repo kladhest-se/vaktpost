@@ -33,7 +33,6 @@ struct FirewallView: View {
     /// Nil means "show what the firewall actually has."
     @State private var rulePendingOrder: [RuleListItem]?
     @State private var ruleDraggingID: String?
-    @State private var showReorderConfirmation = false
     @State private var isSavingOrder = false
     /// This alert belongs directly on this view rather than a sheet it
     /// presents: the confirmation here is a single, unnested sheet, so this
@@ -481,7 +480,7 @@ struct FirewallView: View {
                 .scaledFont(12)
                 .foregroundStyle(theme.labelMuted)
             Button {
-                showReorderConfirmation = true
+                Task { await saveRuleOrder() }
             } label: {
                 if isSavingOrder {
                     ProgressView()
@@ -495,25 +494,6 @@ struct FirewallView: View {
         .padding(.vertical, 8)
         .background(theme.warn.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .confirmationSheet(
-            isPresented: $showReorderConfirmation,
-            title: "Save new order",
-            message: reorderPreview,
-            destructive: false,
-            destructiveLabel: "Save order",
-            confirmLabel: "Cancel",
-            onConfirm: saveRuleOrder,
-            onCancel: {}
-        )
-    }
-
-    private var reorderPreview: String {
-        guard let interface = interfaceFilter, let items = rulePendingOrder else { return "" }
-        return store.writeCoordinator.preview(for: .reorderFilterRules(
-            interface: interface,
-            items: items.map(\.reorderItem),
-            displayName: store.interfaceLabel(for: interface) ?? interface
-        ))
     }
 
     private func saveRuleOrder() async {
@@ -651,7 +631,8 @@ struct FirewallView: View {
                     SeparatorBar(separator: separator)
                 }
                 Button { selection = pf.id } label: {
-                    Slab(rail: pf.health, trailing: store.interfaceLabel(for: pf.interfaceName)) {
+                    Slab(rail: pf.health, muted: pf.disabled,
+                         trailing: store.interfaceLabel(for: pf.interfaceName)) {
                         VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 8) {
                                 Text((pf.proto ?? "any").uppercased())
@@ -912,7 +893,8 @@ struct RuleRow: View {
     let rule: FirewallRule
 
     var body: some View {
-        Slab(rail: rule.health, trailing: store.interfaceLabel(for: rule.interfaceName)) {
+        Slab(rail: rule.health, muted: rule.disabled,
+             trailing: store.interfaceLabel(for: rule.interfaceName)) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
                     StatusPill(text: rule.type.uppercased(), health: rule.health)
@@ -942,6 +924,7 @@ struct RuleRow: View {
                 }
             }
         }
+        .opacity(rule.disabled ? 0.68 : 1)
     }
 
     /// Both ports, if either is set. A source port is rare enough that
@@ -988,7 +971,6 @@ struct RuleDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let rule: FirewallRule
 
-    @State private var showDeleteConfirm = false
     /// The form the sheet opens with — an edit of this rule, or a copy of it.
     @State private var editorForm: RuleEditForm?
     @State private var showSimulation = false
@@ -1025,16 +1007,16 @@ struct RuleDetailView: View {
                     }
                 }
 
-                GroupHeading(text: "Matches")
+                GroupHeading(text: "Source and destination")
                 Slab(rail: .info) {
                     VStack(alignment: .leading, spacing: 8) {
-                        detailField("From", rule.sourceSide.address)
+                        detailField("Source", rule.sourceSide.address)
                         if let port = rule.sourceSide.port, !port.isEmpty {
                             detailField("Source port", port)
                         }
-                        detailField("To", rule.destinationSide.address)
+                        detailField("Destination", rule.destinationSide.address)
                         if let port = rule.destinationSide.port, !port.isEmpty {
-                            detailField("Port", port)
+                            detailField("Destination port", port)
                         }
                     }
                 }
@@ -1042,6 +1024,9 @@ struct RuleDetailView: View {
                 GroupHeading(text: "Rule")
                 Slab(rail: .idle) {
                     VStack(alignment: .leading, spacing: 4) {
+                        FieldRow(key: "Status", value: rule.disabled ? "Disabled" : "Enabled", mono: false)
+                        FieldRow(key: "Action", value: rule.type.capitalized, mono: false)
+                        FieldRow(key: "Protocol", value: rule.protoLabel, mono: false)
                         FieldRow(key: "Interface",
                                  value: store.interfaceLabel(for: rule.interfaceName)
                                      ?? rule.interfaceName)
@@ -1049,6 +1034,10 @@ struct RuleDetailView: View {
                             FieldRow(key: "IP version", value: ipProtocol)
                         }
                         FieldRow(key: "Logged", value: rule.logged ? "yes" : "no", mono: false)
+                        FieldRow(key: "Gateway", value: rule.gateway.isEmpty ? "default" : rule.gateway)
+                        FieldRow(key: "Queue", value: rule.queueLabel)
+                        FieldRow(key: "Schedule", value: rule.schedule.isEmpty ? "none" : rule.schedule)
+                        FieldRow(key: "State type", value: rule.stateType.isEmpty ? "default" : rule.stateType)
                         if !rule.tracker.isEmpty {
                             FieldRow(key: "Tracker", value: rule.tracker)
                         }
@@ -1072,7 +1061,19 @@ struct RuleDetailView: View {
                         .buttonStyle(.plain)
 
                         Button {
-                            showDeleteConfirm = true
+                            editorForm = RuleEditForm.duplicating(rule)
+                        } label: {
+                            Label("Duplicate Rule", systemImage: "plus.square.on.square")
+                                .scaledFont(14, weight: .medium)
+                                .foregroundStyle(theme.accentColor)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            Task { await confirmDelete() }
                         } label: {
                             Label("Delete Rule", systemImage: "trash")
                                 .scaledFont(14, weight: .medium)
@@ -1096,24 +1097,10 @@ struct RuleDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                // Duplicate rather than "new rule like this": the copy opens
-                // in the editor and is not written until it is reviewed, so
-                // this is a starting point rather than an action.
-                Menu {
-                    Button {
-                        editorForm = RuleEditForm.duplicating(rule)
-                    } label: {
-                        Label("Duplicate", systemImage: "plus.square.on.square")
-                    }
-                    // The simulation was reachable only from its own
-                    // `#Preview` — an entire feature nobody could open.
-                    Button {
-                        showSimulation = true
-                    } label: {
-                        Label("Test against the log", systemImage: "waveform.badge.magnifyingglass")
-                    }
+                Button {
+                    showSimulation = true
                 } label: {
-                    Label("More", systemImage: "ellipsis.circle")
+                    Label("Test", systemImage: "waveform.badge.magnifyingglass")
                 }
                 .disabled(isSaving)
             }
@@ -1125,16 +1112,6 @@ struct RuleDetailView: View {
                 }
             }
         }
-        .confirmationSheet(
-            isPresented: $showDeleteConfirm,
-            title: "Delete rule",
-            message: store.writeCoordinator.preview(for: deleteOperation),
-            destructive: true,
-            destructiveLabel: "Delete",
-            confirmLabel: "Cancel",
-            onConfirm: confirmDelete,
-            onCancel: {}
-        )
         // Built here, at presentation, rather than in `onAppear`.
         //
         // This is why the editor felt slow. The form was assembled in the
@@ -1173,7 +1150,7 @@ struct RuleDetailView: View {
         do {
             _ = try await store.writeCoordinator.execute(deleteOperation)
             dismiss()
-            await store.refresh()
+            await store.refreshFirewallObjectsAfterWrite()
         } catch {
             writeError = WriteError.from(error, operation: .other)
             showErrorAlert = true
@@ -1206,9 +1183,10 @@ struct RuleDetailView: View {
             )
         )
 
-        // Refreshed but not dismissed. The rule that was just edited is
-        // the thing somebody wants to look at to check it took.
-        Task { await store.refresh() }
+        // Re-read the exact objects that changed before reporting success.
+        // The broad dashboard refresh can coalesce with an existing cycle and
+        // leave this list stale for several seconds.
+        await store.refreshFirewallObjectsAfterWrite()
     }
 
     /// A field, with the alias name kept above its contents.
@@ -1243,7 +1221,6 @@ struct PortForwardDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let forward: PortForward
 
-    @State private var showDeleteConfirm = false
     /// The form the sheet opens with — an edit of this forward, or a copy.
     @State private var editorForm: PortForwardEditForm?
     @State private var isSaving = false
@@ -1327,7 +1304,7 @@ struct PortForwardDetailView: View {
                         .buttonStyle(.plain)
 
                         Button {
-                            showDeleteConfirm = true
+                            Task { await confirmDelete() }
                         } label: {
                             Label("Delete Forward", systemImage: "trash")
                                 .scaledFont(14, weight: .medium)
@@ -1378,16 +1355,6 @@ struct PortForwardDetailView: View {
                                  aliases: store.aliases,
                                  onSave: { saved in try await save(changes: saved) })
         }
-        .confirmationSheet(
-            isPresented: $showDeleteConfirm,
-            title: "Delete port forward",
-            message: store.writeCoordinator.preview(for: deleteOperation),
-            destructive: true,
-            destructiveLabel: "Delete",
-            confirmLabel: "Cancel",
-            onConfirm: confirmDelete,
-            onCancel: {}
-        )
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
     }
 
@@ -1415,7 +1382,7 @@ struct PortForwardDetailView: View {
         do {
             _ = try await store.writeCoordinator.execute(deleteOperation)
             dismiss()
-            await store.refresh()
+            await store.refreshFirewallObjectsAfterWrite()
         } catch {
             writeError = WriteError.from(error, operation: .other)
             showErrorAlert = true
@@ -1451,7 +1418,7 @@ struct PortForwardDetailView: View {
             )
         )
 
-        Task { await store.refresh() }
+        await store.refreshFirewallObjectsAfterWrite()
     }
 
     /// Every address or port behind a value, one per line. Same as the rule
@@ -1634,17 +1601,9 @@ struct RuleEditSheet: View {
 
     @State private var edited: RuleEditForm
     @State private var isSaving = false
-    @State private var showSaveConfirmation = false
 
-    /// Shown by this sheet itself, not by whatever presented it.
-    ///
-    /// The confirmation is a second sheet nested inside this one. When the
-    /// save fails, this sheet is what is on screen the moment the
-    /// confirmation dismisses — the presenter behind it is still covered.
-    /// An error stashed on the presenter cannot surface until this sheet is
-    /// dismissed, and nothing dismisses it on failure, so the error was real
-    /// and invisible: the confirmation just closed and nothing seemed to
-    /// happen.
+    /// Shown by this sheet itself because it remains the visible screen while
+    /// the save is in progress.
     @State private var writeError: WriteError?
     @State private var showErrorAlert = false
 
@@ -1819,7 +1778,7 @@ struct RuleEditSheet: View {
                         // through the whole save and a second tap sent a
                         // second write.
                         Button("Save") {
-                            showSaveConfirmation = true
+                            Task { await saveConfirmed() }
                         }
                         // Nothing invalid leaves this screen. pfSense takes
                         // most of it and then quietly fails to load the
@@ -1836,19 +1795,8 @@ struct RuleEditSheet: View {
                 // the safe disabled-draft default until another place is chosen.
                 edited.placementTarget = .last
             }
-            .confirmationSheet(
-                isPresented: $showSaveConfirmation,
-                title: edited.isCreating ? "Review new rule" : "Review rule changes",
-                message: changePreview,
-                destructive: false,
-                destructiveLabel: "Save rule",
-                confirmLabel: "Cancel",
-                onConfirm: saveConfirmed,
-                onCancel: {}
-            )
             // Attached here rather than on whatever presented this sheet.
-            // This is the topmost view when the confirmation above dismisses,
-            // so this is where the failure has to be shown.
+            // This remains the topmost view if saving fails.
             .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
         }
     }
@@ -2166,11 +2114,9 @@ struct PortForwardEditSheet: View {
 
     @State private var edited: PortForwardEditForm
     @State private var isSaving = false
-    @State private var showSaveConfirmation = false
 
-    /// Shown by this sheet, for the same reason as `RuleEditSheet`: it is the
-    /// topmost view when its own nested confirmation dismisses, and an error
-    /// stashed on the presenter behind it would stay invisible.
+    /// Shown by this sheet, for the same reason as `RuleEditSheet`: it remains
+    /// the topmost view while its save runs.
     @State private var writeError: WriteError?
     @State private var showErrorAlert = false
 
@@ -2272,7 +2218,7 @@ struct PortForwardEditSheet: View {
                         ProgressView()
                     } else {
                         Button("Save") {
-                            showSaveConfirmation = true
+                            Task { await saveConfirmed() }
                         }
                         // Nothing invalid leaves this screen. pfSense takes
                         // most of it and then quietly fails to load the
@@ -2283,16 +2229,6 @@ struct PortForwardEditSheet: View {
                 }
             }
             .interactiveDismissDisabled(isSaving)
-            .confirmationSheet(
-                isPresented: $showSaveConfirmation,
-                title: edited.isCreating ? "Review new port forward" : "Review port-forward changes",
-                message: changePreview,
-                destructive: false,
-                destructiveLabel: "Save forward",
-                confirmLabel: "Cancel",
-                onConfirm: saveConfirmed,
-                onCancel: {}
-            )
             .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
         }
     }
