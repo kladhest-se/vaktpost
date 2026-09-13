@@ -31,6 +31,23 @@ final class MergedRuleListTests: XCTestCase {
         return RuleSeparator(JSONDict(raw))
     }
 
+    private func natSeparator(_ key: String, position: Int?) -> RuleSeparator {
+        var raw: [String: JSONValue] = [
+            "key": .string(key), "text": .string(key), "color": .string("info")
+        ]
+        if let position { raw["position"] = .string(String(position)) }
+        return RuleSeparator(JSONDict(raw))
+    }
+
+    private func forward(_ port: String) -> PortForward {
+        PortForward(JSONDict([
+            "interface": .string("wan"),
+            "destination": .object(["network": .string("wanip")]),
+            "destination_port": .string(port),
+            "target": .string("192.0.2.10")
+        ]))
+    }
+
     // MARK: Placement
 
     func testASeparatorAtZeroComesBeforeTheFirstRule() {
@@ -124,5 +141,29 @@ final class MergedRuleListTests: XCTestCase {
             return XCTFail("expected the rule second")
         }
         XCTAssertEqual(tracker, "a")
+    }
+
+    func testNatListMergesRulesAndSeparatorsByPrecedingRuleCount() {
+        let items = mergedNatList(
+            forwards: [forward("443"), forward("8443")],
+            separators: [natSeparator("top", position: 0),
+                         natSeparator("middle", position: 1),
+                         natSeparator("end", position: 2)]
+        )
+        XCTAssertEqual(items.map(\.id), [
+            "nat-separator:top",
+            "nat:0:wan-wanip:443-192.0.2.10",
+            "nat-separator:middle",
+            "nat:1:wan-wanip:8443-192.0.2.10",
+            "nat-separator:end"
+        ])
+    }
+
+    func testNatSeparatorConvertsToASeparatorReorderItem() {
+        let separator = natSeparator("sep0", position: 1)
+        let item = NatListItem.separator(separator).reorderItem
+        XCTAssertEqual(item.kind, .separator)
+        XCTAssertEqual(item.separatorKey, "sep0")
+        XCTAssertEqual(item.identityToken, "separator:sep0")
     }
 }

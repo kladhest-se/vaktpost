@@ -40,7 +40,7 @@ struct FirewallView: View {
     /// NAT uses its own complete flat order. The item remembers the original
     /// pfSense array position so trackerless WebUI-created forwards remain
     /// safely identifiable during the write.
-    @State private var natPendingOrder: [NatRuleListItem]?
+    @State private var natPendingOrder: [NatListItem]?
     @State private var natDraggingID: String?
     @State private var isSavingOrder = false
     /// This alert belongs directly on this view rather than a sheet it
@@ -679,13 +679,11 @@ struct FirewallView: View {
         return false
     }
 
-    private var currentNatItems: [NatRuleListItem] {
-        store.portForwards.enumerated().map {
-            NatRuleListItem(originalIndex: $0.offset, forward: $0.element)
-        }
+    private var currentNatItems: [NatListItem] {
+        mergedNatList(forwards: store.portForwards, separators: store.natSeparators)
     }
 
-    private var displayedNatItems: [NatRuleListItem] {
+    private var displayedNatItems: [NatListItem] {
         guard let pending = natPendingOrder,
               Set(pending.map(\.id)) == Set(currentNatItems.map(\.id)) else {
             return currentNatItems
@@ -698,33 +696,19 @@ struct FirewallView: View {
     }
 
     private var canReorderNatRules: Bool {
-        query.isEmpty && store.portForwards.count > 1
-    }
-
-    /// NAT separators, when it is safe to place them.
-    ///
-    /// Unlike filter separators, NAT's are not grouped by interface at all —
-    /// pfSense counts one position across the *entire* forward list,
-    /// confirmed from `firewall_nat.php` itself. So the only thing that can
-    /// invalidate the claim here is a search: `filteredForwards` already
-    /// equals `store.portForwards` unchanged whenever the query is empty,
-    /// which is the one condition this needs.
-    private var natSeparatorsForCurrentSelection: [RuleSeparator] {
-        guard query.isEmpty else { return [] }
-        return store.natSeparators
+        query.isEmpty && currentNatItems.count > 1
     }
 
     @ViewBuilder
     private var natPane: some View {
         if let err = store.errors[.portForwards] {
             Notice(symbol: "exclamationmark.triangle", title: "NAT unavailable", detail: err, health: .warn)
-        } else if filteredForwards.isEmpty {
+        } else if filteredForwards.isEmpty && (!query.isEmpty || store.natSeparators.isEmpty) {
             Notice(symbol: "arrow.left.arrow.right", title: query.isEmpty ? "No port forwards" : "No matches")
         } else {
             countLine("\(filteredForwards.count) port forwards")
-            let separators = natSeparatorsForCurrentSelection
             if canReorderNatRules {
-                Text("Drag \(Image(systemName: "line.3.horizontal")) to reorder. NAT is one pfSense-wide table; separators keep their current positions.")
+                Text("Drag \(Image(systemName: "line.3.horizontal")) to reorder port forwards and separators in pfSense's flat NAT table.")
                     .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
                     .padding(.horizontal, 2)
@@ -736,26 +720,18 @@ struct FirewallView: View {
 
             let visibleItems = query.isEmpty
                 ? displayedNatItems
-                : currentNatItems.filter { matches($0.forward, query.lowercased()) }
-            ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
-                // A separator's recorded count of preceding forwards is a
-                // count against the whole flat NAT list — confirmed from
-                // `firewall_nat.php`, which numbers every forward with one
-                // counter regardless of interface — so it lines up with this
-                // index exactly when nothing has been filtered out, which is
-                // the condition `natSeparatorsForCurrentSelection` already
-                // enforces.
-                ForEach(separators.filter { $0.precedingRuleCount == index }) { separator in
-                    natSeparatorRow(separator)
+                : currentNatItems.filter {
+                    if case .forward(let item) = $0 {
+                        return matches(item.forward, query.lowercased())
+                    }
+                    return false
                 }
+            ForEach(visibleItems) { item in
                 if canReorderNatRules {
                     natReorderableRow(item)
                 } else {
-                    natForwardRow(item.forward)
+                    natRow(item)
                 }
-            }
-            ForEach(separators.filter { ($0.precedingRuleCount ?? Int.max) >= visibleItems.count }) { separator in
-                natSeparatorRow(separator)
             }
         }
     }
@@ -799,7 +775,7 @@ struct FirewallView: View {
         do {
             _ = try await store.writeCoordinator.execute(.reorderNatRules(
                 items: items.map(\.reorderItem),
-                displayName: "NAT port forwards"
+                displayName: "NAT port forwards and separators"
             ))
             await store.refreshFirewallObjectsAfterWrite()
             natPendingOrder = nil
@@ -812,14 +788,14 @@ struct FirewallView: View {
         isSavingOrder = false
     }
 
-    private func natReorderableRow(_ item: NatRuleListItem) -> some View {
+    private func natReorderableRow(_ item: NatListItem) -> some View {
         HStack(spacing: 0) {
             RuleDragHandle()
                 .onDrag {
                     natDraggingID = item.id
                     return NSItemProvider(object: item.id as NSString)
                 }
-            natForwardRow(item.forward)
+            natRow(item)
                 .frame(maxWidth: .infinity)
         }
         .onDrop(of: [.text], delegate: NatReorderDropDelegate(
@@ -830,6 +806,16 @@ struct FirewallView: View {
             ),
             draggingID: $natDraggingID
         ))
+    }
+
+    @ViewBuilder
+    private func natRow(_ item: NatListItem) -> some View {
+        switch item {
+        case .forward(let rule):
+            natForwardRow(rule.forward)
+        case .separator(let separator):
+            natSeparatorRow(separator)
+        }
     }
 
     private func natForwardRow(_ pf: PortForward) -> some View {
@@ -982,6 +968,42 @@ struct NatRuleListItem: Identifiable {
     }
 }
 
+/// A port forward or separator in pfSense's single flat NAT ordering.
+enum NatListItem: Identifiable {
+    case forward(NatRuleListItem)
+    case separator(RuleSeparator)
+
+    var id: String {
+        switch self {
+        case .forward(let item): return item.id
+        case .separator(let separator): return "nat-separator:\(separator.key)"
+        }
+    }
+
+    var reorderItem: FirewallClient.NatReorderItem {
+        switch self {
+        case .forward(let item): return item.reorderItem
+        case .separator(let separator): return FirewallClient.NatReorderItem(separator: separator)
+        }
+    }
+}
+
+/// Builds the same mixed order pfSense renders: each separator position is
+/// the count of port-forward rows preceding it.
+func mergedNatList(forwards: [PortForward], separators: [RuleSeparator]) -> [NatListItem] {
+    var items: [NatListItem] = []
+    for (index, forward) in forwards.enumerated() {
+        for separator in separators where separator.precedingRuleCount == index {
+            items.append(.separator(separator))
+        }
+        items.append(.forward(NatRuleListItem(originalIndex: index, forward: forward)))
+    }
+    for separator in separators where (separator.precedingRuleCount ?? Int.max) >= forwards.count {
+        items.append(.separator(separator))
+    }
+    return items
+}
+
 /// Rules and separators, in reading order, for one interface.
 ///
 /// The one function both the live display and a drag's starting point build
@@ -1033,8 +1055,8 @@ struct RuleReorderDropDelegate: DropDelegate {
 }
 
 struct NatReorderDropDelegate: DropDelegate {
-    let target: NatRuleListItem
-    @Binding var items: [NatRuleListItem]
+    let target: NatListItem
+    @Binding var items: [NatListItem]
     @Binding var draggingID: String?
 
     func dropEntered(info: DropInfo) {
@@ -1071,35 +1093,41 @@ struct RuleDragHandle: View {
     }
 }
 
+/// The four separator colours pfSense stores, mapped once to the exact colours
+/// used by both the list bars and the editor swatches.
+enum SeparatorDisplayColor: String, CaseIterable, Identifiable {
+    case info, success, warning, danger
+
+    var id: String { rawValue }
+    var accessibilityName: String { rawValue.capitalized }
+
+    static func canonical(_ stored: String) -> SeparatorDisplayColor {
+        let value = stored.lowercased()
+        if value.contains("success") { return .success }
+        if value.contains("warning") { return .warning }
+        if value.contains("danger") { return .danger }
+        return .info
+    }
+
+    @MainActor
+    func tint(in theme: ThemeManager) -> Color {
+        switch self {
+        case .info: return theme.info
+        case .success: return theme.ok
+        case .warning: return theme.warn
+        case .danger: return theme.bad
+        }
+    }
+}
+
 /// One of pfSense's own grouping bars, drawn the way its list draws them.
-///
-/// The colour names — info/warning/danger/success — come from the ansible
-/// pfSense module's own documented choices for this field, not from this
-/// app's palette, so they are mapped rather than assumed to line up.
 struct SeparatorBar: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     let separator: RuleSeparator
     var showsDisclosure = false
 
-    /// Every separator was rendering in the same colour, and an exact
-    /// switch on the stored string is the likely reason why. `color` is read
-    /// correctly from the payload — confirmed by re-reading the snippet — but
-    /// this compared it with `==`, and pfSense's actual convention for that
-    /// field was never confirmed beyond "used directly as a CSS class name"
-    /// (`display_separator()`'s own `<td class="' . $cellcolor . '">`). If the
-    /// real value is a compound class — `bg-warning`, `table-warning` — rather
-    /// than the bare word, an exact match never fires and everything falls
-    /// through to the same default, which is exactly the symptom reported.
-    ///
-    /// `contains` is the defensively tolerant choice: correct for the bare
-    /// word, and also correct for any class name built around it, without
-    /// needing pfSense's exact convention confirmed first.
     private var tint: Color {
-        let name = separator.colorName.lowercased()
-        if name.contains("warning") { return theme.warn }
-        if name.contains("danger") { return theme.bad }
-        if name.contains("success") { return theme.ok }
-        return theme.info
+        SeparatorDisplayColor.canonical(separator.colorName).tint(in: theme)
     }
 
     var body: some View {
@@ -1176,11 +1204,7 @@ struct SeparatorEditForm: Equatable, Identifiable {
     }
 
     private static func canonicalColor(_ stored: String) -> String {
-        let value = stored.lowercased()
-        if value.contains("success") { return "success" }
-        if value.contains("warning") { return "warning" }
-        if value.contains("danger") { return "danger" }
-        return "info"
+        SeparatorDisplayColor.canonical(stored).rawValue
     }
 }
 
@@ -1374,7 +1398,7 @@ struct SeparatorEditSheet: View {
     @State private var writeError: WriteError?
 
     private let original: SeparatorEditForm
-    private let colors = ["info", "success", "warning", "danger"]
+    private let colors = SeparatorDisplayColor.allCases
 
     init(form: SeparatorEditForm, rules: [FirewallRule],
          onSave: @escaping (SeparatorEditForm) async throws -> Void) {
@@ -1409,7 +1433,7 @@ struct SeparatorEditSheet: View {
     private var isValid: Bool {
         !edited.interface.isEmpty
             && !edited.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && colors.contains(edited.color)
+            && colors.map(\.rawValue).contains(edited.color)
             && (0...positionLabels.count).contains(edited.position)
     }
 
@@ -1425,7 +1449,7 @@ struct SeparatorEditSheet: View {
                                 prompt: "Name shown between rules",
                                 mono: false
                             )
-                            EditChoice(label: "Color", options: colors, selection: $edited.color)
+                            separatorColorSwatches
                         }
                     }
 
@@ -1479,6 +1503,48 @@ struct SeparatorEditSheet: View {
             }
             .interactiveDismissDisabled(isSaving)
             .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+        }
+    }
+
+    /// A separator colour is a visual choice, so show the actual rendered
+    /// colour instead of asking the user to translate pfSense's CSS names in
+    /// a text menu. The fill opacity is deliberately identical to
+    /// `SeparatorBar`; the selected outline and check are selection chrome,
+    /// not a different preview colour.
+    private var separatorColorSwatches: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("COLOR")
+                .scaledFont(9, weight: .semibold)
+                .foregroundStyle(theme.labelFaint)
+
+            HStack(spacing: 12) {
+                ForEach(colors) { option in
+                    let tint = option.tint(in: theme)
+                    let isSelected = edited.color == option.rawValue
+                    Button {
+                        edited.color = option.rawValue
+                    } label: {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(tint.opacity(0.18))
+                            .frame(width: 52, height: 52)
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .stroke(tint, lineWidth: isSelected ? 3 : 1)
+                            }
+                            .overlay {
+                                if isSelected {
+                                    Image(systemName: "checkmark")
+                                        .scaledFont(17, weight: .bold)
+                                        .foregroundStyle(tint)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(option.accessibilityName) separator color")
+                    .accessibilityValue(isSelected ? "Selected" : "Not selected")
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

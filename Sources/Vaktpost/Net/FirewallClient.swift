@@ -611,6 +611,12 @@ actor FirewallClient {
     /// forward. The PHP write validates that pair against the current config
     /// before moving the complete, untouched rule dictionary.
     struct NatReorderItem: Sendable {
+        enum Kind: Sendable, Equatable {
+            case rule
+            case separator
+        }
+
+        let kind: Kind
         let originalIndex: Int
         let tracker: String
         let interfaceName: String
@@ -619,8 +625,10 @@ actor FirewallClient {
         let destinationPort: String
         let target: String
         let localPort: String
+        let separatorKey: String
 
         init(originalIndex: Int, forward: PortForward) {
+            kind = .rule
             self.originalIndex = originalIndex
             tracker = forward.tracker
             interfaceName = forward.interfaceName
@@ -629,28 +637,57 @@ actor FirewallClient {
             destinationPort = forward.destinationSide.port ?? ""
             target = forward.target
             localPort = forward.localPort ?? ""
+            separatorKey = ""
+        }
+
+        init(separator: RuleSeparator) {
+            kind = .separator
+            originalIndex = -1
+            tracker = ""
+            interfaceName = ""
+            destinationKind = ""
+            destinationAddress = ""
+            destinationPort = ""
+            target = ""
+            localPort = ""
+            separatorKey = separator.key
         }
 
         var json: JSONValue {
-            .object([
-                "original_index": .number(Double(originalIndex)),
-                "tracker": .string(tracker),
-                "interface": .string(interfaceName),
-                "destination_kind": .string(destinationKind),
-                "destination_address": .string(destinationAddress),
-                "destination_port": .string(destinationPort),
-                "target": .string(target),
-                "local_port": .string(localPort)
-            ])
+            switch kind {
+            case .rule:
+                return .object([
+                    "kind": .string("rule"),
+                    "original_index": .number(Double(originalIndex)),
+                    "tracker": .string(tracker),
+                    "interface": .string(interfaceName),
+                    "destination_kind": .string(destinationKind),
+                    "destination_address": .string(destinationAddress),
+                    "destination_port": .string(destinationPort),
+                    "target": .string(target),
+                    "local_port": .string(localPort)
+                ])
+            case .separator:
+                return .object([
+                    "kind": .string("separator"),
+                    "id": .string(separatorKey)
+                ])
+            }
         }
 
         var identityToken: String {
-            [tracker, interfaceName, destinationKind, destinationAddress,
-             destinationPort, target, localPort].joined(separator: "\u{1f}")
+            switch kind {
+            case .rule:
+                return "rule:" + [tracker, interfaceName, destinationKind, destinationAddress,
+                                   destinationPort, target, localPort].joined(separator: "\u{1f}")
+            case .separator:
+                return "separator:\(separatorKey)"
+            }
         }
 
         func matches(_ forward: PortForward, at index: Int) -> Bool {
-            originalIndex == index
+            kind == .rule
+                && originalIndex == index
                 && tracker == forward.tracker
                 && interfaceName == forward.interfaceName
                 && destinationKind == forward.destinationSide.storageKind.rawValue

@@ -1,5 +1,20 @@
 # Changelog
 
+## Separator editors preview their colours
+
+Filter and NAT separator editors now show four selectable colour squares
+instead of a text menu. Each swatch uses the same semantic tint and opacity as
+the separator bar it creates, with a visible selection outline and checkmark
+plus accessible colour names.
+
+## NAT separators participate in drag ordering
+
+The NAT list now treats port forwards and separator bars as one ordered table.
+Both row types have a drag handle, and saving a mixed order rebuilds pfSense's
+native `frN` separator positions while preserving complete rule and separator
+dictionaries. Adjacent separators retain their relative order, and the result
+remains staged under `natconf` until Apply Changes.
+
 ## NAT separators are managed beside port forwards
 
 The NAT add menu now offers both Port Forward Rule and Separator. Existing NAT

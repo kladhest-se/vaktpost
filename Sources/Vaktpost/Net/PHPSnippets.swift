@@ -2472,10 +2472,10 @@ struct PHPSnippet: Sendable {
     """)
 
     /// The grouping bars pfSense draws between rules — "Teamspeak" in a list
-    /// of port forwards, for instance. Filter separators can be created,
-    /// edited, deleted and reordered; NAT separators remain read-only because
-    /// their flat, cross-interface position semantics are a different write
-    /// surface.
+    /// of port forwards, for instance. Filter and NAT separators can both be
+    /// created, edited, deleted and reordered. NAT uses a flat cross-interface
+    /// position model, so its separators participate in the same drag order as
+    /// every port-forward rule.
     ///
     /// Confirmed against pfSense's actual `filter.inc` (`display_separator`,
     /// `separator_rows`), not inferred, because the first version of this
@@ -3739,29 +3739,62 @@ struct PHPSnippet: Sendable {
         $vaktpost_nat = is_array($config["nat"] ?? null) ? $config["nat"] : [];
         $vaktpost_rules = is_array($vaktpost_nat["rule"] ?? null)
           ? array_values($vaktpost_nat["rule"]) : [];
+        $vaktpost_separators = is_array($vaktpost_nat["separator"] ?? null)
+          ? $vaktpost_nat["separator"] : [];
 
         if (!is_array($vaktpost_items) || empty($vaktpost_items)) {
           $toreturn["status"] = "invalid";
           $toreturn["error"] = "A non-empty NAT order is required.";
-        } elseif (count($vaktpost_items) !== count($vaktpost_rules)) {
+        } elseif (count($vaktpost_items) !== count($vaktpost_rules) + count($vaktpost_separators)) {
           $toreturn["status"] = "mismatch";
-          $toreturn["error"] = "The NAT rules changed since this order was prepared.";
+          $toreturn["error"] = "The NAT rules or separators changed since this order was prepared.";
         } else {
-          $vaktpost_seen = [];
+          $vaktpost_seen_rules = [];
+          $vaktpost_seen_separators = [];
           $vaktpost_reordered = [];
+          $vaktpost_reordered_separators = [];
+          $vaktpost_preceding_rules = 0;
           $vaktpost_valid = true;
           $vaktpost_error = "";
 
           foreach ($vaktpost_items as $vaktpost_item) {
-            if (!is_array($vaktpost_item)
-                || !array_key_exists("original_index", $vaktpost_item)) {
+            if (!is_array($vaktpost_item)) {
               $vaktpost_valid = false;
               $vaktpost_error = "The submitted NAT order contains an invalid item.";
               break;
             }
+            $vaktpost_kind = strval($vaktpost_item["kind"] ?? "rule");
+            if ($vaktpost_kind === "separator") {
+              $vaktpost_separator_key = strval($vaktpost_item["id"] ?? "");
+              if ($vaktpost_separator_key === ""
+                  || !array_key_exists($vaktpost_separator_key, $vaktpost_separators)
+                  || array_key_exists($vaktpost_separator_key, $vaktpost_seen_separators)) {
+                $vaktpost_valid = false;
+                $vaktpost_error = "The submitted NAT order contains an invalid separator.";
+                break;
+              }
+              $vaktpost_seen_separators[$vaktpost_separator_key] = true;
+              $vaktpost_separator = $vaktpost_separators[$vaktpost_separator_key];
+              if (!is_array($vaktpost_separator)) {
+                $vaktpost_valid = false;
+                $vaktpost_error = "A NAT separator is not an object.";
+                break;
+              }
+              $vaktpost_separator["row"] = [
+                "fr" . $vaktpost_preceding_rules
+              ];
+              $vaktpost_reordered_separators[$vaktpost_separator_key] = $vaktpost_separator;
+              continue;
+            }
+            if ($vaktpost_kind !== "rule"
+                || !array_key_exists("original_index", $vaktpost_item)) {
+              $vaktpost_valid = false;
+              $vaktpost_error = "The submitted NAT order contains an invalid item kind.";
+              break;
+            }
             $vaktpost_index = intval($vaktpost_item["original_index"]);
             if ($vaktpost_index < 0 || $vaktpost_index >= count($vaktpost_rules)
-                || array_key_exists(strval($vaktpost_index), $vaktpost_seen)) {
+                || array_key_exists(strval($vaktpost_index), $vaktpost_seen_rules)) {
               $vaktpost_valid = false;
               $vaktpost_error = "The submitted NAT order contains an invalid or duplicate position.";
               break;
@@ -3812,16 +3845,20 @@ struct PHPSnippet: Sendable {
               break;
             }
 
-            $vaktpost_seen[strval($vaktpost_index)] = true;
+            $vaktpost_seen_rules[strval($vaktpost_index)] = true;
             $vaktpost_reordered[] = $vaktpost_rule;
+            $vaktpost_preceding_rules = $vaktpost_preceding_rules + 1;
           }
 
-          if (!$vaktpost_valid || count($vaktpost_seen) !== count($vaktpost_rules)) {
+          if (!$vaktpost_valid
+              || count($vaktpost_seen_rules) !== count($vaktpost_rules)
+              || count($vaktpost_seen_separators) !== count($vaktpost_separators)) {
             $toreturn["status"] = "mismatch";
             $toreturn["error"] = $vaktpost_error === ""
               ? "The submitted NAT order is incomplete." : $vaktpost_error;
           } else {
             $config["nat"]["rule"] = array_values($vaktpost_reordered);
+            $config["nat"]["separator"] = $vaktpost_reordered_separators;
             $vaktpost_audit_session_started = false;
             if (session_status() !== PHP_SESSION_ACTIVE) {
               $vaktpost_audit_session_started = session_start([
@@ -3843,7 +3880,7 @@ struct PHPSnippet: Sendable {
                 }
               }
             }
-            write_config("Vaktpost: reordered NAT port forwards");
+            write_config("Vaktpost: reordered NAT port forwards and separators");
             if ($vaktpost_audit_session_started) {
               if (session_status() !== PHP_SESSION_ACTIVE) {
                 session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
