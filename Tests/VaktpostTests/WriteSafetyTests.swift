@@ -42,6 +42,44 @@ final class WriteSafetyTests: XCTestCase {
         XCTAssertEqual(forward.id, "wan-wanip:443-192.0.2.10")
     }
 
+    func testNatReorderItemIdentifiesATrackerlessForwardByItsOriginalSlot() {
+        let forward = PortForward(JSONDict([
+            "interface": .string("wan"),
+            "destination": .object(["address": .string("wanip")]),
+            "destination_port": .string("443"),
+            "target": .string("192.0.2.10")
+        ]))
+        let item = FirewallClient.NatReorderItem(originalIndex: 2, forward: forward)
+
+        XCTAssertTrue(item.matches(forward, at: 2))
+        XCTAssertFalse(item.matches(forward, at: 1))
+        guard let json = JSONDict(item.json) else {
+            return XCTFail("expected an object payload")
+        }
+        XCTAssertEqual(json.int("original_index"), 2)
+        XCTAssertEqual(json.string("tracker"), "")
+    }
+
+    func testNatReorderItemRejectsAChangedForward() {
+        let original = PortForward(JSONDict([
+            "tracker": .string("1730000001"),
+            "interface": .string("wan"),
+            "destination": .object(["address": .string("wanip")]),
+            "destination_port": .string("443"),
+            "target": .string("192.0.2.10")
+        ]))
+        let changed = PortForward(JSONDict([
+            "tracker": .string("1730000001"),
+            "interface": .string("wan"),
+            "destination": .object(["address": .string("wanip")]),
+            "destination_port": .string("8443"),
+            "target": .string("192.0.2.10")
+        ]))
+
+        let item = FirewallClient.NatReorderItem(originalIndex: 0, forward: original)
+        XCTAssertFalse(item.matches(changed, at: 0))
+    }
+
     func testWriteResponseRequiresExplicitOK() throws {
         let accepted = JSONDict(["status": .string("ok")])
         XCTAssertNoThrow(try FirewallClient.validatedWriteResponse(accepted, operation: "Test"))
@@ -59,14 +97,16 @@ final class WriteSafetyTests: XCTestCase {
 
     func testSaveResponseCarriesTheIdentityNeededForReadBack() throws {
         let created = JSONDict([
-            "status": .string("ok"), "created": .bool(true), "tracker": .string("1730000002")
+            "status": .string("ok"), "apply_pending": .bool(true),
+            "created": .bool(true), "tracker": .string("1730000002")
         ])
         XCTAssertNoThrow(try FirewallClient.validatedSaveResponse(
             created, operation: "Rule save", requestedTracker: "", isCreate: true
         ))
 
         let edited = JSONDict([
-            "status": .string("ok"), "created": .bool(false), "tracker": .string("1730000001")
+            "status": .string("ok"), "apply_pending": .bool(true),
+            "created": .bool(false), "tracker": .string("1730000001")
         ])
         XCTAssertNoThrow(try FirewallClient.validatedSaveResponse(
             edited, operation: "Rule save", requestedTracker: "1730000001", isCreate: false
@@ -176,10 +216,15 @@ final class WriteSafetyTests: XCTestCase {
         let nat = PHPSnippet.saveNatRule(rule: JSONDict([:])).body
 
         for body in [rule, nat] {
-            XCTAssertTrue(body.contains("if ($vaktpost_create)"))
             XCTAssertTrue(body.contains("$vaktpost_collision = true;"))
             XCTAssertTrue(body.contains("$toreturn[\"tracker\"] = $tracker;"))
             XCTAssertTrue(body.contains("if (!$vaktpost_create && !$found)"))
         }
+
+        // Filter-rule creates always allocate. NAT also allocates when healing
+        // a trackerless legacy row, so its equivalent guard is intentionally
+        // based on the row's tracker rather than create/edit mode alone.
+        XCTAssertTrue(rule.contains("if ($vaktpost_create)"))
+        XCTAssertTrue(nat.contains("if (empty($rule[\"tracker\"] ?? \"\"))"))
     }
 }

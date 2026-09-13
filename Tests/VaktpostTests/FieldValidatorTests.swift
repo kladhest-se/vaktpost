@@ -329,7 +329,7 @@ final class FieldValidatorTests: XCTestCase {
         let problems = FieldValidator.problems(
             inForward: forward(destinationPort: "8000-8100", localPort: "9000-9050"),
             aliases: aliases)
-        XCTAssertTrue(problems.contains { $0.field == "Local port" })
+        XCTAssertTrue(problems.contains { $0.field == "Redirect target port" })
     }
 
     func testMatchingRangesArePermitted() {

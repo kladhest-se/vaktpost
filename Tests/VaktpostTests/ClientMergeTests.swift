@@ -565,6 +565,7 @@ extension FilterAddressTests {
         XCTAssertEqual(pf.destinationSide.address, "wanip")
         XCTAssertEqual(pf.destinationSide.port, "32400")
         XCTAssertEqual(pf.target, "172.16.1.43")
+        XCTAssertEqual(pf.localPort, "32400")
     }
 
     func testARestrictedSourceSurvives() {

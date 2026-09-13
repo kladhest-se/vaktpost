@@ -284,7 +284,10 @@ struct PortForward: Identifiable {
         sourceSide = FilterAddress(d.value("source"), port: d.value("source_port"))
         destinationSide = FilterAddress(d.value("destination"), port: d.value("destination_port"))
         target = d.string("target") ?? FilterAddress(d.value("target")).text
-        localPort = d.string("local_port")
+        // pfSense's native config key contains a hyphen. Accept the earlier
+        // Vaktpost underscore spelling as a read fallback so a rule written
+        // by an affected build can be opened once and migrated on save.
+        localPort = d.string("local-port", "local_port")
         ipProtocol = d.string("ipprotocol", "ip_protocol")
         descr = d.string("descr", "description") ?? ""
         disabled = Self.configMarker("disabled", in: d)

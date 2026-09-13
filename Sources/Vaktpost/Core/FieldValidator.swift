@@ -245,7 +245,8 @@ enum FieldValidator {
                     aliases: aliases, interfaces: interfaces),
             problem(in: form.destinationPort, kind: .port, field: "Destination port", aliases: aliases),
             problem(in: form.targetAddress, kind: .target, field: "Target address", aliases: aliases),
-            problem(in: form.localPort, kind: .port, field: "Local port", aliases: aliases)
+            problem(in: form.localPort, kind: .port,
+                    field: "Redirect target port", aliases: aliases)
         ].compactMap { $0 })
         out.append(contentsOf: [
             storageProblem(form.sourceAddress, storage: form.sourceStorageKind,
@@ -273,7 +274,7 @@ enum FieldValidator {
             let inside = form.localPort.split(separator: "-").compactMap { Int($0) }
             if outside.count == 2, inside.count == 2,
                (outside[1] - outside[0]) != (inside[1] - inside[0]) {
-                out.append(Problem(field: "Local port",
+                out.append(Problem(field: "Redirect target port",
                                    message: "The ranges are different sizes, so the mapping is ambiguous."))
             }
         }

@@ -35,6 +35,11 @@ struct FirewallView: View {
     /// Nil means "show what the firewall actually has."
     @State private var rulePendingOrder: [RuleListItem]?
     @State private var ruleDraggingID: String?
+    /// NAT uses its own complete flat order. The item remembers the original
+    /// pfSense array position so trackerless WebUI-created forwards remain
+    /// safely identifiable during the write.
+    @State private var natPendingOrder: [NatRuleListItem]?
+    @State private var natDraggingID: String?
     @State private var isSavingOrder = false
     /// This alert belongs directly on this view rather than a sheet it
     /// presents: the confirmation here is a single, unnested sheet, so this
@@ -206,13 +211,11 @@ struct FirewallView: View {
         .writeErrorAlert(isErrorPresented: $showReorderErrorAlert, error: $reorderError)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                // Only on the rules pane, and only once an interface is
-                // chosen. A new rule has to land somewhere, and asking which
-                // interface inside the editor would be a question with fifteen
-                // answers in a sheet that is already long.
-                if let interface = interfaceFilter {
-                    switch pane {
-                    case .rules:
+                switch pane {
+                case .rules:
+                    // A filter rule or separator belongs to one selected
+                    // interface, so the Rules add menu only appears there.
+                    if let interface = interfaceFilter {
                         Menu {
                             Button {
                                 newRule = RuleEditForm.blank(interface: interface)
@@ -233,17 +236,18 @@ struct FirewallView: View {
                         } label: {
                             Label("Add", systemImage: "plus")
                         }
-                    case .nat:
-                        Button {
-                            newForward = PortForwardEditForm.blank(interface: interface)
-                        } label: {
-                            Label("New forward", systemImage: "plus")
-                        }
                     }
-                    // Exhaustive, with no `default`. A third pane added later
-                    // has to decide what its plus button does rather than
-                    // silently getting none.
+                case .nat:
+                    // NAT is one flat table. Its add action must not disappear
+                    // just because the Rules pane was left on All or Floating.
+                    Button {
+                        newForward = PortForwardEditForm.blank(interface: defaultNatInterface)
+                    } label: {
+                        Label("New forward", systemImage: "plus")
+                    }
                 }
+                // Exhaustive, with no `default`. A third pane added later has
+                // to decide what its plus button does.
             }
         }
         // `item:` rather than `isPresented:` — the form is the reason the
@@ -340,6 +344,21 @@ struct FirewallView: View {
     /// ones.
     private var interfaceOptions: [String] {
         cachedInterfaceOptions
+    }
+
+    /// Best initial interface for a new NAT rule. The editor still exposes
+    /// the interface picker; this is only its pfSense-like starting value.
+    private var defaultNatInterface: String {
+        if let selected = interfaceFilter,
+           store.interfaces.contains(where: { $0.internalName == selected }) {
+            return selected
+        }
+        if let wan = store.interfaces.first(where: { $0.internalName?.lowercased() == "wan" })?.internalName {
+            return wan
+        }
+        return store.interfaces.compactMap(\.internalName).first
+            ?? store.portForwards.first?.interfaceName
+            ?? "wan"
     }
 
     private var filteredRules: [FirewallRule] {
@@ -628,6 +647,28 @@ struct FirewallView: View {
         return false
     }
 
+    private var currentNatItems: [NatRuleListItem] {
+        store.portForwards.enumerated().map {
+            NatRuleListItem(originalIndex: $0.offset, forward: $0.element)
+        }
+    }
+
+    private var displayedNatItems: [NatRuleListItem] {
+        guard let pending = natPendingOrder,
+              Set(pending.map(\.id)) == Set(currentNatItems.map(\.id)) else {
+            return currentNatItems
+        }
+        return pending
+    }
+
+    private var natOrderIsDirty: Bool {
+        natPendingOrder.map { $0.map(\.id) != currentNatItems.map(\.id) } ?? false
+    }
+
+    private var canReorderNatRules: Bool {
+        query.isEmpty && store.portForwards.count > 1
+    }
+
     /// NAT separators, when it is safe to place them.
     ///
     /// Unlike filter separators, NAT's are not grouped by interface at all —
@@ -650,17 +691,21 @@ struct FirewallView: View {
         } else {
             countLine("\(filteredForwards.count) port forwards")
             let separators = natSeparatorsForCurrentSelection
-            if !separators.isEmpty {
-                // Named at the point the claim is made, the same as the
-                // rules pane: position here is pfSense's own, read from its
-                // own config, but shown as best this app's understanding of
-                // that structure allows.
-                Text("Separators shown below are pfSense's own, in pfSense's own order.")
+            if canReorderNatRules {
+                Text("Drag \(Image(systemName: "line.3.horizontal")) to reorder. NAT is one pfSense-wide table; separators keep their current positions.")
                     .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
                     .padding(.horizontal, 2)
+
+                if natOrderIsDirty {
+                    natOrderChangedBar
+                }
             }
-            ForEach(Array(filteredForwards.enumerated()), id: \.element.id) { index, pf in
+
+            let visibleItems = query.isEmpty
+                ? displayedNatItems
+                : currentNatItems.filter { matches($0.forward, query.lowercased()) }
+            ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
                 // A separator's recorded count of preceding forwards is a
                 // count against the whole flat NAT list — confirmed from
                 // `firewall_nat.php`, which numbers every forward with one
@@ -671,40 +716,106 @@ struct FirewallView: View {
                 ForEach(separators.filter { $0.precedingRuleCount == index }) { separator in
                     SeparatorBar(separator: separator)
                 }
-                Button { selection = pf.id } label: {
-                    Slab(rail: pf.health, muted: pf.disabled,
-                         trailing: store.interfaceLabel(for: pf.interfaceName)) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            HStack(spacing: 8) {
-                                Text((pf.proto ?? "any").uppercased())
-                                    .scaledFont(10, weight: .semibold, design: .monospaced)
-                                    .foregroundStyle(theme.labelFaint)
-                                if pf.disabled { StatusPill(text: "disabled", health: .idle) }
-                                Spacer(minLength: 0)
-                                Image(systemName: "chevron.right")
-                                    .scaledFont(10, weight: .semibold)
-                                    .foregroundStyle(theme.labelFaint)
-                            }
-                            // Same shape as a rule, because they are read the
-                            // same way — the only difference is that a forward
-                            // has somewhere it sends the traffic on to.
-                            // Same reasoning as the rule row: pfSense shows
-                            // the alias name, not its resolved members.
-                            natField("TO", pf.destinationSide.address)
-                            natField("SENDS", pf.target)
-                            if let port = natPorts(pf) { natField("PORT", port) }
-                            if !pf.descr.isEmpty {
-                                natField("DESC", pf.descr, mono: false)
-                            }
-                        }
-                    }
+                if canReorderNatRules {
+                    natReorderableRow(item)
+                } else {
+                    natForwardRow(item.forward)
                 }
-                .buttonStyle(.plain)
             }
-            ForEach(separators.filter { ($0.precedingRuleCount ?? Int.max) >= filteredForwards.count }) { separator in
+            ForEach(separators.filter { ($0.precedingRuleCount ?? Int.max) >= visibleItems.count }) { separator in
                 SeparatorBar(separator: separator)
             }
         }
+    }
+
+    private var natOrderChangedBar: some View {
+        HStack(spacing: 10) {
+            Text("NAT order changed")
+                .scaledFont(12, weight: .semibold)
+                .foregroundStyle(theme.warn)
+            Spacer()
+            Button("Discard") { natPendingOrder = nil }
+                .scaledFont(12)
+                .foregroundStyle(theme.labelMuted)
+            Button {
+                Task { await saveNatOrder() }
+            } label: {
+                if isSavingOrder {
+                    ProgressView()
+                } else {
+                    Text("Save order").scaledFont(12, weight: .semibold)
+                }
+            }
+            .disabled(isSavingOrder)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(theme.warn.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func saveNatOrder() async {
+        guard let items = natPendingOrder else { return }
+        isSavingOrder = true
+        do {
+            _ = try await store.writeCoordinator.execute(.reorderNatRules(
+                items: items.map(\.reorderItem),
+                displayName: "NAT port forwards"
+            ))
+            await store.refreshFirewallObjectsAfterWrite()
+            natPendingOrder = nil
+        } catch {
+            natPendingOrder = nil
+            reorderError = WriteError.from(error, operation: .other)
+            showReorderErrorAlert = true
+            await store.refreshFirewallObjectsAfterWrite()
+        }
+        isSavingOrder = false
+    }
+
+    private func natReorderableRow(_ item: NatRuleListItem) -> some View {
+        HStack(spacing: 0) {
+            RuleDragHandle()
+                .onDrag {
+                    natDraggingID = item.id
+                    return NSItemProvider(object: item.id as NSString)
+                }
+            natForwardRow(item.forward)
+                .frame(maxWidth: .infinity)
+        }
+        .onDrop(of: [.text], delegate: NatReorderDropDelegate(
+            target: item,
+            items: Binding(
+                get: { displayedNatItems },
+                set: { natPendingOrder = $0 }
+            ),
+            draggingID: $natDraggingID
+        ))
+    }
+
+    private func natForwardRow(_ pf: PortForward) -> some View {
+        Button { selection = pf.id } label: {
+            Slab(rail: pf.health, muted: pf.disabled,
+                 trailing: store.interfaceLabel(for: pf.interfaceName)) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text((pf.proto ?? "any").uppercased())
+                            .scaledFont(10, weight: .semibold, design: .monospaced)
+                            .foregroundStyle(theme.labelFaint)
+                        if pf.disabled { StatusPill(text: "disabled", health: .idle) }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .scaledFont(10, weight: .semibold)
+                            .foregroundStyle(theme.labelFaint)
+                    }
+                    natField("TO", pf.destinationSide.address)
+                    natField("SENDS", pf.target)
+                    if let port = natPorts(pf) { natField("PORT", port) }
+                    if !pf.descr.isEmpty { natField("DESC", pf.descr, mono: false) }
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     /// The port it arrives on, and the port it is sent to when they differ.
@@ -818,6 +929,20 @@ enum RuleListItem: Identifiable {
     }
 }
 
+/// A port forward paired with its position in the freshly fetched flat NAT
+/// table. The position is part of the transport identity, not the displayed
+/// rule identity, so trackerless rules and otherwise identical rows can still
+/// be moved without one being mistaken for another.
+struct NatRuleListItem: Identifiable {
+    let originalIndex: Int
+    let forward: PortForward
+
+    var id: String { "nat:\(originalIndex):\(forward.id)" }
+    var reorderItem: FirewallClient.NatReorderItem {
+        FirewallClient.NatReorderItem(originalIndex: originalIndex, forward: forward)
+    }
+}
+
 /// Rules and separators, in reading order, for one interface.
 ///
 /// The one function both the live display and a drag's starting point build
@@ -855,6 +980,31 @@ struct RuleReorderDropDelegate: DropDelegate {
         withAnimation(.default) {
             items.move(fromOffsets: IndexSet(integer: from),
                       toOffset: to > from ? to + 1 : to)
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingID = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+}
+
+struct NatReorderDropDelegate: DropDelegate {
+    let target: NatRuleListItem
+    @Binding var items: [NatRuleListItem]
+    @Binding var draggingID: String?
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingID, draggingID != target.id,
+              let from = items.firstIndex(where: { $0.id == draggingID }),
+              let to = items.firstIndex(where: { $0.id == target.id }) else { return }
+        withAnimation(.default) {
+            items.move(fromOffsets: IndexSet(integer: from),
+                       toOffset: to > from ? to + 1 : to)
         }
     }
 
@@ -1636,7 +1786,7 @@ struct PortForwardDetailView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         detailField("Target", forward.target)
                         if let local = forward.localPort, !local.isEmpty {
-                            detailField("Local port", local)
+                            detailField("Redirect target port", local)
                         }
                     }
                 }
@@ -1648,7 +1798,7 @@ struct PortForwardDetailView: View {
                         Button {
                             editorForm = PortForwardEditForm(from: forward)
                         } label: {
-                            Label("Edit Forward", systemImage: "pencil")
+                            Label("Edit Forward Rule", systemImage: "pencil")
                                 .scaledFont(14, weight: .medium)
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
@@ -1657,10 +1807,25 @@ struct PortForwardDetailView: View {
                         }
                         .buttonStyle(.plain)
 
+                        // The copy opens in the editor and is not written
+                        // until reviewed. Its destination port is cleared so
+                        // it cannot accidentally conflict with the original.
+                        Button {
+                            editorForm = PortForwardEditForm.duplicating(forward)
+                        } label: {
+                            Label("Duplicate Forward Rule", systemImage: "plus.square.on.square")
+                                .scaledFont(14, weight: .medium)
+                                .foregroundStyle(theme.accentColor)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(theme.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+
                         Button {
                             Task { await confirmDelete() }
                         } label: {
-                            Label("Delete Forward", systemImage: "trash")
+                            Label("Delete Forward Rule", systemImage: "trash")
                                 .scaledFont(14, weight: .medium)
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
@@ -1680,20 +1845,6 @@ struct PortForwardDetailView: View {
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle(forward.descr.isEmpty ? "Port forward" : forward.descr)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                // The copy opens in the editor and is not written until it is
-                // reviewed. Its destination port is cleared: two forwards on
-                // one interface sharing a port is a conflict pfSense accepts
-                // and only one of them will work.
-                Button {
-                    editorForm = PortForwardEditForm.duplicating(forward)
-                } label: {
-                    Label("Duplicate", systemImage: "plus.square.on.square")
-                }
-                .disabled(isSaving)
-            }
-        }
         // Same as the rule editor: assembled at presentation, because there is
         // nothing to fetch and the spinner was the entire delay.
         .sheet(item: $editorForm) { form in
@@ -2533,7 +2684,7 @@ struct PortForwardEditSheet: View {
                                            prompt: "the host inside",
                                            aliases: aliases.filter(\.isAddressAlias),
                                            aliasButtonTitle: "Choose address alias")
-                            EditAliasField(label: "Local port", text: $edited.localPort,
+                            EditAliasField(label: "Redirect target port", text: $edited.localPort,
                                            prompt: "blank to keep the same port",
                                            aliases: aliases.filter(\.isPortAlias),
                                            aliasButtonTitle: "Choose port alias")

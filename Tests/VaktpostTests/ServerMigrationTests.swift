@@ -53,7 +53,8 @@ final class ServerMigrationTests: XCTestCase {
 
     /// When a single-server profile exists under the old key, `ServerRegistry`
     /// migrates it into the multi-firewall list and moves the keychain item.
-    func testLegacyProfileIsMigratedToList() async throws {
+    @MainActor
+    func testLegacyProfileIsMigratedToList() throws {
         let legacyProfile = ServerProfile(
             baseURL: "https://firewall.example",
             label: "Test firewall",
@@ -72,9 +73,7 @@ final class ServerMigrationTests: XCTestCase {
         ]
         SecItemAdd(query as CFDictionary, nil)
 
-        await MainActor.run {
-            _ = ServerRegistry(defaults: defaults)
-        }
+        _ = ServerRegistry(defaults: defaults)
 
         // The old key should be gone.
         XCTAssertNil(defaults.data(forKey: legacyProfileKey))
@@ -99,25 +98,22 @@ final class ServerMigrationTests: XCTestCase {
         XCTAssertNil(Keychain.legacyAPIKey())
 
         // The registry should pick it up as active.
-        await MainActor.run {
-            let registry = ServerRegistry(defaults: defaults)
-            XCTAssertEqual(registry.active?.id, servers[0].id)
-        }
+        let registry = ServerRegistry(defaults: defaults)
+        XCTAssertEqual(registry.active?.id, servers[0].id)
     }
 
     /// When no legacy profile exists but the list is present, the registry
     /// uses it as-is.
-    func testExistingListIsUsedWithoutMigration() async {
+    @MainActor
+    func testExistingListIsUsedWithoutMigration() {
         let profile = ServerProfile(baseURL: "https://new.example", label: "New")
         let list = [profile]
         let listData = try! JSONEncoder().encode(list)
         defaults.set(listData, forKey: listKey)
 
-        await MainActor.run {
-            let registry = ServerRegistry(defaults: defaults)
-            XCTAssertEqual(registry.servers.count, 1)
-            XCTAssertEqual(registry.active?.baseURL, "https://new.example")
-        }
+        let registry = ServerRegistry(defaults: defaults)
+        XCTAssertEqual(registry.servers.count, 1)
+        XCTAssertEqual(registry.active?.baseURL, "https://new.example")
     }
 
     func testProfileFromOlderBuildDefaultsToMonitorOnly() throws {
@@ -148,24 +144,22 @@ final class ServerMigrationTests: XCTestCase {
     }
 
     /// When neither legacy nor new data exists, the registry starts clean.
-    func testEmptyStateProducesNoServers() async {
-        await MainActor.run {
-            let registry = ServerRegistry(defaults: defaults)
-            XCTAssertTrue(registry.servers.isEmpty)
-            XCTAssertNil(registry.active)
-        }
+    @MainActor
+    func testEmptyStateProducesNoServers() {
+        let registry = ServerRegistry(defaults: defaults)
+        XCTAssertTrue(registry.servers.isEmpty)
+        XCTAssertNil(registry.active)
     }
 
     /// A legacy profile with a malformed URL is not migrated.
-    func testMalformedLegacyProfileIsSkipped() async {
+    @MainActor
+    func testMalformedLegacyProfileIsSkipped() {
         var badProfile = ServerProfile(baseURL: "not a url", label: "Bad")
         badProfile.normalize() // won't help — no host
         let profileData = try! JSONEncoder().encode(badProfile)
         defaults.set(profileData, forKey: legacyProfileKey)
 
-        await MainActor.run {
-            _ = ServerRegistry(defaults: defaults)
-        }
+        _ = ServerRegistry(defaults: defaults)
 
         // The legacy key is still there (migration was skipped).
         XCTAssertNotNil(defaults.data(forKey: legacyProfileKey))

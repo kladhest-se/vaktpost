@@ -1,5 +1,49 @@
 # Changelog
 
+## Redirect target ports use pfSense's native field
+
+NAT rules now read Redirect target port from pfSense's native `local-port`
+configuration key and show it in the rule list, detail screen, and editor.
+Saving writes that same native key, while still reading and removing the
+incorrect `local_port` spelling produced by affected Vaktpost builds. Read-back
+verification and NAT reorder identity include the corrected value so target
+ports are preserved rather than silently disappearing.
+
+## NAT adding, ordering, and forward actions are complete
+
+The NAT add button no longer depends on the filter-rule interface selection,
+so it remains available after switching from All or Floating to NAT. New
+forwards start on the selected configured interface when possible, otherwise
+WAN or the first configured interface, and the editor still allows changing
+it.
+
+The NAT list now supports drag ordering across pfSense's complete flat port
+forward table. Reorders validate every original row against a fresh read,
+including trackerless rules created in the WebUI, preserve each complete rule
+dictionary, stage the NAT configuration without activating it, and verify the
+saved order before reporting success. NAT separators retain their existing
+ordinal positions.
+
+Port-forward details now present Edit Forward Rule, Duplicate Forward Rule,
+and Delete Forward Rule as full-width actions in that order.
+
+## Staged-write safety tests match the current response contract
+
+The save-response fixtures now include the required `apply_pending` marker,
+which every successful staged firewall save returns. The tracker-allocation
+test also reflects that NAT uses its trackerless-row guard for both new
+forwards and legacy forwards being healed, while filter rules use the direct
+create guard. This removes the three stale assertion failures in `make test`
+without weakening the production checks.
+
+## Server migration tests compile under Swift 6 isolation
+
+The migration tests no longer send their `XCTestCase` instance and its
+`UserDefaults` property into `MainActor.run`. Tests which construct the
+main-actor-isolated `ServerRegistry` now run on the main actor directly. This
+removes the five Swift 6 data-race errors that stopped `make test` during test
+target compilation.
+
 ## Clean build and test output
 
 Removed two obsolete `@discardableResult` annotations from async editor saves.

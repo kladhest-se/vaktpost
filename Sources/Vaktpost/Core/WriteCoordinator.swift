@@ -16,6 +16,7 @@ enum AdministrativeWrite: Sendable {
     case deleteNatRule(tracker: String, displayName: String)
     case saveNatRule(rule: JSONDict, displayName: String)
     case reorderFilterRules(interface: String, items: [FirewallClient.ReorderItem], displayName: String)
+    case reorderNatRules(items: [FirewallClient.NatReorderItem], displayName: String)
     case saveFilterSeparator(separator: JSONDict, displayName: String)
     case deleteFilterSeparator(interface: String, key: String, displayName: String)
 
@@ -31,7 +32,7 @@ enum AdministrativeWrite: Sendable {
             return Self.movesRule(rule) ? .reorderRules : .editRule
         case .deleteNatRule: return .deletePortForward
         case .saveNatRule(let rule, _): return Self.isCreate(rule) ? .addPortForward : .editPortForward
-        case .reorderFilterRules: return .reorderRules
+        case .reorderFilterRules, .reorderNatRules: return .reorderRules
         case .saveFilterSeparator(let separator, _):
             return separator.bool("create") == true ? .addSeparator : .editSeparator
         case .deleteFilterSeparator: return .deleteSeparator
@@ -49,7 +50,8 @@ enum AdministrativeWrite: Sendable {
         case .deleteRule(_, let displayName), .saveRule(_, let displayName),
              .deleteNatRule(_, let displayName), .saveNatRule(_, let displayName):
             return displayName
-        case .reorderFilterRules(_, _, let displayName):
+        case .reorderFilterRules(_, _, let displayName),
+             .reorderNatRules(_, let displayName):
             return displayName
         case .saveFilterSeparator(_, let displayName),
              .deleteFilterSeparator(_, _, let displayName):
@@ -80,6 +82,8 @@ enum AdministrativeWrite: Sendable {
             let separators = items.filter { if case .separator = $0 { return true }; return false }.count
             return "Reorder rules on \(displayName)"
                 + (separators > 0 ? " (\(separators) separator\(separators == 1 ? "" : "s"))" : "")
+        case .reorderNatRules(let items, _):
+            return "Reorder \(items.count) NAT port forward\(items.count == 1 ? "" : "s")"
         case .saveFilterSeparator(let separator, let displayName):
             return "\(separator.bool("create") == true ? "Add" : "Edit") separator \(displayName)"
         case .deleteFilterSeparator(_, _, let displayName):
@@ -119,6 +123,8 @@ enum AdministrativeWrite: Sendable {
             var text = "Rearrange \(interface) to the new order — \(ruleCount) rule\(ruleCount == 1 ? "" : "s")"
             if sepCount > 0 { text += " and \(sepCount) separator\(sepCount == 1 ? "" : "s")" }
             return text + ". Every other interface's rules are left exactly where they are."
+        case .reorderNatRules(let items, _):
+            return "Rearrange the complete NAT table to the new order — \(items.count) port forward\(items.count == 1 ? "" : "s"). Existing separators remain at their current positions."
         case .saveFilterSeparator(let separator, let displayName):
             let verb = separator.bool("create") == true ? "Add" : "Update"
             return "\(verb) separator “\(displayName)” on \(separator.string("interface") ?? "unknown interface"), after \(separator.int("position") ?? 0) rules."
@@ -459,6 +465,16 @@ final class WriteCoordinator {
                     throw WriteCoordinatorError.invalidOperation("the order contains a duplicate")
                 }
             }
+        case .reorderNatRules(let items, _):
+            guard !items.isEmpty else {
+                throw WriteCoordinatorError.invalidOperation("a non-empty NAT order is required")
+            }
+            let positions = Set(items.map(\.originalIndex))
+            guard positions.count == items.count,
+                  positions.allSatisfy({ $0 >= 0 }) else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "the NAT order contains a duplicate or invalid original position")
+            }
         }
     }
 
@@ -497,6 +513,9 @@ final class WriteCoordinator {
             return Receipt(status: result.string("status") ?? "ok", tracker: result.string("tracker"))
         case .reorderFilterRules(let interface, let items, _):
             let result = try await client.reorderFilterRules(interface: interface, items: items)
+            return Receipt(status: result.string("status") ?? "ok", tracker: nil)
+        case .reorderNatRules(let items, _):
+            let result = try await client.reorderNatRules(items: items)
             return Receipt(status: result.string("status") ?? "ok", tracker: nil)
         case .saveFilterSeparator(let separator, _):
             let result = try await client.saveFilterSeparator(separator: separator)
@@ -639,6 +658,24 @@ final class WriteCoordinator {
                     "the rules or separators on this interface changed since they were fetched")
             }
             return "order=" + currentTokens.joined(separator: ",")
+        case .reorderNatRules(let items, _):
+            // The original array index is safe only when it still identifies
+            // the same forward. Check every submitted item against a fresh
+            // read before the PHP snippet repeats the same validation against
+            // the configuration it is about to write.
+            let forwards = try await client.portForwards()
+            guard forwards.count == items.count,
+                  items.allSatisfy({ item in
+                      forwards.indices.contains(item.originalIndex)
+                          && item.matches(forwards[item.originalIndex], at: item.originalIndex)
+                  }) else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "the NAT rules changed since they were fetched")
+            }
+            return "order=" + forwards.enumerated().map {
+                FirewallClient.NatReorderItem(originalIndex: $0.offset, forward: $0.element)
+                    .identityToken
+            }.joined(separator: ",")
         }
     }
 
@@ -702,6 +739,21 @@ final class WriteCoordinator {
                 detail: matches
                     ? "The interface now reads back in the requested order."
                     : "The interface's order after saving does not match what was requested.",
+                snapshot: "order=" + actualTokens.joined(separator: ",")
+            )
+        case .reorderNatRules(let items, _):
+            let forwards = try await client.portForwards()
+            let actualTokens = forwards.enumerated().map {
+                FirewallClient.NatReorderItem(originalIndex: $0.offset, forward: $0.element)
+                    .identityToken
+            }
+            let requestedTokens = items.map(\.identityToken)
+            let matches = actualTokens == requestedTokens
+            return Verification(
+                state: matches ? .verified : .mismatch,
+                detail: matches
+                    ? "The NAT table now reads back in the requested order."
+                    : "The NAT order after saving does not match what was requested.",
                 snapshot: "order=" + actualTokens.joined(separator: ",")
             )
         case .saveRule(let expected, _):

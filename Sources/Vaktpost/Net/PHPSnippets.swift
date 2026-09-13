@@ -63,15 +63,9 @@ struct PHPSnippet: Sendable {
         "restart_service",      // restarts one named service
         "flush_states",         // drops the state table, or one interface's
         "reorder_filter_rules", // reorders one interface's rules and separators
+        "reorder_nat_rules",    // reorders the complete flat NAT rule table
         "save_filter_separator",// creates or edits one filter separator
         "delete_filter_separator" // removes one filter separator
-        // A NAT equivalent was written and removed before it was wired to
-        // anything. pfSense assigns no tracker to a NAT rule at all — neither
-        // `firewall_nat.php` nor `firewall_nat_edit.php` reference one — so a
-        // tracker-keyed reorder would have silently excluded, and therefore
-        // deleted, every real, GUI-created port forward on save. NAT needs a
-        // different identity scheme before this is safe to build; see the
-        // changelog for what that would take.
     ]
 
     // Earlier operations were not on this list when it was first written,
@@ -3573,6 +3567,143 @@ struct PHPSnippet: Sendable {
         """)
     }
 
+    static func reorderNatRules(items: [JSONValue]) -> PHPSnippet {
+        let encoded = payload(JSONDict(["items": .array(items)]))
+        return PHPSnippet("reorder_nat_rules", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        global $config;
+        $toreturn = [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+
+        $vaktpost_items = $vaktpost_input["items"] ?? [];
+        $vaktpost_nat = is_array($config["nat"] ?? null) ? $config["nat"] : [];
+        $vaktpost_rules = is_array($vaktpost_nat["rule"] ?? null)
+          ? array_values($vaktpost_nat["rule"]) : [];
+
+        if (!is_array($vaktpost_items) || empty($vaktpost_items)) {
+          $toreturn["status"] = "invalid";
+          $toreturn["error"] = "A non-empty NAT order is required.";
+        } elseif (count($vaktpost_items) !== count($vaktpost_rules)) {
+          $toreturn["status"] = "mismatch";
+          $toreturn["error"] = "The NAT rules changed since this order was prepared.";
+        } else {
+          $vaktpost_seen = [];
+          $vaktpost_reordered = [];
+          $vaktpost_valid = true;
+          $vaktpost_error = "";
+
+          foreach ($vaktpost_items as $vaktpost_item) {
+            if (!is_array($vaktpost_item)
+                || !array_key_exists("original_index", $vaktpost_item)) {
+              $vaktpost_valid = false;
+              $vaktpost_error = "The submitted NAT order contains an invalid item.";
+              break;
+            }
+            $vaktpost_index = intval($vaktpost_item["original_index"]);
+            if ($vaktpost_index < 0 || $vaktpost_index >= count($vaktpost_rules)
+                || array_key_exists(strval($vaktpost_index), $vaktpost_seen)) {
+              $vaktpost_valid = false;
+              $vaktpost_error = "The submitted NAT order contains an invalid or duplicate position.";
+              break;
+            }
+
+            $vaktpost_rule = $vaktpost_rules[$vaktpost_index];
+            if (!is_array($vaktpost_rule)) {
+              $vaktpost_valid = false;
+              $vaktpost_error = "A NAT rule is not an object.";
+              break;
+            }
+
+            $vaktpost_iface = $vaktpost_rule["interface"] ?? "";
+            $vaktpost_iface = is_array($vaktpost_iface)
+              ? implode(",", $vaktpost_iface) : strval($vaktpost_iface);
+            $vaktpost_destination = $vaktpost_rule["destination"] ?? [];
+            $vaktpost_destination_kind = "any";
+            $vaktpost_destination_address = "any";
+            if (is_array($vaktpost_destination)) {
+              if (array_key_exists("network", $vaktpost_destination)) {
+                $vaktpost_destination_kind = "network";
+                $vaktpost_destination_address = strval($vaktpost_destination["network"]);
+              } elseif (array_key_exists("address", $vaktpost_destination)) {
+                $vaktpost_destination_address = strval($vaktpost_destination["address"]);
+                $vaktpost_destination_kind = in_array($vaktpost_destination_address, ["any", "ANY"], true)
+                  ? "any" : "address";
+              }
+            } elseif (strval($vaktpost_destination) !== "") {
+              $vaktpost_destination_address = strval($vaktpost_destination);
+              $vaktpost_destination_kind = in_array($vaktpost_destination_address, ["any", "ANY"], true)
+                ? "any" : "address";
+            }
+
+            $vaktpost_matches = strval($vaktpost_item["tracker"] ?? "")
+                === strval($vaktpost_rule["tracker"] ?? "")
+              && strval($vaktpost_item["interface"] ?? "") === $vaktpost_iface
+              && strval($vaktpost_item["destination_kind"] ?? "") === $vaktpost_destination_kind
+              && strval($vaktpost_item["destination_address"] ?? "") === $vaktpost_destination_address
+              && strval($vaktpost_item["destination_port"] ?? "")
+                === strval($vaktpost_rule["destination_port"] ?? "")
+              && strval($vaktpost_item["target"] ?? "")
+                === strval($vaktpost_rule["target"] ?? "")
+              && strval($vaktpost_item["local_port"] ?? "")
+                === strval($vaktpost_rule["local-port"] ?? ($vaktpost_rule["local_port"] ?? ""));
+            if (!$vaktpost_matches) {
+              $vaktpost_valid = false;
+              $vaktpost_error = "A NAT rule changed since this order was prepared.";
+              break;
+            }
+
+            $vaktpost_seen[strval($vaktpost_index)] = true;
+            $vaktpost_reordered[] = $vaktpost_rule;
+          }
+
+          if (!$vaktpost_valid || count($vaktpost_seen) !== count($vaktpost_rules)) {
+            $toreturn["status"] = "mismatch";
+            $toreturn["error"] = $vaktpost_error === ""
+              ? "The submitted NAT order is incomplete." : $vaktpost_error;
+          } else {
+            $config["nat"]["rule"] = array_values($vaktpost_reordered);
+            $vaktpost_audit_session_started = false;
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              $vaktpost_audit_session_started = session_start([
+                "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+              ]);
+            }
+            $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+            if ($vaktpost_authenticated_user !== "") {
+              $_SESSION["Username"] = $vaktpost_authenticated_user;
+              $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+              if (is_array($vaktpost_authcfg)) {
+                $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+                $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+                if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                  $_SESSION["authsource"] = "Local Database";
+                } else {
+                  $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                    . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+                }
+              }
+            }
+            write_config("Vaktpost: reordered NAT port forwards");
+            if ($vaktpost_audit_session_started) {
+              if (session_status() !== PHP_SESSION_ACTIVE) {
+                session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+              }
+              if (session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION = [];
+                session_destroy();
+              }
+            }
+            mark_subsystem_dirty("natconf");
+            $toreturn["status"] = "ok";
+            $toreturn["apply_pending"] = true;
+          }
+        }
+        """)
+    }
+
     static func deleteNatRule(tracker: String) -> PHPSnippet {
         let encoded = payload(JSONDict(["tracker": .string(tracker)]))
         return PHPSnippet("delete_nat_rule", """
@@ -4260,10 +4391,14 @@ struct PHPSnippet: Sendable {
         }
         $vaktpost_lport = trim(strval($vaktpost_input["local_port"] ?? ""));
         if ($vaktpost_lport !== "") {
-          $rule["local_port"] = $vaktpost_lport;
+          // `local-port` is pfSense's native Redirect target port key.
+          $rule["local-port"] = $vaktpost_lport;
         } else {
-          unset($rule["local_port"]);
+          unset($rule["local-port"]);
         }
+        // Affected Vaktpost builds wrote this non-native spelling. Remove it
+        // whenever the rule is saved so the native field above is canonical.
+        unset($rule["local_port"]);
 
         if ($found) {
           $rules[$vaktpost_index] = $rule;

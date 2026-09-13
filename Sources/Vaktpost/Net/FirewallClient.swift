@@ -575,6 +575,64 @@ actor FirewallClient {
         }
     }
 
+    /// One port forward in a drag-produced NAT order.
+    ///
+    /// pfSense does not assign trackers to WebUI-created NAT rules, so a NAT
+    /// reorder cannot safely use the filter-rule identity scheme above. The
+    /// original array position is paired with the fields that identify the
+    /// forward. The PHP write validates that pair against the current config
+    /// before moving the complete, untouched rule dictionary.
+    struct NatReorderItem: Sendable {
+        let originalIndex: Int
+        let tracker: String
+        let interfaceName: String
+        let destinationKind: String
+        let destinationAddress: String
+        let destinationPort: String
+        let target: String
+        let localPort: String
+
+        init(originalIndex: Int, forward: PortForward) {
+            self.originalIndex = originalIndex
+            tracker = forward.tracker
+            interfaceName = forward.interfaceName
+            destinationKind = forward.destinationSide.storageKind.rawValue
+            destinationAddress = forward.destinationSide.address
+            destinationPort = forward.destinationSide.port ?? ""
+            target = forward.target
+            localPort = forward.localPort ?? ""
+        }
+
+        var json: JSONValue {
+            .object([
+                "original_index": .number(Double(originalIndex)),
+                "tracker": .string(tracker),
+                "interface": .string(interfaceName),
+                "destination_kind": .string(destinationKind),
+                "destination_address": .string(destinationAddress),
+                "destination_port": .string(destinationPort),
+                "target": .string(target),
+                "local_port": .string(localPort)
+            ])
+        }
+
+        var identityToken: String {
+            [tracker, interfaceName, destinationKind, destinationAddress,
+             destinationPort, target, localPort].joined(separator: "\u{1f}")
+        }
+
+        func matches(_ forward: PortForward, at index: Int) -> Bool {
+            originalIndex == index
+                && tracker == forward.tracker
+                && interfaceName == forward.interfaceName
+                && destinationKind == forward.destinationSide.storageKind.rawValue
+                && destinationAddress == forward.destinationSide.address
+                && destinationPort == (forward.destinationSide.port ?? "")
+                && target == forward.target
+                && localPort == (forward.localPort ?? "")
+        }
+    }
+
     /// Reorders one interface's filter rules and separators, from a complete
     /// drag-produced arrangement.
     func reorderFilterRules(interface: String, items: [ReorderItem]) async throws -> JSONDict {
@@ -588,6 +646,17 @@ actor FirewallClient {
         let snippet = PHPSnippet.reorderFilterRules(interface: interface, items: items.map(\.json))
         let dict = try await rpc.runObjectOnce(snippet)
         return try Self.validatedPendingWriteResponse(dict, operation: "Rule reorder")
+    }
+
+    /// Reorders the complete flat NAT rule table.
+    func reorderNatRules(items: [NatReorderItem]) async throws -> JSONDict {
+        try requireAdministration()
+        guard !items.isEmpty else {
+            throw RPCError.malformed("Reordering port forwards requires a non-empty order.")
+        }
+        let snippet = PHPSnippet.reorderNatRules(items: items.map(\.json))
+        let dict = try await rpc.runObjectOnce(snippet)
+        return try Self.validatedPendingWriteResponse(dict, operation: "Port-forward reorder")
     }
 
 
