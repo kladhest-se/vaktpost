@@ -1,5 +1,20 @@
 # Changelog
 
+## Rule simulation now proves its log is usable
+
+- Opening simulation still fetches the filter log first, but it now checks the
+  section's success timestamp and error instead of assuming the retained array
+  came from that request.
+- A recent last-good sample remains usable after a brief fetch failure only
+  with a prominent cached-data warning, its fetch time, the failure detail and
+  a retry action.
+- A normal sample older than two refresh intervals, a failed cached sample older
+  than ten intervals (at least five minutes), or a log that has never loaded
+  successfully produces no result. This keeps old or absent data from looking
+  like zero matching traffic.
+- The freshness policy is deterministic and covered for fresh, cached, stale
+  and unavailable samples.
+
 ## Creation is now a complete administrative transaction
 
 - Rule and port-forward creation now keep their server-issued tracker from the

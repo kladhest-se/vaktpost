@@ -157,4 +157,69 @@ final class RuleSimulationTests: XCTestCase {
         XCTAssertEqual(result.sources.first, "10.0.0.5")
         XCTAssertEqual(result.sources.count, 2)
     }
+
+    // MARK: Sample freshness
+
+    func testRecentSuccessfulSampleCanBeSimulated() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let fetchedAt = now.addingTimeInterval(-30)
+        var freshness = SectionFreshness()
+        freshness.lastSuccess = fetchedAt
+
+        let status = RuleSimulation.sampleStatus(
+            freshness: freshness, error: nil, now: now, refreshInterval: 30
+        )
+        XCTAssertEqual(status, .fresh(fetchedAt: fetchedAt))
+        XCTAssertTrue(status.allowsSimulation)
+    }
+
+    func testRecentCachedSampleIsExplicitlyLabelledAfterFailure() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let fetchedAt = now.addingTimeInterval(-90)
+        var freshness = SectionFreshness()
+        freshness.lastSuccess = fetchedAt
+        freshness.failure = "offline"
+
+        let status = RuleSimulation.sampleStatus(
+            freshness: freshness, error: "offline", now: now, refreshInterval: 30
+        )
+        XCTAssertEqual(status, .cached(fetchedAt: fetchedAt, error: "offline"))
+        XCTAssertTrue(status.allowsSimulation)
+    }
+
+    func testOldCachedSampleCannotProduceAResult() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let fetchedAt = now.addingTimeInterval(-301)
+        var freshness = SectionFreshness()
+        freshness.lastSuccess = fetchedAt
+        freshness.failure = "offline"
+
+        let status = RuleSimulation.sampleStatus(
+            freshness: freshness, error: "offline", now: now, refreshInterval: 30
+        )
+        XCTAssertEqual(status, .stale(fetchedAt: fetchedAt, error: "offline"))
+        XCTAssertFalse(status.allowsSimulation)
+    }
+
+    func testNeverFetchedSampleIsUnavailable() {
+        let status = RuleSimulation.sampleStatus(
+            freshness: SectionFreshness(), error: "permission denied",
+            now: Date(timeIntervalSince1970: 2_000), refreshInterval: 30
+        )
+        XCTAssertEqual(status, .unavailable(error: "permission denied"))
+        XCTAssertFalse(status.allowsSimulation)
+    }
+
+    func testOldSuccessfulSampleIsStaleEvenWithoutAnError() {
+        let now = Date(timeIntervalSince1970: 2_000)
+        let fetchedAt = now.addingTimeInterval(-61)
+        var freshness = SectionFreshness()
+        freshness.lastSuccess = fetchedAt
+
+        let status = RuleSimulation.sampleStatus(
+            freshness: freshness, error: nil, now: now, refreshInterval: 30
+        )
+        XCTAssertEqual(status, .stale(fetchedAt: fetchedAt, error: nil))
+        XCTAssertFalse(status.allowsSimulation)
+    }
 }

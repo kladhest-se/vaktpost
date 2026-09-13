@@ -446,8 +446,11 @@ final class WriteCoordinator {
                                     detail: "The \(isCreate ? "new" : "edited") rule was not found during read-back.", snapshot: nil)
             }
             let matches = Self.rule(actual, matches: expected)
+            let detail = matches
+                ? "The \(isCreate ? "new" : "edited") rule matches the requested values."
+                : "The rule returned different values after saving."
             return Verification(state: matches ? .verified : .mismatch,
-                                detail: matches ? "The \(isCreate ? "new" : "edited") rule matches the requested values." : "The rule returned different values after saving.",
+                                detail: detail,
                                 snapshot: Self.ruleSnapshot(actual))
         case .deleteNatRule(let tracker, _):
             let exists = try await client.portForwards().contains { $0.tracker == tracker }
@@ -462,8 +465,11 @@ final class WriteCoordinator {
                                     detail: "The \(isCreate ? "new" : "edited") port forward was not found during read-back.", snapshot: nil)
             }
             let matches = Self.nat(actual, matches: expected)
+            let detail = matches
+                ? "The \(isCreate ? "new" : "edited") port forward matches the requested values."
+                : "The port forward returned different values after saving."
             return Verification(state: matches ? .verified : .mismatch,
-                                detail: matches ? "The \(isCreate ? "new" : "edited") port forward matches the requested values." : "The port forward returned different values after saving.",
+                                detail: detail,
                                 snapshot: Self.natSnapshot(actual))
         }
     }

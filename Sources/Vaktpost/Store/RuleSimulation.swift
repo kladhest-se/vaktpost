@@ -25,6 +25,26 @@ import Foundation
 /// of log lines, and the screen says so.
 enum RuleSimulation {
 
+    /// Whether a filter-log sample is trustworthy enough to evaluate.
+    ///
+    /// A failed refresh does not erase the store's last good log. That is useful
+    /// for browsing, but dangerous here: silently evaluating the retained array
+    /// makes old data look current. A recent retained sample is allowed only as
+    /// explicitly labelled cached data; an old one produces no result.
+    enum SampleStatus: Equatable {
+        case fresh(fetchedAt: Date)
+        case cached(fetchedAt: Date, error: String)
+        case stale(fetchedAt: Date, error: String?)
+        case unavailable(error: String?)
+
+        var allowsSimulation: Bool {
+            switch self {
+            case .fresh, .cached: return true
+            case .stale, .unavailable: return false
+            }
+        }
+    }
+
     struct Result {
         /// Log lines this rule would have matched.
         let matched: Int
@@ -48,6 +68,33 @@ enum RuleSimulation {
 
         /// Traffic this rule would newly allow that is being blocked today.
         var wouldNewlyPass: Int { blockedAtTheTime }
+    }
+
+    /// Classifies the log independently from the view so the freshness policy
+    /// can be exercised with fixed clocks in tests.
+    static func sampleStatus(freshness: SectionFreshness?,
+                             error: String?,
+                             now: Date,
+                             refreshInterval: TimeInterval) -> SampleStatus {
+        let failure = error ?? freshness?.failure
+        guard let fetchedAt = freshness?.lastSuccess else {
+            return .unavailable(error: failure)
+        }
+
+        let age = max(0, now.timeIntervalSince(fetchedAt))
+        let freshLimit = max(60, refreshInterval * 2)
+        if let failure {
+            // A brief outage should not throw away a sample fetched moments
+            // ago, but ten refresh intervals is the hard ceiling for presenting
+            // historical traffic as relevant to a pending firewall change.
+            let cachedLimit = max(300, refreshInterval * 10)
+            return age <= cachedLimit
+                ? .cached(fetchedAt: fetchedAt, error: failure)
+                : .stale(fetchedAt: fetchedAt, error: failure)
+        }
+        return age <= freshLimit
+            ? .fresh(fetchedAt: fetchedAt)
+            : .stale(fetchedAt: fetchedAt, error: nil)
     }
 
     /// Evaluate a rule against a window of filter log lines.

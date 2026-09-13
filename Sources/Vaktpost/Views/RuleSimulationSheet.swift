@@ -18,6 +18,7 @@ struct RuleSimulationSheet: View {
     let rule: FirewallRule
 
     @State private var result: RuleSimulation.Result?
+    @State private var sampleStatus: RuleSimulation.SampleStatus?
     @State private var isLoading = true
 
     var body: some View {
@@ -32,11 +33,14 @@ struct RuleSimulationSheet: View {
                                 .foregroundStyle(theme.labelFaint)
                         }
                         .frame(maxWidth: .infinity, minHeight: 120)
-                    } else if let result {
-                        headline(result)
-                        consequence(result)
-                        sources(result)
-                        caveats(result)
+                    } else if let sampleStatus {
+                        sampleStatusCard(sampleStatus)
+                        if let result {
+                            headline(result)
+                            consequence(result)
+                            sources(result)
+                            caveats(result)
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -50,17 +54,91 @@ struct RuleSimulationSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .task {
-                // Fetched here rather than assumed: the filter log is loaded
-                // when the Logs tab is opened, and somebody arriving from a
-                // rule may never have been there. An empty log would otherwise
-                // read as "no matching traffic", which is the one wrong answer
-                // this screen must not give.
-                await store.fetch(.firewallLog)
-                result = RuleSimulation.run(rule, against: store.firewallLog)
-                isLoading = false
-            }
+            .task { await loadSample() }
         }
+    }
+
+    /// Fetch before evaluating, then classify what is actually available.
+    /// `DashboardStore` deliberately retains the last successful value after a
+    /// failed fetch, so checking only the array would make cached data look new.
+    private func loadSample() async {
+        isLoading = true
+        result = nil
+        sampleStatus = nil
+
+        await store.fetch(.firewallLog)
+        let status = RuleSimulation.sampleStatus(
+            freshness: store.freshness[.firewallLog],
+            error: store.errors[.firewallLog],
+            now: Date(),
+            refreshInterval: TimeInterval(store.profile.refreshSeconds)
+        )
+        sampleStatus = status
+        if status.allowsSimulation {
+            result = RuleSimulation.run(rule, against: store.firewallLog)
+        }
+        isLoading = false
+    }
+
+    @ViewBuilder
+    private func sampleStatusCard(_ status: RuleSimulation.SampleStatus) -> some View {
+        switch status {
+        case .fresh(let fetchedAt):
+            Slab(rail: .idle, title: "Log sample") {
+                Text("Fetched from this firewall at \(formatted(fetchedAt)).")
+                    .scaledFont(12)
+                    .foregroundStyle(theme.labelMuted)
+            }
+        case .cached(let fetchedAt, let error):
+            Slab(rail: .warn, title: "Using cached log") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("The latest fetch failed. These results use the last successful sample "
+                         + "from \(formatted(fetchedAt)).")
+                    Text(error)
+                        .foregroundStyle(theme.labelFaint)
+                    retryButton
+                }
+                .scaledFont(12)
+                .foregroundStyle(theme.labelMuted)
+            }
+        case .stale(let fetchedAt, let error):
+            unavailableCard(
+                title: "Log sample is too old",
+                detail: "Vaktpost will not simulate a pending rule against data last fetched "
+                    + "at \(formatted(fetchedAt)).",
+                error: error
+            )
+        case .unavailable(let error):
+            unavailableCard(
+                title: "Filter log unavailable",
+                detail: "No successfully fetched filter log is available, so there is no safe simulation result.",
+                error: error
+            )
+        }
+    }
+
+    private func unavailableCard(title: String, detail: String, error: String?) -> some View {
+        Slab(rail: .warn, title: title) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(detail)
+                if let error, !error.isEmpty {
+                    Text(error).foregroundStyle(theme.labelFaint)
+                }
+                retryButton
+            }
+            .scaledFont(12)
+            .foregroundStyle(theme.labelMuted)
+        }
+    }
+
+    private var retryButton: some View {
+        Button("Try again") { Task { await loadSample() } }
+            .buttonStyle(.bordered)
+            .disabled(isLoading)
+    }
+
+    private func formatted(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func headline(_ result: RuleSimulation.Result) -> some View {
