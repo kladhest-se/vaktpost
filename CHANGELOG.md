@@ -1,5 +1,41 @@
 # Changelog
 
+## Experiment: removed reorderFilterRules's require_once statements
+
+Not a confirmed fix — an experiment, run because the array-interface theory
+in the previous entry turned out to be wrong. The rule the reorder kept
+failing against, checked against the actual config.xml, has a completely
+ordinary `<interface>opt5</interface>` — a plain value, not an array. That
+diagnosis didn't hold up, even though the fix itself remains a valid,
+separate improvement.
+
+What's actually being tried now: `reorderFilterRules` requires
+`/etc/inc/util.inc` and `/etc/inc/filter.inc`, identically to `saveRule` and
+`deleteRule`. The read-only `firewallRules` snippet requires neither and has
+never shown a rule reported as missing when it plainly still exists — and
+the earlier, never-resolved "the rule tracker no longer exists" failure
+editing a different rule was `saveRule`, which shares these same two
+requires. That pattern doesn't prove the requires are the cause; direct
+inspection of both files found no code that touches `$config` at the top
+level at all. But the two pfSense functions this snippet actually calls,
+`write_config()` and `write_filter()`, are defined in neither file, and
+pfSense's own config bootstrap runs before any snippet executes regardless
+of what that snippet itself requires — so there's a real chance these lines
+were never necessary here in the first place.
+
+Removed, and clearly labelled in the snippet itself as an experiment rather
+than a diagnosis. If they were genuinely unneeded, this changes nothing
+about correctness. If something did depend on them, the failure mode is an
+immediate, unambiguous fatal error — not another silent, well-formed
+mismatch — which would itself be informative.
+
+Worth being direct about the limits of what's verified here: the local test
+harness strips every `require_once` line and substitutes its own stub
+`write_config()`/`write_filter()` for every snippet, unconditionally — so
+this exact scenario has been running in every test from the start, and
+passing tests here confirms nothing new about real pfSense's behaviour. The
+only way to actually learn something is trying it against the real firewall.
+
 ## Found it: pfSense stores some rules' interface as an array, not a string
 
 The error read: currently on opt5, nothing. That single line settled it. The

@@ -2990,8 +2990,20 @@ struct PHPSnippet: Sendable {
         ]))
         return PHPSnippet("reorder_filter_rules", """
         ini_set('display_errors', 0);
-        require_once '/etc/inc/util.inc';
-        require_once '/etc/inc/filter.inc';
+        // Experiment, not a confirmed fix: `saveRule`, `deleteRule`, and this
+        // snippet all require the identical two files and all read
+        // `$config["filter"]["rule"]` the identical way; the read-only
+        // `firewallRules` snippet requires neither and has never shown a
+        // rule reported as missing when it plainly still exists. That
+        // pattern doesn't prove these requires are the cause — direct
+        // inspection of both files found no top-level code that touches
+        // `$config` at all — but the two functions this snippet actually
+        // calls, `write_config()` and `write_filter()`, are defined in
+        // neither file either, and pfSense's own config bootstrap runs
+        // before any snippet executes regardless of what it requires. If
+        // they are genuinely unnecessary here, removing them is safe; if
+        // they are not, the failure mode is an immediate, unambiguous fatal
+        // error rather than another silent mismatch — informative either way.
         $toreturn = [];
         $vaktpost_payload = "\(encoded)";
         \(decodePayload)
