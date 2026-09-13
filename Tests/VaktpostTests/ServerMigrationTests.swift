@@ -64,7 +64,7 @@ final class ServerMigrationTests: XCTestCase {
         defaults.set(profileData, forKey: legacyProfileKey)
 
         // Store a legacy keychain item under the "default" account used by old versions.
-        guard let data = "legacy-key-123".data(using: .utf8) else { return }
+        let data = Data("legacy-key-123".utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

@@ -73,8 +73,8 @@ final class FleetStore: Observable {
                        let oldTotal = previous?.reading?.cpuTicksTotal,
                        let oldIdle = previous?.reading?.cpuTicksIdle,
                        total > oldTotal, idle >= oldIdle {
-                        reading.cpuUsage = min(100, max(0,
-                            100 * (1 - Double(idle - oldIdle) / Double(total - oldTotal))))
+                        let cpuPct = 100 * (1 - Double(idle - oldIdle) / Double(total - oldTotal))
+                        reading.cpuUsage = min(100, max(0, cpuPct))
                     }
                     self.snapshots[profile.id]?.reading = reading
                     self.snapshots[profile.id]?.lastSuccess = self.now()

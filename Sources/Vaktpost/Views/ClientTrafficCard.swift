@@ -71,8 +71,8 @@ struct ClientTrafficCard: View {
         // records say. A device that has moved between VLANs has more than one
         // answer here and the most recently observed one is the client's.
         if let name = client.interfaceName, !name.isEmpty { return name }
-        return store.arp.first(where: { $0.mac == client.mac })?.interfaceName
-            ?? store.leases.first(where: { $0.mac == client.mac })?.interfaceName
+        return store.arp.first { $0.mac == client.mac }?.interfaceName
+            ?? store.leases.first { $0.mac == client.mac }?.interfaceName
     }
 
     private var slot: Int? { store.interfaceSlot(for: hint) }
@@ -133,7 +133,7 @@ struct ClientTrafficCard: View {
 
         case .live:
             if points.count > 1 {
-                LiveThroughputChart(points: points)
+                LiveThroughputChart(points: points, unit: .bits)
                     .frame(height: 90)
             } else {
                 HStack(spacing: 8) {
@@ -146,7 +146,8 @@ struct ClientTrafficCard: View {
             }
 
         case .unknownInterface:
-            Text("Which interface this device is on is not recorded in the ARP table, its lease, or the client list, and traffic can only be measured one interface at a time. Open Host traffic and pick the interface yourself.")
+            Text("Which interface this device is on is not recorded in the ARP table, its lease, or the client list, "
+                + "and traffic can only be measured one interface at a time. Open Host traffic and pick the interface yourself.")
                 .scaledFont(12)
                 .foregroundStyle(theme.labelMuted)
 
@@ -167,13 +168,15 @@ struct ClientTrafficCard: View {
         switch status {
         case .live:
             if isPresent {
-                Text("Measured on \(interfaceName), sorted by \(sort.displayName.lowercased()). Refreshed every \(Int(period)) seconds, each one a one-second capture.")
+                Text("Measured on \(interfaceName), sorted by \(sort.displayName.lowercased()). "
+                    + "Refreshed every \(Int(period)) seconds, each one a one-second capture.")
                     .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
             } else {
                 // The one place a plotted zero needs a sentence. pfSense
                 // returns ten addresses, so absence is not proof of silence.
-                Text("Not among the ten busiest addresses on \(interfaceName) in the last capture, so this reads zero. That is usually idleness, but a quiet device behind ten busy ones looks the same from here.")
+                Text("Not among the ten busiest addresses on \(interfaceName) in the last capture, so this reads zero. "
+                    + "That is usually idleness, but a quiet device behind ten busy ones looks the same from here.")
                     .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
             }
@@ -237,9 +240,8 @@ struct ClientTrafficCard: View {
                         result.hosts,
                         serverID: store.profile.id.uuidString,
                         interface: result.interface,
-                        interfaceName: selected.name,
-                        names: { store.nameForAddress($0) }
-                    )
+                        interfaceName: selected.name
+                    ) { store.nameForAddress($0) }
                 }
             } catch {
                 if error is CancellationError || (error as? RPCError) == .cancelled { return }

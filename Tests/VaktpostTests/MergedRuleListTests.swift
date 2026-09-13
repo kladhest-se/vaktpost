@@ -88,7 +88,7 @@ final class MergedRuleListTests: XCTestCase {
                                    separators: [separator("sep0", position: 1),
                                                 separator("sep1", position: 1)])
         XCTAssertEqual(Set(items.prefix(3).map(\.id)),
-                      Set(["rule:a", "separator:sep0", "separator:sep1"]))
+                       Set(["rule:a", "separator:sep0", "separator:sep1"]))
         XCTAssertEqual(items.last?.id, "rule:b")
     }
 

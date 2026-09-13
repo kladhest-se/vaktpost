@@ -115,7 +115,7 @@ struct ClientsView: View {
 
     private var listColumn: some View {
         ScrollView {
-            PageHeader(title: "Clients", subtitle: store.overviewLayout.clients.count > 0 ? "\(store.overviewLayout.clients.count) devices" : nil)
+            PageHeader(title: "Clients", subtitle: !store.overviewLayout.clients.isEmpty ? "\(store.overviewLayout.clients.count) devices" : nil)
             paneSwitcher
             VStack(spacing: 0) {
                 FreshnessView(sections: [.leases, .arp, .statics, .hostOverrides, .aliases], showNames: true)
@@ -308,7 +308,8 @@ struct ClientDetailView: View {
                         ForEach(investigation.addresses, id: \.self) { ip in
                             FieldRow(key: LocalDevice.isThisDevice(ip) ? "This device" : "Address", value: ip)
                         }
-                        Text("Addresses come from the fetched ARP, DHCP and static mapping tables. Lease history may include addresses that have since been reassigned.")
+                        Text("Addresses come from the fetched ARP, DHCP and static mapping tables. "
+                            + "Lease history may include addresses that have since been reassigned.")
                             .scaledFont(12).foregroundStyle(theme.labelMuted)
                     }.textSelection(.enabled)
                 }
@@ -345,7 +346,9 @@ struct ClientDetailView: View {
                 records
                 GroupHeading(text: "Matching firewall log")
                 FreshnessView(sections: [.firewallLog], showNames: true)
-                Text("\(relatedLog.count) matching entries in \(store.firewallLog.count) fetched. These match address endpoints; they do not prove which device held an address at the time. Increase the log limit in Settings to look further back.")
+                Text("\(relatedLog.count) matching entries in \(store.firewallLog.count) fetched. "
+                    + "These match address endpoints; they do not prove which device held an address at the time. "
+                    + "Increase the log limit in Settings to look further back.")
                     .scaledFont(12).foregroundStyle(theme.labelMuted)
                 Picker("Log action", selection: $action) {
                     ForEach(["All", "Allowed", "Blocked"], id: \.self) { Text($0).tag($0) }

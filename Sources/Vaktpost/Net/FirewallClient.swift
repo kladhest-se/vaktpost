@@ -713,7 +713,7 @@ actor FirewallClient {
             switch kind {
             case .rule:
                 return "rule:" + [tracker, interfaceName, destinationKind, destinationAddress,
-                                   destinationPort, target, localPort].joined(separator: "\u{1f}")
+                                  destinationPort, target, localPort].joined(separator: "\u{1f}")
             case .separator:
                 return "separator:\(separatorKey)"
             }
@@ -757,7 +757,6 @@ actor FirewallClient {
         let dict = try await rpc.runObjectOnce(snippet)
         return try Self.validatedPendingWriteResponse(dict, operation: "Port-forward reorder")
     }
-
 
     // MARK: - Staged operations
 

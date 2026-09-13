@@ -34,13 +34,11 @@ struct Retrier {
 
         for attempt in 1...maxAttempts {
             do {
-                let result = try await operation()
-                return result
+                return try await operation()
             } catch {
                 lastError = error
 
-                let rpcError = error as? RPCError
-                guard rpcError?.isRetryable == true else {
+                guard (error as? RPCError)?.isRetryable == true else {
                     throw error
                 }
 

@@ -74,11 +74,11 @@ struct FilterAddress {
     /// holds, and an alias is a list you have to look up. Four rules that look
     /// alike in a list are doing very different things.
     enum Kind: String {
-        case any = "any"
-        case network = "network"
-        case host = "host"
-        case interface = "interface"
-        case alias = "alias"
+        case any
+        case network
+        case host
+        case interface
+        case alias
     }
 
     /// Worked out from the address, since pfSense does not label it.

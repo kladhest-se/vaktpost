@@ -150,11 +150,15 @@ struct TopTalkersView: View {
             // The honest limit, stated on the screen rather than only in the
             // source. Somebody who reads this list as a complete history of
             // their network would be wrong in a way that matters.
-            Text("This records what the traffic screens saw while they were open. iOS does not let an app poll a firewall in the background, so the gaps are hours nothing was watching rather than hours nothing happened.")
+            Text("This records what the traffic screens saw while they were open. iOS does not let an app poll a firewall in the background, "
+                + "so the gaps are hours nothing was watching rather than hours nothing happened.")
 
-            Text("For unattended history, pfSense's own Status > Monitoring keeps interface totals going back years, and a package such as ntopng keeps per-host. This is not a substitute for either — it is for looking back over the hour you just spent watching.")
+            Text("For unattended history, pfSense's own Status > Monitoring keeps interface totals going back years, "
+                + "and a package such as ntopng keeps per-host. "
+                + "This is not a substitute for either — it is for looking back over the hour you just spent watching.")
 
-            Text("Rates are what each address was doing at the moment of a capture. They are not totals transferred, and multiplying them out would give a number this app cannot support.")
+            Text("Rates are what each address was doing at the moment of a capture. "
+                + "They are not totals transferred, and multiplying them out would give a number this app cannot support.")
 
             Text("Kept for 7 days, at most \(TopTalkerRecorder.talkersPerHour) addresses an hour.")
         }

@@ -80,7 +80,8 @@ struct AuditTrailView: View {
                 Text("\(store.auditTrail.entries.count) protected operation record\(store.auditTrail.entries.count == 1 ? "" : "s")")
                     .scaledFont(14, weight: .semibold)
                     .foregroundStyle(theme.label)
-                Text("A pending record is encrypted before a change is sent. Completion records whether the intended state was verified, differed, or could not be determined.")
+                Text("A pending record is encrypted before a change is sent. "
+                    + "Completion records whether the intended state was verified, differed, or could not be determined.")
                     .scaledFont(12)
                     .foregroundStyle(theme.labelMuted)
                     .fixedSize(horizontal: false, vertical: true)

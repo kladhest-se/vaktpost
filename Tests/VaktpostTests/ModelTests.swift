@@ -323,7 +323,8 @@ final class FilterLogFieldTests: XCTestCase {
 
     func testATCPPassParsesEveryField() throws {
         let f = try XCTUnwrap(line(
-            "Sep  7 13:28:22 fw filterlog[48170]: 0,321,,1788391996,tun_wg0,match,pass,in,4,0x0,,64,0,0,DF,6,tcp,64,10.253.21.10,192.168.200.1,50181,443,0,SEC,2244295301,,65535,,mss;nop"
+            "Sep  7 13:28:22 fw filterlog[48170]: 0,321,,1788391996,tun_wg0,match,pass,in,4,0x0,,64,0,0,DF,6,tcp,64,"
+                + "10.253.21.10,192.168.200.1,50181,443,0,SEC,2244295301,,65535,,mss;nop"
         ).filterFields)
         XCTAssertEqual(f.action, "pass")
         XCTAssertEqual(f.direction, "in")
@@ -341,7 +342,8 @@ final class FilterLogFieldTests: XCTestCase {
 
     func testAUDPBlockParses() throws {
         let f = try XCTUnwrap(line(
-            "Sep  7 13:41:16 fw filterlog[48170]: 4294967295,,,0,tun_wg0,match,block,in,4,0x0,,64,42252,1400,none,17,udp,80,10.253.21.10,203.0.113.9,51820,51820"
+            "Sep  7 13:41:16 fw filterlog[48170]: 4294967295,,,0,tun_wg0,match,block,in,4,0x0,,64,42252,1400,none,17,udp,80,"
+                + "10.253.21.10,203.0.113.9,51820,51820"
         ).filterFields)
         XCTAssertEqual(f.action, "block")
         XCTAssertEqual(f.proto, "udp")

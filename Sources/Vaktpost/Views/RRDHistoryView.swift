@@ -18,16 +18,14 @@ struct RRDHistoryView: View {
     private var interfaceNames: [(label: String, file: String)] {
         var seen = Set<String>()
         var result: [(label: String, file: String)] = []
-        for series in interfaces {
-            if seen.insert(series.file).inserted {
-                let label = store.interfaceLabel(for: series.file) ?? series.file
-                result.append((label, series.file))
-            }
+        for series in interfaces where seen.insert(series.file).inserted {
+            let label = store.interfaceLabel(for: series.file) ?? series.file
+            result.append((label, series.file))
         }
         return result
     }
 
-    @State private var selectedFile: String? = nil
+    @State private var selectedFile: String?
     @State private var loadTask: Task<Void, Never>?
 
     var body: some View {

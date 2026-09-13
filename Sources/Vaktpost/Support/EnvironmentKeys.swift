@@ -1,10 +1,10 @@
 import SwiftUI
 import Foundation
 
-/// Custom environment keys for @Observable stores.
-///
-/// Replaces .environmentObject() with .environment() so that @Observable
-/// (not just ObservableObject) types can be injected into the view hierarchy.
+// Custom environment keys for @Observable stores.
+//
+// Replaces .environmentObject() with .environment() so that @Observable
+// (not just ObservableObject) types can be injected into the view hierarchy.
 
 // MARK: - Environment key wrappers
 

@@ -26,8 +26,12 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     var username: String = ""
     var refreshSeconds: Int = 30
     var logLimit: Int = 100
-    /// Nil is the migration-safe form of `false`: profiles saved by older
-    /// builds do not contain this key and must remain monitor-only.
+    // Nil is the migration-safe form of `false`: profiles saved by older
+    // builds do not contain this key and must remain monitor-only. The
+    // explicit `= nil` below is load-bearing — the admin-mode test gate
+    // greps for exactly this text as its guarantee that new and migrated
+    // profiles default to monitor-only. Do not let a lint pass remove it.
+    // swiftlint:disable:next implicit_optional_initialization
     var administrationEnabled: Bool? = nil
     var overviewVisibleSections: [String] = ["status", "interfaces", "system", "gateways", "services", "firewall"]
     var collapsedSections: [String] = []

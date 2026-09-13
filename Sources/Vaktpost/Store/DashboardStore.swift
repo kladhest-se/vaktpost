@@ -238,7 +238,6 @@ final class DashboardStore: Observable {
     var dhcpLog: [LogLine] = []
     var openvpnLog: [LogLine] = []
 
-
     var openvpnServers: [OpenVPNServerStatus] = []
     var openvpnClients: [OpenVPNServerStatus] = []
     var ipsecSAs: [IPsecSA] = []
@@ -449,11 +448,10 @@ final class DashboardStore: Observable {
             client: client,
             auditTrail: auditTrail,
             rateLimiter: rateLimiter,
-            analytics: analytics,
-            isBindingCurrent: {
-                generation.id == binding && registry.active?.id == profile.id
-            }
-        )
+            analytics: analytics
+        ) {
+            generation.id == binding && registry.active?.id == profile.id
+        }
         auditTrail.bind(to: registry.active?.id)
     }
 
@@ -508,11 +506,10 @@ final class DashboardStore: Observable {
             client: reboundClient,
             auditTrail: auditTrail,
             rateLimiter: rateLimiter,
-            analytics: analytics,
-            isBindingCurrent: { [weak registry] in
-                currentGeneration.id == binding && registry?.active?.id == profile.id
-            }
-        )
+            analytics: analytics
+        ) { [weak registry] in
+            currentGeneration.id == binding && registry?.active?.id == profile.id
+        }
         auditTrail.bind(to: registry.active?.id)
         clearData()
         throughput.reset()
@@ -1017,7 +1014,7 @@ final class DashboardStore: Observable {
         isLoadingTables = true
         defer { if bindingID == binding { isLoadingTables = false } }
         do {
-            let fetched = try await checked(binding, sections: [.tables], { try await client.pfTables() })
+            let fetched = try await checked(binding, sections: [.tables]) { try await client.pfTables() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             if let fetched {
                 tables = fetched
@@ -1272,7 +1269,7 @@ final class DashboardStore: Observable {
         guard isConfigured, !hasLoadedHAProxy else { return }
         hasLoadedHAProxy = true
         do {
-            let result = try await checked(binding, sections: [.haproxy], { try await client.haproxy() })
+            let result = try await checked(binding, sections: [.haproxy]) { try await client.haproxy() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             if let result {
                 haproxyInstalled = true
@@ -1297,7 +1294,7 @@ final class DashboardStore: Observable {
         guard isConfigured, !hasLoadedPFBlocker else { return }
         hasLoadedPFBlocker = true
         do {
-            let result = try await checked(binding, sections: [.pfblocker], { try await client.pfBlocker() })
+            let result = try await checked(binding, sections: [.pfblocker]) { try await client.pfBlocker() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             pfBlockerInstalled = result != nil
             pfBlocker = result
@@ -1326,7 +1323,7 @@ final class DashboardStore: Observable {
 
         hasLoadedDNSBL = true
         do {
-            let result = try await checked(binding, sections: [.dnsbl], { try await client.dnsblStats() })
+            let result = try await checked(binding, sections: [.dnsbl]) { try await client.dnsblStats() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             dnsblStats = result
             errors[.dnsbl] = nil
@@ -1343,7 +1340,7 @@ final class DashboardStore: Observable {
         guard isConfigured, !hasLoadedACME else { return }
         hasLoadedACME = true
         do {
-            let result = try await checked(binding, sections: [.acme], { try await client.acme() })
+            let result = try await checked(binding, sections: [.acme]) { try await client.acme() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             if let result {
                 acmeInstalled = true
@@ -1529,7 +1526,7 @@ final class DashboardStore: Observable {
     private(set) var lastPackageCheck: Date? {
         didSet {
             defaults.set(lastPackageCheck?.timeIntervalSince1970 ?? 0,
-                                      forKey: "packages.lastCheck")
+                         forKey: "packages.lastCheck")
         }
     }
 
@@ -1570,7 +1567,7 @@ final class DashboardStore: Observable {
         defer { if bindingID == binding { isCheckingPackages = false } }
 
         do {
-            let checked = try await checked(binding, sections: [.packageUpdates], { try await client.packageUpdates() })
+            let checked = try await checked(binding, sections: [.packageUpdates]) { try await client.packageUpdates() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             if let checked {
                 // Merge rather than replace: the repository knows versions, the
@@ -1580,8 +1577,7 @@ final class DashboardStore: Observable {
                 // built from whatever the firewall's repository returned, and
                 // the trapping initialiser would turn two entries of one
                 // package name into a crash rather than a duplicate row.
-                let byName = Dictionary(checked.map { ($0.name, $0) },
-                                        uniquingKeysWith: { _, latest in latest })
+                let byName = Dictionary(checked.map { ($0.name, $0) }) { _, latest in latest }
                 packages = packages.map { byName[$0.name] ?? $0 }
                 for extra in checked where !packages.contains(where: { $0.name == extra.name }) {
                     packages.append(extra)
@@ -1809,8 +1805,8 @@ final class DashboardStore: Observable {
             return direct
         }
 
-        let mac = arp.first(where: { ClientAddress.key($0.ip) == key })?.mac
-            ?? leases.first(where: { ClientAddress.key($0.ip) == key })?.mac
+        let mac = arp.first { ClientAddress.key($0.ip) == key }?.mac
+            ?? leases.first { ClientAddress.key($0.ip) == key }?.mac
         guard let mac, !mac.isEmpty, mac != "—" else { return nil }
         return overviewLayout.clients.first { $0.mac == mac }
     }

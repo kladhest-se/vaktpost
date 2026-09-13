@@ -27,10 +27,10 @@ final class TrafficAnomalyDetector {
         }
         
         enum Severity: String {
-            case low = "low"
-            case medium = "medium"
-            case high = "high"
-            case critical = "critical"
+            case low
+            case medium
+            case high
+            case critical
         }
         
         var message: String {

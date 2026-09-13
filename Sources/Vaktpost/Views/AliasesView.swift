@@ -7,15 +7,50 @@ struct AliasesView: View {
 
     @State private var query = ""
     @State private var showingNewAlias = false
+    @State private var selectedTab: AliasTab = .ip
+
+    /// pfSense's own Firewall / Aliases page splits into these same four tabs.
+    /// IP and URLs are both address-side aliases (`isAddressAlias`); the
+    /// difference between them is whether the type names a URL source.
+    /// Ports covers `port`, `url_ports`, and `urltable_ports` together,
+    /// matching `isPortAlias` exactly, since all three hold port values.
+    enum AliasTab: String, CaseIterable, Identifiable {
+        case ip = "IP", ports = "Ports", urls = "URLs", all = "All"
+        var id: String { rawValue }
+    }
+
+    private func isURLType(_ alias: FirewallAliasEntry) -> Bool {
+        alias.type.lowercased().contains("url")
+    }
+
+    private var tabAliases: [FirewallAliasEntry] {
+        switch selectedTab {
+        case .ip: return store.aliases.filter { $0.isAddressAlias && !isURLType($0) }
+        case .ports: return store.aliases.filter { $0.isPortAlias }
+        case .urls: return store.aliases.filter { $0.isAddressAlias && isURLType($0) }
+        case .all: return store.aliases
+        }
+    }
 
     private var aliases: [FirewallAliasEntry] {
-        guard !query.isEmpty else { return store.aliases }
+        guard !query.isEmpty else { return tabAliases }
         let q = query.lowercased()
-        return store.aliases.filter {
+        return tabAliases.filter {
             $0.name.lowercased().contains(q)
                 || ($0.descr ?? "").lowercased().contains(q)
                 || $0.addresses.contains { $0.lowercased().contains(q) }
                 || (store.resolveAlias($0.name) ?? []).contains { $0.lowercased().contains(q) }
+        }
+    }
+
+    /// The type a new alias should start as, given which tab created it.
+    /// URLs has no creatable type of its own -- the "+" button hides there
+    /// instead of offering a type this app's editor cannot actually save.
+    private var newAliasType: String {
+        switch selectedTab {
+        case .ip: return "host"
+        case .ports: return "port"
+        case .urls, .all: return "host"
         }
     }
 
@@ -26,15 +61,23 @@ struct AliasesView: View {
                 pendingBanner
                 AdministrationModeNotice()
 
+                Picker("", selection: $selectedTab) {
+                    ForEach(AliasTab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+
                 if let err = store.errors[.aliases] {
                     Notice(symbol: "exclamationmark.triangle",
                            title: "Aliases unavailable", detail: err, health: .warn)
                 } else if store.aliases.isEmpty {
                     Notice(symbol: "tag.slash", title: "No aliases configured",
                            detail: "Use + to create a host, network, or port alias.")
+                } else if tabAliases.isEmpty {
+                    Notice(symbol: "tag.slash", title: "No \(selectedTab.rawValue) aliases",
+                           detail: "Other alias types exist under a different tab.")
                 } else {
                     HStack {
-                        Text("\(aliases.count) of \(store.aliases.count) aliases")
+                        Text("\(aliases.count) of \(tabAliases.count) aliases")
                             .scaledFont(12, design: .monospaced)
                             .foregroundStyle(theme.labelFaint)
                         Spacer()
@@ -64,14 +107,20 @@ struct AliasesView: View {
         .navigationTitle("Aliases")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { showingNewAlias = true } label: {
-                    Image(systemName: "plus")
+                // URLs has nothing this app's editor can create -- host,
+                // network, and port are the only types AliasEditSheet
+                // offers, so the button hides rather than promising a type
+                // that tab can't actually produce.
+                if selectedTab != .urls {
+                    Button { showingNewAlias = true } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("New alias")
                 }
-                .accessibilityLabel("New alias")
             }
         }
         .sheet(isPresented: $showingNewAlias) {
-            AliasEditSheet(form: .blank, aliases: store.aliases) { form in
+            AliasEditSheet(form: .blank(type: newAliasType), aliases: store.aliases) { form in
                 _ = try await store.writeCoordinator.execute(
                     .saveAlias(alias: form.payload(), displayName: form.name)
                 )
@@ -290,10 +339,12 @@ private struct AliasEditForm: Equatable {
     var members: [AliasMemberDraft]
     var isCreating: Bool
 
-    static let blank = AliasEditForm(
-        name: "", originalName: "", type: "host", descr: "",
-        members: [AliasMemberDraft()], isCreating: true
-    )
+    static func blank(type: String) -> AliasEditForm {
+        AliasEditForm(
+            name: "", originalName: "", type: type, descr: "",
+            members: [AliasMemberDraft()], isCreating: true
+        )
+    }
 
     init(_ alias: FirewallAliasEntry) {
         name = alias.name

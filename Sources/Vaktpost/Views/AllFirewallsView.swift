@@ -17,7 +17,8 @@ struct AllFirewallsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Connection, load, gateways, services, and certificates across your firewalls. Checks repeat while this screen is active. Pull down to refresh.")
+                Text("Connection, load, gateways, services, and certificates across your firewalls. "
+                    + "Checks repeat while this screen is active. Pull down to refresh.")
                     .scaledFont(12)
                     .foregroundStyle(theme.labelMuted)
                 if registry.servers.isEmpty {

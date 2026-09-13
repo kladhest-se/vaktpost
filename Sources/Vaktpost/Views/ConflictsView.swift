@@ -111,7 +111,8 @@ struct ConflictsView: View {
             // The limit, stated. A clean result is not proof of a healthy
             // network, and somebody who reads it that way has been misled by
             // this screen rather than helped by it.
-            Text("It can only see what the firewall records. A device with a hardcoded address that has never spoken will not be in the ARP table, and nothing here will know about it.")
+            Text("It can only see what the firewall records. A device with a hardcoded address that has never spoken will not be in the ARP table, "
+                + "and nothing here will know about it.")
 
             Text("Expired leases are ignored. An old lease naming a different device is the address having been handed on, which is the system working.")
         }

@@ -79,7 +79,6 @@ struct Palette {
     let surface2, surface1, surface0: Color
     let base, mantle, crust: Color
 
-    // swiftlint:disable:next function_parameter_count
     init(_ hexes: [UInt32]) {
         rosewater = Color(hex: hexes[0])
         flamingo  = Color(hex: hexes[1])

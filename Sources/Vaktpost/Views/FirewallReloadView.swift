@@ -55,7 +55,7 @@ struct FirewallReloadView: View {
 
     private var latestSuccessfulApply: Date {
         store.auditTrail.entries
-            .last(where: { $0.action == .reloadFirewall && isSuccessful($0) })
+            .last { $0.action == .reloadFirewall && isSuccessful($0) }
             .map { $0.completedAt ?? $0.timestamp }
             ?? .distantPast
     }
@@ -100,7 +100,9 @@ struct FirewallReloadView: View {
                 } else if pendingVaktpostChanges.isEmpty {
                     pendingMessage(icon: "questionmark.circle",
                                    title: "Pending pfSense changes",
-                                   detail: "These changes were made in the pfSense web UI, by another administrator, or before Vaktpost's retained audit history. pfSense does not expose an itemised pending-change list.",
+                                   detail: "These changes were made in the pfSense web UI, by another administrator, "
+                                       + "or before Vaktpost's retained audit history. "
+                                       + "pfSense does not expose an itemised pending-change list.",
                                    color: theme.warn)
                 } else {
                     ForEach(Array(pendingVaktpostChanges.enumerated()), id: \.element.id) { index, entry in

@@ -121,7 +121,8 @@ enum AdministrativeWrite: Sendable {
     var preview: String {
         switch self {
         case .reloadFirewall:
-            return "Apply every pending filter, NAT, and alias change currently saved on this firewall, including changes made in the web UI or by another administrator. Existing connections may be briefly interrupted."
+            return "Apply every pending filter, NAT, and alias change currently saved on this firewall, "
+                + "including changes made in the web UI or by another administrator. Existing connections may be briefly interrupted."
         case .restartService(_, let displayName):
             return "Restart \(displayName). The service will be temporarily unavailable."
         case .quickBlock(let interface, let address, let description):
@@ -150,10 +151,12 @@ enum AdministrativeWrite: Sendable {
         case .reorderNatRules(let items, _):
             let forwardCount = items.filter { $0.kind == .rule }.count
             let separatorCount = items.count - forwardCount
-            return "Rearrange the complete NAT table to the new order — \(forwardCount) port forward\(forwardCount == 1 ? "" : "s") and \(separatorCount) separator\(separatorCount == 1 ? "" : "s")."
+            return "Rearrange the complete NAT table to the new order — \(forwardCount) port forward\(forwardCount == 1 ? "" : "s") "
+                + "and \(separatorCount) separator\(separatorCount == 1 ? "" : "s")."
         case .saveFilterSeparator(let separator, let displayName):
             let verb = separator.bool("create") == true ? "Add" : "Update"
-            return "\(verb) separator “\(displayName)” on \(separator.string("interface") ?? "unknown interface"), after \(separator.int("position") ?? 0) rules."
+            return "\(verb) separator “\(displayName)” on \(separator.string("interface") ?? "unknown interface"), "
+                + "after \(separator.int("position") ?? 0) rules."
         case .deleteFilterSeparator(let interface, _, let displayName):
             return "Delete separator “\(displayName)” from \(interface)."
         case .saveNatSeparator(let separator, let displayName):
@@ -164,7 +167,8 @@ enum AdministrativeWrite: Sendable {
         case .saveAlias(let alias, let displayName):
             let verb = Self.isCreate(alias) ? "Add" : "Update"
             let members = alias.list("members").count
-            return "\(verb) \(alias.string("type") ?? "firewall") alias “\(displayName)” with \(members) member\(members == 1 ? "" : "s"). The change will remain inactive until Apply Changes."
+            return "\(verb) \(alias.string("type") ?? "firewall") alias “\(displayName)” with \(members) member\(members == 1 ? "" : "s"). "
+                + "The change will remain inactive until Apply Changes."
         case .deleteAlias(_, let displayName):
             return "Delete unused firewall alias “\(displayName)”. The change will remain inactive until Apply Changes."
         }
@@ -252,9 +256,11 @@ enum WriteCoordinatorError: LocalizedError {
         case .auditUnavailable(let detail):
             return "The protected audit trail is unavailable, so the action was not allowed. \(detail)"
         case .auditCompletionFailed(let detail):
-            return "The firewall action was verified, but its completed audit result could not be saved. Inspect the firewall before doing anything else. \(detail)"
+            return "The firewall action was verified, but its completed audit result could not be saved. "
+                + "Inspect the firewall before doing anything else. \(detail)"
         case .outcomeUnknown(let detail):
-            return "The firewall may have accepted the action, but its outcome could not be confirmed. Do not repeat it until you inspect the firewall. \(detail)"
+            return "The firewall may have accepted the action, but its outcome could not be confirmed. "
+                + "Do not repeat it until you inspect the firewall. \(detail)"
         case .verificationFailed(let detail):
             return "The firewall accepted the action, but read-back verification did not confirm the intended result. \(detail)"
         }
@@ -811,7 +817,7 @@ final class WriteCoordinator {
             let rules = try await client.firewallRules()
             let separators = try await client.ruleSeparators()
             let currentTokens = Self.reorderTokens(for: interface, in: rules,
-                                                    separators: separators.filter)
+                                                   separators: separators.filter)
             let requestedTokens = items.map(\.token)
             guard Set(currentTokens) == Set(requestedTokens), currentTokens.count == requestedTokens.count else {
                 throw WriteCoordinatorError.invalidOperation(
@@ -894,7 +900,7 @@ final class WriteCoordinator {
             let rules = try await client.firewallRules()
             let separators = try await client.ruleSeparators()
             let actualTokens = Self.reorderTokens(for: interface, in: rules,
-                                                   separators: separators.filter)
+                                                  separators: separators.filter)
             let requestedTokens = items.map(\.token)
             let matches = actualTokens == requestedTokens
             return Verification(

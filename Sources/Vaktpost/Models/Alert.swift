@@ -90,7 +90,7 @@ struct VaktpostAlert: Identifiable {
     /// Needed where the identifier is a bare number: "CARP VHID 1 backup" and
     /// "CARP VHID 2 backup" differ only by a digit that the signature drops as
     /// a measurement. Two different virtual IPs, one acknowledgement.
-    var key: String? = nil
+    var key: String?
 
     /// A stable identity for acknowledgement, ignoring the numbers.
     ///
@@ -121,98 +121,111 @@ struct VaktpostAlert: Identifiable {
     }
 
     @MainActor
-    static func build(from store: DashboardStore) -> [VaktpostAlert] {
+    private static func connectionAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        guard let msg = store.connectionError else { return [] }
+        return [.init(severity: .bad, category: .connection, title: "Cannot reach firewall", detail: msg)]
+    }
+
+    @MainActor
+    private static func gatewayAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        store.gatewayManager.gateways
+            .filter { $0.health != .ok && $0.health != .idle }
+            .map { gw in
+                .init(severity: gw.health, category: .gateway,
+                      title: "Gateway \(gw.name) \(gw.status)", detail: gw.readout)
+            }
+    }
+
+    @MainActor
+    private static func serviceAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        store.overviewLayout.servicesDown.map { svc in
+            .init(severity: .bad, category: .service,
+                  title: "\(svc.descr ?? svc.name) not running",
+                  detail: "Service is enabled but reported as \(svc.status.isEmpty ? "stopped" : svc.status).")
+        }
+    }
+
+    @MainActor
+    private static func systemResourceAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        guard let sys = store.system else { return [] }
         var out: [VaktpostAlert] = []
-
-        if let msg = store.connectionError {
-            out.append(.init(severity: .bad, category: .connection,
-                             title: "Cannot reach firewall", detail: msg))
+        if let disk = sys.diskUsage, disk >= HealthThresholds.diskWarn {
+            out.append(.init(severity: disk >= HealthThresholds.diskBad ? .bad : .warn, category: .capacity,
+                             title: "Disk at \(Fmt.pct(disk))",
+                             detail: "Log rotation or a large package cache is the usual cause."))
         }
-
-        for gw in store.gatewayManager.gateways where gw.health != .ok && gw.health != .idle {
+        if let mem = sys.memUsage, mem >= HealthThresholds.memWarn {
+            out.append(.init(severity: .warn, category: .capacity,
+                             title: "Memory at \(Fmt.pct(mem))", detail: "Sustained pressure may push the box into swap."))
+        }
+        if let swap = sys.swapUsage, swap >= HealthThresholds.swapWarn {
+            out.append(.init(severity: .warn, category: .capacity,
+                             title: "Swap in use (\(Fmt.pct(swap)))",
+                             detail: "A firewall that swaps is usually one that will drop packets under load."))
+        }
+        // Thresholds follow the sensor, not a single pair of numbers.
+        //
+        // A chipset sits in the eighties under normal load; a CPU die at
+        // the same temperature is worth looking at. One pair for both made
+        // a healthy PCH raise a permanent warning nobody could act on,
+        // which is how an alert list stops being read.
+        // An explicit setting wins over the sensor-derived guess. The
+        // critical point moves with it, staying ten degrees above, so a
+        // person lowering the warning does not silently lose the
+        // distinction between warm and serious.
+        var tempLimits = sys.temperatureThresholds
+        if let warn = store.alertManager.temperatureWarnOverride {
+            tempLimits = (warn: warn, bad: max(warn + 10, tempLimits.bad))
+        }
+        if let temp = sys.temperature, temp >= tempLimits.warn {
             out.append(.init(
-                severity: gw.health,
-                category: .gateway,
-                title: "Gateway \(gw.name) \(gw.status)",
-                detail: gw.readout
+                severity: temp >= tempLimits.bad ? .bad : .warn,
+                category: .sensor,
+                title: String(format: "%@ at %.0f °C", sys.temperatureLabel, temp),
+                detail: temp >= tempLimits.bad
+                    ? "Thermal throttling territory. Check airflow and fan health."
+                    : "Warm for this sensor. Worth watching if it climbs."
             ))
         }
-
-        for svc in store.overviewLayout.servicesDown {
-            out.append(.init(severity: .bad, category: .service,
-                             title: "\(svc.descr ?? svc.name) not running",
-                             detail: "Service is enabled but reported as \(svc.status.isEmpty ? "stopped" : svc.status)."))
+        if let mbuf = sys.mbufUsage, mbuf >= HealthThresholds.mbufWarn {
+            out.append(.init(severity: mbuf >= HealthThresholds.mbufBad ? .bad : .warn, category: .capacity,
+                             title: "mbuf at \(Fmt.pct(mbuf))",
+                             detail: "Raise kern.ipc.nmbclusters if this stays high."))
         }
+        return out
+    }
 
-        if let sys = store.system {
-            if let disk = sys.diskUsage, disk >= HealthThresholds.diskWarn {
-                out.append(.init(severity: disk >= HealthThresholds.diskBad ? .bad : .warn, category: .capacity,
-                                 title: "Disk at \(Fmt.pct(disk))",
-                                 detail: "Log rotation or a large package cache is the usual cause."))
-            }
-            if let mem = sys.memUsage, mem >= HealthThresholds.memWarn {
-                out.append(.init(severity: .warn, category: .capacity,
-                                 title: "Memory at \(Fmt.pct(mem))", detail: "Sustained pressure may push the box into swap."))
-            }
-            if let swap = sys.swapUsage, swap >= HealthThresholds.swapWarn {
-                out.append(.init(severity: .warn, category: .capacity,
-                                 title: "Swap in use (\(Fmt.pct(swap)))",
-                                 detail: "A firewall that swaps is usually one that will drop packets under load."))
-            }
-            // Thresholds follow the sensor, not a single pair of numbers.
-            //
-            // A chipset sits in the eighties under normal load; a CPU die at
-            // the same temperature is worth looking at. One pair for both made
-            // a healthy PCH raise a permanent warning nobody could act on,
-            // which is how an alert list stops being read.
-            // An explicit setting wins over the sensor-derived guess. The
-            // critical point moves with it, staying ten degrees above, so a
-            // person lowering the warning does not silently lose the
-            // distinction between warm and serious.
-            var tempLimits = sys.temperatureThresholds
-            if let warn = store.alertManager.temperatureWarnOverride {
-                tempLimits = (warn: warn, bad: max(warn + 10, tempLimits.bad))
-            }
-            if let temp = sys.temperature, temp >= tempLimits.warn {
-                out.append(.init(
-                    severity: temp >= tempLimits.bad ? .bad : .warn,
-                    category: .sensor,
-                    title: String(format: "%@ at %.0f °C", sys.temperatureLabel, temp),
-                    detail: temp >= tempLimits.bad
-                        ? "Thermal throttling territory. Check airflow and fan health."
-                        : "Warm for this sensor. Worth watching if it climbs."
-                ))
-            }
-            if let mbuf = sys.mbufUsage, mbuf >= HealthThresholds.mbufWarn {
-                out.append(.init(severity: mbuf >= HealthThresholds.mbufBad ? .bad : .warn, category: .capacity,
-                                 title: "mbuf at \(Fmt.pct(mbuf))",
-                                 detail: "Raise kern.ipc.nmbclusters if this stays high."))
-            }
-        }
+    @MainActor
+    private static func stateTableAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        guard let st = store.states, let frac = st.fraction, frac >= HealthThresholds.stateWarn else { return [] }
+        return [.init(severity: frac >= HealthThresholds.stateBad ? .bad : .warn, category: .capacity,
+                      title: "State table \(Fmt.pct(frac * 100)) full",
+                      detail: "\(st.current ?? 0) of \(st.maximum ?? 0) states.")]
+    }
 
-        if let st = store.states, let frac = st.fraction, frac >= HealthThresholds.stateWarn {
-            out.append(.init(severity: frac >= HealthThresholds.stateBad ? .bad : .warn, category: .capacity,
-                             title: "State table \(Fmt.pct(frac * 100)) full",
-                             detail: "\(st.current ?? 0) of \(st.maximum ?? 0) states."))
-        }
+    @MainActor
+    private static func updateAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        guard store.version?.updateAvailable == true else { return [] }
+        let latest = store.version?.latest ?? "a newer release"
+        return [.init(severity: .warn, category: .update,
+                      title: "Update available",
+                      detail: "Running \(store.version?.current ?? "?"), \(latest) is available.")]
+    }
 
-        if store.version?.updateAvailable == true {
-            let latest = store.version?.latest ?? "a newer release"
-            out.append(.init(severity: .warn, category: .update,
-                             title: "Update available",
-                             detail: "Running \(store.version?.current ?? "?"), \(latest) is available."))
-        }
-
+    @MainActor
+    private static func firewallNoticeAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
         // The firewall's own notices, one alert each.
-        for notice in store.overviewLayout.criticalNotices where !notice.isFromThisApp {
-            out.append(.init(
-                severity: notice.health,
-                category: .system,
-                title: notice.summary.isEmpty ? "System notice" : notice.summary,
-                detail: notice.displayTime
-            ))
-        }
+        store.overviewLayout.criticalNotices
+            .filter { !$0.isFromThisApp }
+            .map { notice in
+                .init(severity: notice.health, category: .system,
+                      title: notice.summary.isEmpty ? "System notice" : notice.summary,
+                      detail: notice.displayTime)
+            }
+    }
 
+    @MainActor
+    private static func appFailureAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
         // The app's own failures, collapsed into one.
         //
         // A failing snippet writes a notice on every refresh, so within an hour
@@ -235,7 +248,7 @@ struct VaktpostAlert: Identifiable {
         }
         if let latest = recent.first {
             let historical = ours.count - recent.count
-            out.append(.init(
+            return [.init(
                 severity: .warn,
                 category: .system,
                 title: recent.count == 1
@@ -244,76 +257,118 @@ struct VaktpostAlert: Identifiable {
                 detail: historical > 0
                     ? "\(latest.summary) — plus \(historical) older notices from failures already fixed. Clear them from the bell icon in the webConfigurator."
                     : "\(latest.summary) — these accumulate on the firewall. Clear them from the bell icon once fixed."
-            ))
-        } else if ours.count >= 10 {
+            )]
+        }
+        if ours.count >= 10 {
             // Nothing failing now, but the log is full of what used to.
-            out.append(.init(
+            return [.init(
                 severity: .info,
                 category: .system,
                 title: "\(ours.count) old Vaktpost notices on the firewall",
                 detail: "Nothing has failed in the last 15 minutes. Clear these from the bell icon in the webConfigurator."
-            ))
+            )]
         }
+        return []
+    }
 
-        for fs in store.overviewLayout.fullFilesystems {
-            out.append(.init(
+    @MainActor
+    private static func filesystemAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        store.overviewLayout.fullFilesystems.map { fs in
+            .init(
                 severity: fs.health,
                 category: .capacity,
                 title: "\(fs.mountpoint) at \(Fmt.pct(fs.percentUsed ?? 0))",
                 detail: "A full filesystem stops logging long before it stops routing."
-            ))
+            )
         }
+    }
 
-        for entry in store.overviewLayout.staleDyndns {
-            out.append(.init(
+    @MainActor
+    private static func dyndnsAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        store.overviewLayout.staleDyndns.map { entry in
+            .init(
                 severity: .warn,
                 category: .system,
                 title: "\(entry.displayName) may be stale",
                 detail: "Last pushed \(entry.cachedAddress ?? "?") on \(entry.updatedDescription); the interface has a different address now."
-            ))
+            )
         }
+    }
 
+    @MainActor
+    private static func packageUpdateAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
         let stale = store.packagesNeedingUpdate
-        if !stale.isEmpty {
-            out.append(.init(
-                severity: .warn,
-                category: .update,
-                title: stale.count == 1
-                    ? "\(stale[0].shortName) has an update"
-                    : "\(stale.count) packages have updates",
-                detail: stale.map(\.shortName).sorted().joined(separator: ", ")
-            ))
-        }
+        guard !stale.isEmpty else { return [] }
+        return [.init(
+            severity: .warn,
+            category: .update,
+            title: stale.count == 1
+                ? "\(stale[0].shortName) has an update"
+                : "\(stale.count) packages have updates",
+            detail: stale.map(\.shortName).sorted().joined(separator: ", ")
+        )]
+    }
 
-        for cert in store.certificates where cert.health == .bad || cert.health == .warn {
-            let days = cert.daysRemaining ?? 0
-            out.append(.init(
-                severity: cert.health,
-                category: .certificate,
-                title: days < 0 ? "\(cert.descr) expired" : "\(cert.descr) expires in \(days)d",
-                detail: cert.isCA ? "Certificate authority" : "Certificate"
-            ))
-        }
-
-        if let carp = store.carp, carp.isConfigured {
-            if carp.maintenanceMode == true {
-                out.append(.init(severity: .warn, category: .ha,
-                                 title: "CARP in maintenance mode",
-                                 detail: "This node is deliberately demoted. Clear it when the work is done."))
+    @MainActor
+    private static func certificateAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        store.certificates
+            .filter { $0.health == .bad || $0.health == .warn }
+            .map { cert in
+                let days = cert.daysRemaining ?? 0
+                return .init(
+                    severity: cert.health,
+                    category: .certificate,
+                    title: days < 0 ? "\(cert.descr) expired" : "\(cert.descr) expires in \(days)d",
+                    detail: cert.isCA ? "Certificate authority" : "Certificate"
+                )
             }
-            for vip in carp.interfaces where vip.health == .bad {
-                out.append(.init(severity: .bad, category: .ha,
-                                 title: "CARP VHID \(vip.vhid) \(vip.status)",
-                                 detail: "On \(vip.interfaceName).",
-                                 key: "vhid-\(vip.vhid)"))
-            }
-        }
+    }
 
-        for sa in store.ipsecSAs where sa.health == .bad {
-            out.append(.init(severity: .bad, category: .vpn,
-                             title: "IPsec \(sa.connectionName) down",
-                             detail: "State: \(sa.state)"))
+    @MainActor
+    private static func carpAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        guard let carp = store.carp, carp.isConfigured else { return [] }
+        var out: [VaktpostAlert] = []
+        if carp.maintenanceMode == true {
+            out.append(.init(severity: .warn, category: .ha,
+                             title: "CARP in maintenance mode",
+                             detail: "This node is deliberately demoted. Clear it when the work is done."))
         }
+        for vip in carp.interfaces where vip.health == .bad {
+            out.append(.init(severity: .bad, category: .ha,
+                             title: "CARP VHID \(vip.vhid) \(vip.status)",
+                             detail: "On \(vip.interfaceName).",
+                             key: "vhid-\(vip.vhid)"))
+        }
+        return out
+    }
+
+    @MainActor
+    private static func ipsecAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
+        store.ipsecSAs
+            .filter { $0.health == .bad }
+            .map { sa in
+                .init(severity: .bad, category: .vpn,
+                      title: "IPsec \(sa.connectionName) down",
+                      detail: "State: \(sa.state)")
+            }
+    }
+
+    @MainActor
+    static func build(from store: DashboardStore) -> [VaktpostAlert] {
+        let out = connectionAlerts(store)
+            + gatewayAlerts(store)
+            + serviceAlerts(store)
+            + systemResourceAlerts(store)
+            + stateTableAlerts(store)
+            + updateAlerts(store)
+            + firewallNoticeAlerts(store)
+            + appFailureAlerts(store)
+            + filesystemAlerts(store)
+            + dyndnsAlerts(store)
+            + packageUpdateAlerts(store)
+            + certificateAlerts(store)
+            + carpAlerts(store)
+            + ipsecAlerts(store)
 
         let order: [Health] = [.bad, .warn, .info, .ok, .idle]
         return out.sorted {

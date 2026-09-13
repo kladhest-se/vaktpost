@@ -35,21 +35,31 @@ struct PerformanceView: View {
     private var overviewMetrics: some View {
         VStack(spacing: 12) {
             HStack {
-                MetricCard(title: "Overall Success", value: "\(Int(metrics.overallSuccessRate * 100))%", color: metrics.overallSuccessRate > 0.9 ? .green : metrics.overallSuccessRate > 0.7 ? .yellow : .red)
-                MetricCard(title: "Avg API Latency", value: "\(String(format: "%.1f", metrics.averageAPIResponseTime * 1000))ms", color: metrics.averageAPIResponseTime < 1 ? .green : metrics.averageAPIResponseTime < 3 ? .yellow : .red)
+                MetricCard(title: "Overall Success",
+                           value: "\(Int(metrics.overallSuccessRate * 100))%",
+                           color: metrics.overallSuccessRate > 0.9 ? .green : metrics.overallSuccessRate > 0.7 ? .yellow : .red)
+                MetricCard(title: "Avg API Latency",
+                           value: "\(String(format: "%.1f", metrics.averageAPIResponseTime * 1000))ms",
+                           color: metrics.averageAPIResponseTime < 1 ? .green : metrics.averageAPIResponseTime < 3 ? .yellow : .red)
             }
-            
+
             HStack {
                 MetricCard(title: "Total Refreshes", value: "\(metrics.totalRefreshes)", color: theme.label)
-                MetricCard(title: "Failed Sections", value: "\(metrics.refreshHistory.reduce(0) { $0 + $1.sectionsFailed })", color: metrics.refreshHistory.reduce(0) { $0 + $1.sectionsFailed } > 0 ? .orange : theme.label)
+                MetricCard(title: "Failed Sections",
+                           value: "\(metrics.refreshHistory.reduce(0) { $0 + $1.sectionsFailed })",
+                           color: metrics.refreshHistory.reduce(0) { $0 + $1.sectionsFailed } > 0 ? .orange : theme.label)
             }
-            
+
             if let lastLatency = metrics.currentAPILatency {
-                MetricCard(title: "Current API Latency", value: "\(String(format: "%.1f", lastLatency * 1000))ms", color: lastLatency < 1 ? .green : lastLatency < 3 ? .yellow : .red)
+                MetricCard(title: "Current API Latency",
+                           value: "\(String(format: "%.1f", lastLatency * 1000))ms",
+                           color: lastLatency < 1 ? .green : lastLatency < 3 ? .yellow : .red)
             }
-            
+
             if let lastDuration = metrics.lastRefreshDuration {
-                MetricCard(title: "Last Refresh", value: "\(String(format: "%.1f", lastDuration))s", color: lastDuration < 10 ? .green : lastDuration < 20 ? .yellow : .red)
+                MetricCard(title: "Last Refresh",
+                           value: "\(String(format: "%.1f", lastDuration))s",
+                           color: lastDuration < 10 ? .green : lastDuration < 20 ? .yellow : .red)
             }
         }
     }

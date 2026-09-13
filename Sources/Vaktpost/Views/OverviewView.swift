@@ -375,11 +375,11 @@ struct OverviewView: View {
         let minutes = (Int(seconds) % 3600) / 60
         if days > 0 {
             return "\(days)d \(hours)h"
-        } else if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        } else {
-            return "\(minutes)m"
         }
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        }
+        return "\(minutes)m"
     }
 
     private var interfacesSlab: some View {
@@ -390,31 +390,30 @@ struct OverviewView: View {
                     .scaledFont(13)
                     .foregroundStyle(theme.labelMuted)
             })
-        } else {
-            return AnyView(VStack(alignment: .leading, spacing: 10) {
-                ForEach(shown) { iface in
-                    NavigationLink {
-                        InterfaceDetailView(iface: iface)
-                    } label: {
-                        Slab(rail: iface.health, title: iface.name, trailing: iface.device) {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text(iface.addressLine)
-                                    .scaledFont(12, design: .monospaced)
-                                    .foregroundStyle(theme.labelMuted)
-                                ThroughputChart(
-                                    tracker: store.throughput,
-                                    store: store,
-                                    device: iface.seriesKey,
-                                    height: 110,
-                                    showExplanatoryText: true
-                                )
-                            }
+        }
+        return AnyView(VStack(alignment: .leading, spacing: 10) {
+            ForEach(shown) { iface in
+                NavigationLink {
+                    InterfaceDetailView(iface: iface)
+                } label: {
+                    Slab(rail: iface.health, title: iface.name, trailing: iface.device) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(iface.addressLine)
+                                .scaledFont(12, design: .monospaced)
+                                .foregroundStyle(theme.labelMuted)
+                            ThroughputChart(
+                                tracker: store.throughput,
+                                store: store,
+                                device: iface.seriesKey,
+                                height: 110,
+                                showExplanatoryText: true
+                            )
                         }
                     }
-                    .buttonStyle(.plain)
                 }
-            })
-        }
+                .buttonStyle(.plain)
+            }
+        })
     }
 
     private var systemSlab: some View {
@@ -563,13 +562,12 @@ struct OverviewView: View {
                     .scaledFont(13)
                     .foregroundStyle(theme.labelMuted)
             })
-        } else {
-            return AnyView(VStack(alignment: .leading, spacing: 8) {
-                ForEach(store.gatewayManager.gateways, id: \.name) { gw in
-                    GatewayRow(gateway: gw, gatewayMetrics: store.gatewayManager.gatewayMetrics)
-                }
-            })
         }
+        return AnyView(VStack(alignment: .leading, spacing: 8) {
+            ForEach(store.gatewayManager.gateways, id: \.name) { gw in
+                GatewayRow(gateway: gw, gatewayMetrics: store.gatewayManager.gatewayMetrics)
+            }
+        })
     }
 
     private var firewallSlab: some View {
@@ -843,7 +841,8 @@ struct OverviewView: View {
     }
 
     private var topTalkersSlab: some View {
-        Slab(rail: .info, title: "Top talkers", trailing: "\(store.overviewLayout.topTalkers.count) device\(store.overviewLayout.topTalkers.count == 1 ? "" : "s")") {
+        let count = store.overviewLayout.topTalkers.count
+        return Slab(rail: .info, title: "Top talkers", trailing: "\(count) device\(count == 1 ? "" : "s")") {
             if store.overviewLayout.topTalkers.isEmpty {
                 Text("No client data yet")
                     .scaledFont(12)
@@ -885,7 +884,8 @@ struct OverviewView: View {
                     .foregroundStyle(health.color(theme))
                 if let delta {
                     let sign = delta > 0 ? "↑" : delta < 0 ? "↓" : "→"
-                    let pct = Int(abs(Double(delta) / Double(max(store.prevFirewallCounts.blocked, store.prevFirewallCounts.rejected, store.prevFirewallCounts.passed, 1)) * 100))
+                    let baseline = max(store.prevFirewallCounts.blocked, store.prevFirewallCounts.rejected, store.prevFirewallCounts.passed, 1)
+                    let pct = Int(abs(Double(delta) / Double(baseline) * 100))
                     Text("\(sign) \(pct)%")
                         .scaledFont(11, weight: .medium, design: .monospaced)
                         .foregroundStyle(delta > 0 ? theme.bad.opacity(0.8) : delta < 0 ? theme.ok.opacity(0.8) : theme.labelMuted)

@@ -108,7 +108,9 @@ struct IncidentTimelineView: View {
                 }
 
                 Slab(rail: .idle, title: "About this timeline") {
-                    Text("Incidents are identified on this device from blocked or rejected firewall entries and explicit failure or warning terms in the fetched logs. The original log entry remains the source of truth.")
+                    Text("Incidents are identified on this device from blocked or rejected firewall entries "
+                        + "and explicit failure or warning terms in the fetched logs. "
+                        + "The original log entry remains the source of truth.")
                         .scaledFont(12)
                         .foregroundStyle(theme.labelMuted)
                 }

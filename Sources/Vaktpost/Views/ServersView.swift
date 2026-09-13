@@ -348,7 +348,9 @@ struct ServerEditView: View {
             }
             Button("Not now", role: .cancel) { dismiss() }
         } message: {
-            Text("The connection worked. Pinning means only this exact certificate is accepted from now on, which stops anything else answering for your firewall. You will need to pin again when you renew it.")
+            Text("The connection worked. Pinning means only this exact certificate is accepted from now on, "
+                + "which stops anything else answering for your firewall. "
+                + "You will need to pin again when you renew it.")
         }
         .confirmationDialog("Remove this firewall?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
@@ -376,7 +378,9 @@ struct ServerEditView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This firewall uses an administrator-equivalent XML-RPC credential. Enabling this mode allows Vaktpost to change rules, delete port forwards, reload the firewall, restart services, and drop active states. The setting applies only to \(profile.displayName) and takes effect after you tap Save.")
+            Text("This firewall uses an administrator-equivalent XML-RPC credential. "
+                + "Enabling this mode allows Vaktpost to change rules, delete port forwards, reload the firewall, restart services, and drop active states. "
+                + "The setting applies only to \(profile.displayName) and takes effect after you tap Save.")
         }
     }
 

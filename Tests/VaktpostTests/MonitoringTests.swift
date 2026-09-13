@@ -46,7 +46,7 @@ final class MonitoringTests: XCTestCase {
 
     func testHistoryCacheExpiresAndForceBypassesIt() async {
         var clock = Date(timeIntervalSince1970: 1000)
-        let loader = HistoryLoader<String, Int>(lifetime: 300, now: { clock })
+        let loader = HistoryLoader<String, Int>(lifetime: 300) { clock }
         var calls = 0
         _ = await loader.load("week") { calls += 1; return calls }
         let firstDate = loader.fetchedAt

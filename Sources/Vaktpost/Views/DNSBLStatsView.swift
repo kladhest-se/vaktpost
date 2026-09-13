@@ -181,7 +181,8 @@ struct DNSBLStatsView: View {
             if stats.truncated {
                 // The honest limit. A total that silently means "some of it"
                 // is worse than no total.
-                Text("Counted from the last \(Fmt.bytes(stats.scannedBytes)) of a \(Fmt.bytes(stats.logBytes)) log, so these are recent counts rather than everything pfBlockerNG has recorded.")
+                Text("Counted from the last \(Fmt.bytes(stats.scannedBytes)) of a \(Fmt.bytes(stats.logBytes)) log, "
+                    + "so these are recent counts rather than everything pfBlockerNG has recorded.")
             } else {
                 Text("Counted from the whole log, \(Fmt.bytes(stats.logBytes)).")
             }

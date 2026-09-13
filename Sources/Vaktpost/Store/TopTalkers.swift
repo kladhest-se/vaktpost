@@ -183,8 +183,7 @@ final class TopTalkerRecorder {
         // not control — here, its own stored file. Merging cannot crash, and
         // a duplicate in a file written by an older build costs accuracy
         // rather than the app.
-        var byAddress = Dictionary(hour.talkers.map { ($0.key, $0) },
-                                   uniquingKeysWith: { $0.merging($1) })
+        var byAddress = Dictionary(hour.talkers.map { ($0.key, $0) }) { $0.merging($1) }
 
         for host in hosts {
             // The same key the stored entries were rebuilt under. These two

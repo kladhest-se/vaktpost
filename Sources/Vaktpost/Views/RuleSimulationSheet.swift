@@ -225,9 +225,11 @@ struct RuleSimulationSheet: View {
             // The big one. pfSense logs the rules that have logging switched
             // on, plus the default deny — so the sample is not a sample of
             // traffic, it is a sample of what somebody chose to record.
-            Text("This counts packets in the filter log. pfSense only logs rules with logging enabled, plus the default deny, so a zero here means nothing matching was logged — not that no such traffic exists.")
+            Text("This counts packets in the filter log. pfSense only logs rules with logging enabled, plus the default deny, "
+                + "so a zero here means nothing matching was logged — not that no such traffic exists.")
 
-            Text("Matching is literal: \"any\" matches everything, otherwise values must be equal. A rule naming an alias or a network will match nothing here even when it would match traffic on the firewall.")
+            Text("Matching is literal: \"any\" matches everything, otherwise values must be equal. "
+                + "A rule naming an alias or a network will match nothing here even when it would match traffic on the firewall.")
 
             if result.unparsed > 0 {
                 Text("\(result.unparsed) log lines had no readable filter fields and were not judged.")

@@ -420,7 +420,6 @@ struct HAProxyServer: Identifiable {
     }
 
     var health: Health { enabled ? .ok : .idle }
-
 }
 
 /// A backend, which the pfSense package calls a pool.

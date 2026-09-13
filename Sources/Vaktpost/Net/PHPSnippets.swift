@@ -2309,7 +2309,6 @@ struct PHPSnippet: Sendable {
     """)
     }
 
-
     /// What `rrd_fetch` actually hands back, for one file.
     ///
     /// The app reports 207,504 values offered and none numeric — so the fetch

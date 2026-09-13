@@ -41,10 +41,12 @@ final class InvestigationTests: XCTestCase {
                       arp: [ARPEntry] = [], aliases: [FirewallAliasEntry] = [],
                       rules: [FirewallRule] = []) -> [Investigation.Finding] {
         guard let subject = Investigation.subject(query) else { return [] }
-        return Investigation.findings(for: subject, clients: [], arp: arp, leases: [],
-                                      staticMappings: [], hostOverrides: [], aliases: aliases,
-                                      rules: rules, portForwards: [], openvpnServers: [],
-                                      wireguardPeers: [], dnsblClients: [])
+        return Investigation.findings(for: subject, in: Investigation.Sources(
+            clients: [], arp: arp, leases: [],
+            staticMappings: [], hostOverrides: [], aliases: aliases,
+            rules: rules, portForwards: [], openvpnServers: [],
+            wireguardPeers: [], dnsblClients: []
+        ))
     }
 
     // MARK: Classifying the query

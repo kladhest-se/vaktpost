@@ -859,4 +859,3 @@ extension PackageUpdateTests {
         XCTAssertTrue(current.allSatisfy { $0.health == .ok })
     }
 }
-

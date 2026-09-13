@@ -311,7 +311,8 @@ struct HostTrafficPanel: View {
             // cannot tell which.
             Notice(symbol: "magnifyingglass",
                    title: "Not in the last capture",
-                   detail: "No address matching that is among the ten busiest on \(selected?.name ?? "this interface") right now. That usually means it is idle, but a quiet device behind ten busy ones looks the same from here.")
+                   detail: "No address matching that is among the ten busiest on \(selected?.name ?? "this interface") right now. "
+                       + "That usually means it is idle, but a quiet device behind ten busy ones looks the same from here.")
         } else if let sample {
             Notice(symbol: "chart.bar",
                    title: sample.available ? "Nothing measured" : "Not available on this firewall",
@@ -594,9 +595,8 @@ struct HostTrafficPanel: View {
                     result.hosts,
                     serverID: store.profile.id.uuidString,
                     interface: result.interface,
-                    interfaceName: selected.name,
-                    names: { store.nameForAddress($0) }
-                )
+                    interfaceName: selected.name
+                ) { store.nameForAddress($0) }
             } catch {
                 if error is CancellationError || (error as? RPCError) == .cancelled { return }
                 self.error = error.localizedDescription

@@ -17,7 +17,8 @@ final class ClientInvestigationTests: XCTestCase {
         XCTAssertTrue(line.involves(addresses: keys))
     }
     func testRawFilterLogMatchesParsedEndpoints() {
-        let line = LogLine(text: "Sep 9 12:00:00 fw filterlog[123]: 1,0,,100,em0,match,pass,in,4,0x0,,64,1,0,none,6,tcp,60,192.168.1.1,8.8.8.8,1234,443,0,S", kind: .firewall)
+        let line = LogLine(text: "Sep 9 12:00:00 fw filterlog[123]: 1,0,,100,em0,match,pass,in,4,0x0,,64,1,0,none,6,tcp,60,"
+            + "192.168.1.1,8.8.8.8,1234,443,0,S", kind: .firewall)
         XCTAssertTrue(line.involves(addresses: Set(["192.168.1.1"].compactMap(ClientAddress.key))))
         XCTAssertFalse(line.involves(addresses: Set(["192.168.1.10"].compactMap(ClientAddress.key))))
     }
@@ -42,9 +43,9 @@ final class ClientInvestigationTests: XCTestCase {
         let real = ARPEntry(dict(["ip": "10.0.0.3", "mac": "aa:bb:cc:dd:ee:ff", "hostname": "nas001"]))
         let client = NetworkClient.merge(leases: [], arp: [known], statics: [])[0]
         let result = ClientInvestigation(client: client, leases: [], arp: [known, blank, real],
-                                          mappings: [], overrides: [], aliases: [])
+                                         mappings: [], overrides: [], aliases: [])
         XCTAssertFalse(result.names.contains("ARP: ?"))
-        XCTAssertFalse(result.names.contains(where: { $0.hasPrefix("ARP:") && $0.hasSuffix(": ") }))
+        XCTAssertFalse(result.names.contains { $0.hasPrefix("ARP:") && $0.hasSuffix(": ") })
         XCTAssertTrue(result.names.contains("ARP: nas001"))
     }
 }

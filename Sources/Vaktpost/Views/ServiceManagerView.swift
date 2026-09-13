@@ -52,9 +52,8 @@ struct ServiceManagerView: View {
                 destructive: true,
                 destructiveLabel: "Restart",
                 confirmLabel: "Cancel",
-                onConfirm: confirmRestart,
-                onCancel: {}
-            )
+                onConfirm: confirmRestart
+            ) {}
             .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
             .task { await store.refresh() }
             .refreshable {
@@ -129,7 +128,6 @@ struct ServiceManagerView: View {
                             .scaledFont(10, weight: .semibold)
                             .foregroundStyle(theme.ok)
                     }
-
                 }
                 .frame(width: 90)
             }
@@ -174,5 +172,4 @@ struct ServiceManagerView: View {
             showErrorAlert = true
         }
     }
-
 }

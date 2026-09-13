@@ -123,7 +123,8 @@ struct HAProxyView: View {
                     .scaledFont(12, weight: .semibold)
                     .foregroundStyle(theme.labelMuted)
                 Text(store.haproxyStatsAccessors.isEmpty
-                     ? "Whether each server is up right now lives in HAProxy's admin socket, which this app will not open — the same socket accepts commands that disable servers."
+                     ? "Whether each server is up right now lives in HAProxy's admin socket, which this app will not open — "
+                         + "the same socket accepts commands that disable servers."
                      : "This pfSense exposes \(store.haproxyStatsAccessors.joined(separator: ", ")), so live status could be added.")
                     .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)

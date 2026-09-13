@@ -53,9 +53,9 @@ enum LocalDevice {
 
             let name = String(cString: interface.ifa_name)
             let addressText = String(
-                decoding: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
-                as: UTF8.self
-            )
+                bytes: host.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) },
+                encoding: .utf8
+            ) ?? ""
             found[name] = addressText
         }
 

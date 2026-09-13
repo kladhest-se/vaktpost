@@ -269,7 +269,7 @@ enum Fmt {
 
 // MARK: - Sparkline
 
-/// A two-series sparkline with time axis, gridlines, and tap tooltips.
+/// A two-series sparkline with a labelled Y-axis, gridlines, and tap tooltips.
 struct Sparkline: View {
     @Environment(\.themeManager) private var theme: ThemeManager
 
@@ -289,14 +289,21 @@ struct Sparkline: View {
         max(inSeries.max() ?? 0, outSeries.max() ?? 0, 1)
     }
 
+    /// The rounded scale top every position on this chart is measured
+    /// against — the line, the tooltip markers, and the axis labels all read
+    /// off the same number, or a tap would land beside the line instead of
+    /// on it.
+    private var axisMax: Double { AxisScale.niceMax(for: peak) }
+
     @State private var showTooltip = false
     @State private var tooltipX: CGFloat?
     @State private var tooltipValue: (in: Double?, out: Double?)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            yAxisLabels
-            
+        HStack(alignment: .top, spacing: 6) {
+            axisLabelColumn
+                .frame(width: 46)
+
             GeometryReader { geo in
                 ZStack {
                     gridlines(in: geo.size)
@@ -306,7 +313,7 @@ struct Sparkline: View {
                         tooltipLine(at: x, in: geo.size)
                         tooltipMarker(at: x, in: geo.size, color: theme.ok, value: vals.in)
                         tooltipMarker(at: x, in: geo.size, color: theme.info, value: vals.out)
-                        
+
                         if let inVal = vals.in {
                             tooltipLabel(text: "\(unit.format(inVal)) IN", at: x, in: geo.size, color: theme.ok, value: inVal)
                         }
@@ -336,23 +343,30 @@ struct Sparkline: View {
                     }
                 }
             }
-            .frame(height: height)
-            .background(theme.hairline.opacity(0.22))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
+        .frame(height: height)
+        .padding(.vertical, 4)
+        .background(theme.hairline.opacity(0.22))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Throughput sparkline showing network traffic rates")
     }
 
-    private var yAxisLabels: some View {
-        HStack(spacing: 0) {
-            // The third mislabelled site on this card: the axis said bytes,
-            // the tooltip said bytes, and the legend below said bits.
-            Text(unit.format(peak))
-                .scaledFont(8, design: .monospaced)
-                .foregroundStyle(theme.labelFaint.opacity(0.6))
-                .lineLimit(1)
-            Spacer()
+    /// Four tick labels, top to bottom, spaced to line up with the four
+    /// gridlines drawn in the chart area beside them.
+    private var axisLabelColumn: some View {
+        let ticks = AxisScale.ticks(for: peak)
+        return VStack(alignment: .trailing, spacing: 0) {
+            ForEach(Array(ticks.enumerated()), id: \.offset) { index, tick in
+                Text(unit.axisLabel(tick, axisMax: axisMax))
+                    .scaledFont(8, design: .monospaced)
+                    .foregroundStyle(theme.labelFaint.opacity(0.75))
+                    .lineLimit(1)
+                    .fixedSize()
+                if index < ticks.count - 1 {
+                    Spacer(minLength: 0)
+                }
+            }
         }
     }
 
@@ -361,11 +375,18 @@ struct Sparkline: View {
             ForEach(0..<4) { i in
                 let y = size.height * CGFloat(i) / 3
                 Rectangle()
-                    .fill(theme.hairline.opacity(0.08))
+                    .fill(theme.hairline.opacity(0.16))
                     .frame(height: 1)
                     .offset(y: y - 0.5)
             }
         }
+    }
+
+    /// The single vertical position every line, marker, and label on this
+    /// chart is placed from — the one denominator the line, the tooltip, and
+    /// the axis all share.
+    private func yPosition(for value: Double, height: CGFloat) -> CGFloat {
+        height - (CGFloat(value / axisMax) * height * 0.95)
     }
 
     private func tooltipLine(at x: CGFloat, in size: CGSize) -> some View {
@@ -387,7 +408,7 @@ struct Sparkline: View {
                     // the chart while the paths are drawn from its top-left.
                     // The markers were displaced by half the chart in both
                     // directions.
-                    .position(x: x, y: size.height - (CGFloat(value / peak) * size.height * 0.92) - 2)
+                    .position(x: x, y: yPosition(for: value, height: size.height))
                     .shadow(color: color.opacity(0.4), radius: 2)
             }
         }
@@ -401,7 +422,7 @@ struct Sparkline: View {
     /// the label slides to stay readable, which is what every chart that does
     /// this well does.
     private func tooltipLabel(text: String, at x: CGFloat, in size: CGSize, color: Color, value: Double) -> some View {
-        let y = size.height - (CGFloat(value / peak) * size.height * 0.92) - 2
+        let y = yPosition(for: value, height: size.height)
         // Estimated from the text, since the bubble is not measured until it
         // is laid out and the position is needed to lay it out.
         let halfWidth = CGFloat(text.count) * 3.2 + 8
@@ -439,10 +460,7 @@ struct Sparkline: View {
         guard values.count > 1 else { return [] }
         let step = size.width / CGFloat(values.count - 1)
         return values.enumerated().map { idx, v in
-            CGPoint(
-                x: CGFloat(idx) * step,
-                y: size.height - (CGFloat(v / peak) * size.height * 0.92) - 2
-            )
+            CGPoint(x: CGFloat(idx) * step, y: yPosition(for: v, height: size.height))
         }
     }
 
@@ -457,7 +475,11 @@ struct Sparkline: View {
                     p.addLine(to: CGPoint(x: pts[pts.count - 1].x, y: size.height))
                     p.closeSubpath()
                 }
-                .fill(color.opacity(0.18))
+                .fill(LinearGradient(
+                    colors: [color.opacity(0.32), color.opacity(0.02)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ))
 
                 Path { p in
                     p.move(to: pts[0])

@@ -59,11 +59,11 @@ struct AlertsView: View {
                     ForEach(store.alertManager.visibleAlerts) { alert in
                         alertRow(alert)
                     }
-
                 }
 
                 Slab(rail: .idle, title: "How these are produced") {
-                    Text("pfSense has no alerts endpoint. Every item here is derived on-device from status the app already fetched, so the thresholds live in one file and change without touching the firewall.")
+                    Text("pfSense has no alerts endpoint. Every item here is derived on-device from status the app already fetched, "
+                        + "so the thresholds live in one file and change without touching the firewall.")
                         .scaledFont(12)
                         .foregroundStyle(theme.labelFaint)
                 }
@@ -120,5 +120,4 @@ struct AlertsView: View {
             }
         }
     }
-
 }

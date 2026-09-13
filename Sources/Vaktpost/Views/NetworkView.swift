@@ -20,7 +20,8 @@ struct NetworkView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                PageHeader(title: "Network", subtitle: selectedTab == 0 ? "\(store.interfaces.count) interfaces" : "\(store.gatewayManager.gateways.count) gateways")
+                PageHeader(title: "Network",
+                           subtitle: selectedTab == 0 ? "\(store.interfaces.count) interfaces" : "\(store.gatewayManager.gateways.count) gateways")
                 VStack(spacing: 0) {
                     Picker("Network", selection: $selectedTab) {
                         Text("Interfaces").tag(0)

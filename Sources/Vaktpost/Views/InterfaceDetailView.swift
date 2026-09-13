@@ -88,7 +88,7 @@ struct InterfaceDetailView: View {
                 }
 
                 if points.count > 1 {
-                    LiveThroughputChart(points: points)
+                    LiveThroughputChart(points: points, unit: store.liveThroughput.unit)
                         .frame(height: 180)
                 } else {
                     // Two samples at two seconds apart, so this is brief and
@@ -328,7 +328,8 @@ struct InterfaceDetailView: View {
                 } else if let history = store.rrdHistory, !history.available {
                     // Said once, plainly. pfSense keeps months of this and
                     // reading it needs a shell, which this app will not use.
-                    Text("This pfSense cannot read its own RRD files from PHP — that needs rrdtool, a shell binary. The chart above covers what the app has sampled since it opened.")
+                    Text("This pfSense cannot read its own RRD files from PHP — that needs rrdtool, a shell binary. "
+                        + "The chart above covers what the app has sampled since it opened.")
                         .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
                 } else if !historySeries.isEmpty {
@@ -443,17 +444,24 @@ struct InterfaceDetailView: View {
     }
 
     private var note: some View {
-        Text("Polling every 2 seconds while this screen is open. Each sample is a call the firewall answers one at a time, so this stops as soon as you go back.")
+        Text("Polling every 2 seconds while this screen is open. Each sample is a call the firewall answers one at a time, "
+            + "so this stops as soon as you go back.")
             .scaledFont(11)
             .foregroundStyle(theme.labelFaint)
             .padding(.horizontal, 4)
     }
 }
 
-/// A larger throughput chart with both directions and a filled area.
+/// A larger throughput chart with both directions, a labelled Y-axis, and a
+/// filled area.
 struct LiveThroughputChart: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     let points: [ThroughputTracker.Point]
+
+    /// What the values are in — see `Sparkline.unit` for why this is passed
+    /// rather than assumed: a caller that forgets it gets the wrong label,
+    /// but a caller that passes the tracker's own unit cannot.
+    var unit: RateUnit = .bits
 
     /// Scaled to the peak of either direction so the two are comparable — an
     /// independently scaled pair looks like symmetric traffic when it is not.
@@ -461,23 +469,51 @@ struct LiveThroughputChart: View {
         max(points.map(\.inBps).max() ?? 1, points.map(\.outBps).max() ?? 1, 1)
     }
 
+    /// The rounded scale top the line, and its axis labels, are both drawn
+    /// against.
+    private var axisMax: Double { AxisScale.niceMax(for: peak) }
+
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                gridlines(in: geo.size)
-                area(in: geo.size, values: points.map(\.inBps), colour: theme.ok)
-                area(in: geo.size, values: points.map(\.outBps), colour: theme.info)
+        HStack(alignment: .top, spacing: 6) {
+            axisLabelColumn
+                .frame(width: 46)
+
+            GeometryReader { geo in
+                ZStack {
+                    gridlines(in: geo.size)
+                    area(in: geo.size, values: points.map(\.inBps), colour: theme.ok)
+                    area(in: geo.size, values: points.map(\.outBps), colour: theme.info)
+                }
+            }
+        }
+    }
+
+    /// Four tick labels, top to bottom, spaced to line up with the four
+    /// gridlines drawn in the chart area beside them.
+    private var axisLabelColumn: some View {
+        let ticks = AxisScale.ticks(for: peak)
+        return VStack(alignment: .trailing, spacing: 0) {
+            ForEach(Array(ticks.enumerated()), id: \.offset) { index, tick in
+                Text(unit.axisLabel(tick, axisMax: axisMax))
+                    .scaledFont(8, design: .monospaced)
+                    .foregroundStyle(theme.labelFaint.opacity(0.75))
+                    .lineLimit(1)
+                    .fixedSize()
+                if index < ticks.count - 1 {
+                    Spacer(minLength: 0)
+                }
             }
         }
     }
 
     private func gridlines(in size: CGSize) -> some View {
-        VStack(spacing: 0) {
-            ForEach(0..<4, id: \.self) { _ in
+        ZStack {
+            ForEach(0..<4) { i in
+                let y = size.height * CGFloat(i) / 3
                 Rectangle()
-                    .fill(theme.hairline.opacity(0.5))
+                    .fill(theme.hairline.opacity(0.3))
                     .frame(height: 1)
-                    .frame(maxHeight: .infinity, alignment: .top)
+                    .offset(y: y - 0.5)
             }
         }
     }
@@ -486,7 +522,7 @@ struct LiveThroughputChart: View {
         let step = values.count > 1 ? size.width / CGFloat(values.count - 1) : size.width
         let pts = values.enumerated().map { idx, v in
             CGPoint(x: CGFloat(idx) * step,
-                    y: size.height - (CGFloat(v / peak) * size.height * 0.92) - 2)
+                    y: size.height - (CGFloat(v / axisMax) * size.height * 0.95))
         }
         return ZStack {
             Path { path in
@@ -497,7 +533,11 @@ struct LiveThroughputChart: View {
                 path.addLine(to: CGPoint(x: pts.last?.x ?? 0, y: size.height))
                 path.closeSubpath()
             }
-            .fill(colour.opacity(0.16))
+            .fill(LinearGradient(
+                colors: [colour.opacity(0.28), colour.opacity(0.02)],
+                startPoint: .top,
+                endPoint: .bottom
+            ))
 
             Path { path in
                 guard let first = pts.first else { return }
@@ -536,6 +576,11 @@ struct RRDChart: View {
         max(drawable.flatMap(\.bitsPerSecond).max() ?? 1, 1)
     }
 
+    /// The rounded scale top the lines, their fills, and the axis labels are
+    /// all drawn against — see `Sparkline.axisMax` for why one shared number
+    /// matters here.
+    private var axisMax: Double { AxisScale.niceMax(for: peak) }
+
     /// Why the chart is empty, when the answer is knowable.
     /// Why this span is empty.
     ///
@@ -546,36 +591,34 @@ struct RRDChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // The scale, above the line.
-            //
-            // A line with no numbers on it says "there was traffic" and
-            // nothing else — not how much, not when. The peak is the only
-            // y-value worth printing at this size, and the span's ends are the
-            // x-axis.
             if !drawable.isEmpty {
                 HStack {
-                    Text(Rate.bits(peak))
-                        .scaledFont(9, design: .monospaced)
-                        .foregroundStyle(theme.labelFaint)
                     Spacer()
                     legend
                 }
             }
 
-            GeometryReader { geo in
-                ZStack {
-                    if drawable.isEmpty {
-                        Text(explanation)
-                            .scaledFont(11)
-                            .foregroundStyle(theme.labelFaint)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 12)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        gridlines(in: geo.size)
-                        ForEach(drawable) { one in
-                            line(one.bitsPerSecond, in: geo.size,
-                                 colour: color(for: one))
+            HStack(alignment: .top, spacing: 6) {
+                if !drawable.isEmpty {
+                    axisLabelColumn
+                        .frame(width: 46)
+                }
+
+                GeometryReader { geo in
+                    ZStack {
+                        if drawable.isEmpty {
+                            Text(explanation)
+                                .scaledFont(11)
+                                .foregroundStyle(theme.labelFaint)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 12)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            gridlines(in: geo.size)
+                            ForEach(drawable) { one in
+                                line(one.bitsPerSecond, in: geo.size,
+                                     colour: color(for: one))
+                            }
                         }
                     }
                 }
@@ -589,6 +632,26 @@ struct RRDChart: View {
                 }
                 .scaledFont(9, design: .monospaced)
                 .foregroundStyle(theme.labelFaint)
+            }
+        }
+    }
+
+    /// Four tick labels, top to bottom, spaced to line up with the four
+    /// gridlines drawn in the chart area beside them. RRD series are always
+    /// reported in bits per second, so the axis needs no unit parameter the
+    /// way `Sparkline`'s does.
+    private var axisLabelColumn: some View {
+        let ticks = AxisScale.ticks(for: peak)
+        return VStack(alignment: .trailing, spacing: 0) {
+            ForEach(Array(ticks.enumerated()), id: \.offset) { index, tick in
+                Text(RateUnit.bits.axisLabel(tick, axisMax: axisMax))
+                    .scaledFont(8, design: .monospaced)
+                    .foregroundStyle(theme.labelFaint.opacity(0.75))
+                    .lineLimit(1)
+                    .fixedSize()
+                if index < ticks.count - 1 {
+                    Spacer(minLength: 0)
+                }
             }
         }
     }
@@ -615,21 +678,23 @@ struct RRDChart: View {
         let direction = series.isInbound ? "in" : "out"
         if name.contains("pass") && name.contains("block") {
             return "Mixed \(direction.capitalized)"
-        } else if name.contains("pass") {
+        }
+        if name.contains("pass") {
             if name.contains("6") {
                 return "Passed \(direction.capitalized) (v6)"
-            } else if name.contains("total") {
+            }
+            if name.contains("total") {
                 return "Passed \(direction.capitalized) (total)"
             }
             return "Passed \(direction.capitalized)"
-        } else if name.contains("block") {
+        }
+        if name.contains("block") {
             if name.contains("6") {
                 return "Blocked \(direction.capitalized) (v6)"
             }
             return "Blocked \(direction.capitalized)"
-        } else {
-            return direction.capitalized
         }
+        return direction.capitalized
     }
 
     private func color(for series: RRDSeries) -> Color {
@@ -637,21 +702,23 @@ struct RRDChart: View {
         let direction = series.isInbound ? "in" : "out"
         if name.contains("pass") && name.contains("total") && direction == "in" {
             return theme.mauve
-        } else if name.contains("pass") && name.contains("total") && direction == "out" {
+        }
+        if name.contains("pass") && name.contains("total") && direction == "out" {
             return theme.lavender
-        } else if name.contains("pass") {
+        }
+        if name.contains("pass") {
             if direction == "in" {
                 return name.contains("6") ? theme.teal : theme.ok
             }
             return name.contains("6") ? theme.blue : theme.info
-        } else if name.contains("block") {
+        }
+        if name.contains("block") {
             if direction == "in" {
                 return name.contains("6") ? theme.maroon : theme.warn
             }
             return name.contains("6") ? theme.peach : theme.bad
-        } else {
-            return direction == "in" ? theme.ok : theme.info
         }
+        return direction == "in" ? theme.ok : theme.info
     }
 
     /// The ends of the drawn span, formatted for their length: a day wants the
@@ -674,12 +741,13 @@ struct RRDChart: View {
 
     /// Faint horizontal rules, so a peak can be read against something.
     private func gridlines(in size: CGSize) -> some View {
-        VStack(spacing: 0) {
-            ForEach(0..<3, id: \.self) { _ in
+        ZStack {
+            ForEach(0..<4) { i in
+                let y = size.height * CGFloat(i) / 3
                 Rectangle()
-                    .fill(theme.hairline.opacity(0.5))
+                    .fill(theme.hairline.opacity(0.16))
                     .frame(height: 1)
-                    .frame(maxHeight: .infinity, alignment: .top)
+                    .offset(y: y - 0.5)
             }
         }
     }
@@ -688,13 +756,33 @@ struct RRDChart: View {
         let step = values.count > 1 ? size.width / CGFloat(values.count - 1) : size.width
         let points = values.enumerated().map { index, value in
             CGPoint(x: CGFloat(index) * step,
-                    y: size.height - (CGFloat(value / peak) * size.height * 0.92) - 2)
+                    y: size.height - (CGFloat(value / axisMax) * size.height * 0.95))
         }
-        return Path { path in
-            guard let first = points.first else { return }
-            path.move(to: first)
-            for point in points.dropFirst() { path.addLine(to: point) }
+        return ZStack {
+            fill(points, in: size, colour: colour)
+            Path { path in
+                guard let first = points.first else { return }
+                path.move(to: first)
+                for point in points.dropFirst() { path.addLine(to: point) }
+            }
+            .stroke(colour, style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
         }
-        .stroke(colour, style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
+    }
+
+    @ViewBuilder
+    private func fill(_ points: [CGPoint], in size: CGSize, colour: Color) -> some View {
+        if points.count > 1 {
+            Path { p in
+                p.move(to: CGPoint(x: points[0].x, y: size.height))
+                points.forEach { p.addLine(to: $0) }
+                p.addLine(to: CGPoint(x: points[points.count - 1].x, y: size.height))
+                p.closeSubpath()
+            }
+            .fill(LinearGradient(
+                colors: [colour.opacity(0.22), colour.opacity(0.02)],
+                startPoint: .top,
+                endPoint: .bottom
+            ))
+        }
     }
 }

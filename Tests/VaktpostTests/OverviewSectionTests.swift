@@ -77,7 +77,6 @@ final class OverviewSectionTests: XCTestCase {
         XCTAssertEqual(stored(registry, profile), ["status"])
     }
 
-
     func testTheOldVPNSectionBecomesBothOfItsReplacements() {
         // Dropping it would have taken VPN off the dashboard of everybody who
         // had it, and put the two new sections in the hidden list where they

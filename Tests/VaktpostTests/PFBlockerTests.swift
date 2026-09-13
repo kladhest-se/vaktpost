@@ -218,10 +218,12 @@ final class PFBlockerTests: XCTestCase {
     }
 
     func testCountsCarryTheirNamesAndTotals() {
-        let s = dnsbl(["available": true, "domains": [
+        let domains = [
             ["name": "firebaselogging-pa.googleapis.com", "count": 107],
             ["name": "metrics.icloud.com", "count": 58],
-        ], "clients": [["name": "172.16.1.10", "count": 165]]])
+        ]
+        let clients = [["name": "172.16.1.10", "count": 165]]
+        let s = dnsbl(["available": true, "domains": domains, "clients": clients])
         XCTAssertEqual(s.domains.first?.name, "firebaselogging-pa.googleapis.com")
         XCTAssertEqual(s.domains.first?.count, 107)
         XCTAssertEqual(s.clients.first?.name, "172.16.1.10")

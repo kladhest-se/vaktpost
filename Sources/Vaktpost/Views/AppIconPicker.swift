@@ -38,7 +38,6 @@ struct AppIconPicker: View {
     @State private var failure: String?
     @State private var isChanging = false
 
-
     private let columns = [GridItem(.adaptive(minimum: 62), spacing: 12)]
 
     var body: some View {
@@ -52,7 +51,7 @@ struct AppIconPicker: View {
                                     .resizable()
                                     .frame(width: 54, height: 54)
                                     .clipShape(RoundedRectangle(cornerRadius: 12,
-                                                               style: .continuous))
+                                                                style: .continuous))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                                             .stroke(selected == icon

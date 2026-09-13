@@ -189,7 +189,8 @@ struct SystemView: View {
         let configured = store.configuredHostBlocks.isEmpty
             ? "No enabled literal-source block rules were found in the configuration."
             : "Configured block rules are shown above."
-        return "This pfSense build does not expose live pf-table entries to PHP. \(configured) Login Protection and IDS tables require Diagnostics → Tables in the webConfigurator."
+        return "This pfSense build does not expose live pf-table entries to PHP. \(configured) "
+            + "Login Protection and IDS tables require Diagnostics → Tables in the webConfigurator."
     }
 
     /// A single row summarising both update surfaces, linking to the

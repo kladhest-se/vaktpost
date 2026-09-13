@@ -21,21 +21,31 @@ struct FlushStatesView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                sectionHeader("Target")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    GroupHeading(text: "Target")
+                    Slab(rail: .info) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            flushScopePicker
+                            interfacePicker
+                        }
+                    }
 
-                flushScopePicker
+                    if !store.canAdminister {
+                        GroupHeading(text: "Mode")
+                        AdministrationModeNotice()
+                    }
 
-                interfacePicker
-
-                sectionHeader("Mode")
-
-                AdministrationModeNotice()
-
-                sectionHeader("Action")
-
-                executeButton
+                    GroupHeading(text: "Action")
+                    executeButton
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
+                .readableWidth()
             }
+            .background(theme.bg.ignoresSafeArea())
+            .tint(theme.accentColor)
             .navigationTitle("Flush states")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -54,9 +64,8 @@ struct FlushStatesView: View {
                 destructive: true,
                 destructiveLabel: "Flush",
                 confirmLabel: "Cancel",
-                onConfirm: confirmFlush,
-                onCancel: {}
-            )
+                onConfirm: confirmFlush
+            ) {}
             .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
             .onAppear {
                 if let firstUp = store.overviewLayout.interfaces.first(where: { $0.isUp }) {
@@ -69,33 +78,47 @@ struct FlushStatesView: View {
     // MARK: - Form fields
 
     private var flushScopePicker: some View {
-        LabeledContent("Flush scope") {
+        VStack(alignment: .leading, spacing: 4) {
+            fieldLabel("Flush scope")
             Picker("", selection: $flushAll) {
                 Text("All interfaces").tag(true)
                 Text("Specific interface").tag(false)
             }
             .pickerStyle(.segmented)
-            .frame(maxWidth: .infinity)
         }
     }
 
     private var interfacePicker: some View {
         Group {
             if !flushAll {
-                LabeledContent("Interface") {
-                    Picker("", selection: Binding(
-                        get: { selectedInterface?.device ?? "" },
-                        set: { newValue in selectedInterface = store.overviewLayout.interfaces.first(where: { $0.device == newValue }) }
-                    )) {
-                        Text("Select interface...").tag("")
+                VStack(alignment: .leading, spacing: 4) {
+                    fieldLabel("Interface")
+                    Menu {
                         ForEach(store.overviewLayout.interfaces) { iface in
-                            Text("\(iface.name) (\(iface.device))")
-                                .tag(iface.device)
-                                .foregroundStyle(iface.isUp ? theme.label : theme.labelMuted)
+                            Button {
+                                selectedInterface = iface
+                            } label: {
+                                if selectedInterface?.device == iface.device {
+                                    Label("\(iface.name) (\(iface.device))", systemImage: "checkmark")
+                                } else {
+                                    Text("\(iface.name) (\(iface.device))")
+                                }
+                            }
                         }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(selectedInterface.map { "\($0.name) (\($0.device))" } ?? "Select interface…")
+                                .scaledFont(14, design: .monospaced)
+                                .foregroundStyle(selectedInterface == nil ? theme.labelFaint : theme.label)
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down")
+                                .scaledFont(11, weight: .semibold)
+                                .foregroundStyle(theme.accentColor)
+                        }
+                        .padding(10)
+                        .background(theme.cardRaised)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
-                    .pickerStyle(.menu)
-                    .frame(maxWidth: .infinity)
                 }
             }
         }
@@ -117,27 +140,19 @@ struct FlushStatesView: View {
 
             showConfirmation = true
         } label: {
-            HStack {
-                Spacer()
-                Text("Flush states")
+            HStack(spacing: 9) {
                 Image(systemName: "trash")
+                Text("Flush states")
             }
-            .foregroundStyle(theme.bad)
+            .foregroundStyle(.white)
             .font(.headline)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(theme.bad.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.vertical, 14)
+            .background(theme.bad, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+        .buttonStyle(.plain)
         .disabled(!store.canAdminister || isExecuting)
         .opacity(store.canAdminister ? 1 : 0.55)
-    }
-
-    private var flushMessage: String {
-        if flushAll {
-            return "This will flush all firewall state entries. All active connections will be dropped."
-        } else {
-            return "This will flush firewall states on \(selectedInterface?.device ?? "the interface"). Active connections on this interface will be dropped."
-        }
     }
 
     private var pendingOperation: AdministrativeWrite {
@@ -165,14 +180,12 @@ struct FlushStatesView: View {
         }
     }
 
-
     // MARK: - Helpers
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .scaledFont(12, weight: .semibold)
+    private func fieldLabel(_ title: String) -> some View {
+        Text(title.uppercased())
+            .scaledFont(11, weight: .semibold)
+            .tracking(0.8)
             .foregroundStyle(theme.labelFaint)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 8)
     }
 }

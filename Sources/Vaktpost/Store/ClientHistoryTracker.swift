@@ -125,8 +125,8 @@ final class ClientHistoryTracker {
             }
             
             // Get unique MAC and hostname from latest events
-            let macAddress = events.first(where: { $0.macAddress != nil })?.macAddress
-            let hostname = events.first(where: { $0.hostname != nil })?.hostname
+            let macAddress = events.first { $0.macAddress != nil }?.macAddress
+            let hostname = events.first { $0.hostname != nil }?.hostname
             
             clientHistories[key] = ClientHistory(
                 id: UUID(),

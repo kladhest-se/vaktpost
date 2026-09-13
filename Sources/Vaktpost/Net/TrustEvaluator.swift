@@ -166,12 +166,9 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
             leaf = SecTrustGetCertificateAtIndex(trust, 0)
         }
         guard let leaf else { return nil }
-        let cf = leaf as SecCertificate
-        let cert = SecCertificateCopySubjectSummary(cf) as String?
-        return cert
+        return SecCertificateCopySubjectSummary(leaf as SecCertificate) as String?
     }
 }
-
 
 /// All controller access and terminal events are serialized by the main actor.
 @MainActor

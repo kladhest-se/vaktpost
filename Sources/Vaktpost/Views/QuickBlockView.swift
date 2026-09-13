@@ -30,11 +30,13 @@ struct QuickBlockView: View {
                         }
                     }
 
-                    GroupHeading(text: "Mode")
-                    AdministrationModeNotice()
+                    if !store.canAdminister {
+                        GroupHeading(text: "Mode")
+                        AdministrationModeNotice()
+                    }
 
                     GroupHeading(text: "Action")
-                    Slab(rail: .bad) { executeButton }
+                    executeButton
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
@@ -129,17 +131,17 @@ struct QuickBlockView: View {
             guard addressProblem == nil, selectedInterface?.internalName != nil else { return }
             Task { await confirmBlock() }
         } label: {
-            HStack {
-                Spacer()
-                Text("Add block rule")
+            HStack(spacing: 9) {
                 Image(systemName: "shield.slash")
+                Text("Add block rule")
             }
-            .foregroundStyle(theme.bad)
+            .foregroundStyle(.white)
             .font(.headline)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(theme.bad.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+            .padding(.vertical, 14)
+            .background(theme.bad, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+        .buttonStyle(.plain)
         .disabled(!store.canAdminister || isExecuting || addressProblem != nil
                   || selectedInterface?.internalName == nil)
         .opacity(store.canAdminister && addressProblem == nil
@@ -187,7 +189,6 @@ struct QuickBlockView: View {
             showErrorAlert = true
         }
     }
-
 
     private func fieldLabel(_ title: String) -> some View {
         Text(title.uppercased())

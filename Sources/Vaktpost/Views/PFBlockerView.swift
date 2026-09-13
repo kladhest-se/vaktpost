@@ -114,7 +114,8 @@ struct PFBlockerView: View {
                 // that prints a zero.
                 Notice(symbol: "exclamationmark.circle",
                        title: "\(status.unloadedFeeds.count) list\(status.unloadedFeeds.count == 1 ? "" : "s") with nothing in them",
-                       detail: "These aliases are configured but have no table file and no inline members, so they are not blocking anything. A list whose update has not run yet looks like this.",
+                       detail: "These aliases are configured but have no table file and no inline members, so they are not blocking anything. "
+                           + "A list whose update has not run yet looks like this.",
                        health: .warn)
             }
 
@@ -178,7 +179,8 @@ struct PFBlockerView: View {
                     // wire to count its lines would cost more than the count
                     // is worth. The modification time answers the question
                     // somebody actually has.
-                    Text("Sizes and times only. A log that has not been written to in days is a component that is not running, which is what these are here to show.")
+                    Text("Sizes and times only. A log that has not been written to in days is a component that is not running, "
+                        + "which is what these are here to show.")
                         .scaledFont(11)
                         .foregroundStyle(theme.labelFaint)
                     }
@@ -194,7 +196,8 @@ struct PFBlockerView: View {
                 // Not a warning any more. This pfSense simply does not expose
                 // the pf accessor, which is the normal case on Plus, and the
                 // counts come from the file pf loads from instead.
-                Text("Counts come from the table files pfBlockerNG downloads, in /var/db/aliastables, which is what pf is loaded from. This pfSense does not expose a pf accessor, so a list written but not yet applied still counts here.")
+                Text("Counts come from the table files pfBlockerNG downloads, in /var/db/aliastables, which is what pf is loaded from. "
+                    + "This pfSense does not expose a pf accessor, so a list written but not yet applied still counts here.")
             }
 
             if !status.foundPaths.isEmpty {

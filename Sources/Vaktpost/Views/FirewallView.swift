@@ -171,8 +171,6 @@ struct FirewallView: View {
                                     if interfaceFilter != nil { showFloating = false }
                                 }
                             }
-
-
                         }
                         .padding(.horizontal, 16)
                     }
@@ -278,30 +276,26 @@ struct FirewallView: View {
                           subject: form.apply(to: FirewallRule(JSONDict([
                               "tracker": .string(""),
                               "interface": .string(form.interface)
-                          ]))),
-                          onSave: { saved in try await createRule(saved) })
+                          ])))) { saved in try await createRule(saved) }
         }
         .sheet(item: $newSeparator) { form in
             SeparatorEditSheet(
                 form: form,
                 rules: store.rules.filter {
                     !$0.isFloating && $0.interfaceName == form.interface
-                },
-                onSave: { saved in try await createSeparator(saved) }
-            )
+                }
+            ) { saved in try await createSeparator(saved) }
         }
         .sheet(item: $newNatSeparator) { form in
             SeparatorEditSheet(
                 form: form,
-                forwards: store.portForwards,
-                onSave: { saved in try await createNatSeparator(saved) }
-            )
+                forwards: store.portForwards
+            ) { saved in try await createNatSeparator(saved) }
         }
         .sheet(item: $newForward) { form in
             PortForwardEditSheet(form: form,
                                  interfaces: store.interfaces,
-                                 aliases: store.aliases,
-                                 onSave: { saved in try await createForward(saved) })
+                                 aliases: store.aliases) { saved in try await createForward(saved) }
         }
     }
 
@@ -526,11 +520,13 @@ struct FirewallView: View {
                    title: untrackedRulesOnSelectedInterface.count == 1
                        ? "One rule here has no stable ID"
                        : "\(untrackedRulesOnSelectedInterface.count) rules here have no stable ID",
-                   detail: "The firewall itself does not treat \(untrackedRulesOnSelectedInterface.count == 1 ? "this rule" : "these rules") as reorderable, so nothing here can be dragged until that changes: "
+                   detail: "The firewall itself does not treat \(untrackedRulesOnSelectedInterface.count == 1 ? "this rule" : "these rules") as reorderable, "
+                       + "so nothing here can be dragged until that changes: "
                        + untrackedRulesOnSelectedInterface
                            .map { $0.descr.isEmpty ? "an unlabelled rule" : $0.descr }
                            .joined(separator: ", ")
-                       + ". This app cannot edit, delete, or reorder a rule pfSense has not given a tracker, the same way it could not for a port forward until that forward was edited once elsewhere.",
+                       + ". This app cannot edit, delete, or reorder a rule pfSense has not given a tracker, "
+                       + "the same way it could not for a port forward until that forward was edited once elsewhere.",
                    health: .warn)
             ForEach(filteredRules) { rule in
                 Button { selection = rule.id } label: { RuleRow(rule: rule) }
@@ -538,7 +534,8 @@ struct FirewallView: View {
             }
         } else if canReorderRules {
             countLine("\(filteredRules.count) rules")
-            Text("Drag \(Image(systemName: "line.3.horizontal")) to reorder. Position here is pfSense's own; check the web GUI if a separator looks out of place.")
+            Text("Drag \(Image(systemName: "line.3.horizontal")) to reorder. "
+                + "Position here is pfSense's own; check the web GUI if a separator looks out of place.")
                 .scaledFont(11)
                 .foregroundStyle(theme.labelFaint)
                 .padding(.horizontal, 2)
@@ -1040,7 +1037,7 @@ struct RuleReorderDropDelegate: DropDelegate {
         guard items[from].id != items[to].id else { return }
         withAnimation(.default) {
             items.move(fromOffsets: IndexSet(integer: from),
-                      toOffset: to > from ? to + 1 : to)
+                       toOffset: to > from ? to + 1 : to)
         }
     }
 
@@ -1324,15 +1321,13 @@ struct SeparatorDetailView: View {
             if scope == .filter {
                 SeparatorEditSheet(
                     form: form,
-                    rules: separatorInterfaceRules,
-                    onSave: { saved in try await save(changes: saved) }
-                )
+                    rules: separatorInterfaceRules
+                ) { saved in try await save(changes: saved) }
             } else {
                 SeparatorEditSheet(
                     form: form,
-                    forwards: store.portForwards,
-                    onSave: { saved in try await save(changes: saved) }
-                )
+                    forwards: store.portForwards
+                ) { saved in try await save(changes: saved) }
             }
         }
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
@@ -1802,8 +1797,7 @@ struct RuleDetailView: View {
                           interfaces: store.interfaces,
                           aliases: store.aliases,
                           ruleset: store.rules,
-                          subject: rule,
-                          onSave: { saved in try await save(changes: saved) })
+                          subject: rule) { saved in try await save(changes: saved) }
         }
         .sheet(isPresented: $showSimulation) {
             RuleSimulationSheet(rule: rule)
@@ -2025,8 +2019,7 @@ struct PortForwardDetailView: View {
         .sheet(item: $editorForm) { form in
             PortForwardEditSheet(form: form,
                                  interfaces: store.interfaces,
-                                 aliases: store.aliases,
-                                 onSave: { saved in try await save(changes: saved) })
+                                 aliases: store.aliases) { saved in try await save(changes: saved) }
         }
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
     }

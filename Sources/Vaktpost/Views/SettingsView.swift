@@ -103,10 +103,6 @@ struct SettingsView: View {
         .background(theme.bg.ignoresSafeArea())
     }
 
-
-
-
-
     /// Which conditions are worth being told about.
     ///
     /// Alerts are derived on the device, so silencing changes what is shown
@@ -294,7 +290,6 @@ struct SettingsView: View {
             .tint(theme.accentColor)
         }
     }
-
 
     private var themeSlab: some View {
         Slab(rail: .info, title: "Theme") {

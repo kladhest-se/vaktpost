@@ -43,7 +43,8 @@ struct ScheduledNotificationsView: View {
                     if list.count > systemLimit - 8 {
                         Notice(symbol: "exclamationmark.triangle",
                                title: "Close to the system limit",
-                               detail: "iOS holds at most \(systemLimit) pending notifications per app and drops the rest without saying so. \(list.count) are scheduled.",
+                               detail: "iOS holds at most \(systemLimit) pending notifications per app and drops the rest without saying so. "
+                                   + "\(list.count) are scheduled.",
                                health: .warn)
                     }
                     ForEach(groups(list), id: \.name) { group in
@@ -156,9 +157,11 @@ struct ScheduledNotificationsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Read back from iOS rather than from anything this app remembers, so what is listed is what will actually be delivered.")
 
-            Text("Rescheduling only touches the firewall this app is currently connected to. Another firewall's notifications are left alone, which is why they are grouped separately — reconciling one must never cancel another's.")
+            Text("Rescheduling only touches the firewall this app is currently connected to. "
+                + "Another firewall's notifications are left alone, which is why they are grouped separately — reconciling one must never cancel another's.")
 
-            Text("A certificate renewed since these were scheduled keeps its old dates until the next refresh reconciles them. If a date here disagrees with the Certificates screen, that is the reconcile not having run, and the button above forces it.")
+            Text("A certificate renewed since these were scheduled keeps its old dates until the next refresh reconciles them. "
+                + "If a date here disagrees with the Certificates screen, that is the reconcile not having run, and the button above forces it.")
         }
         .scaledFont(12)
         .foregroundStyle(theme.labelMuted)

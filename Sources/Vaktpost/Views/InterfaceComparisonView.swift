@@ -141,11 +141,10 @@ struct InterfaceComparisonView: View {
                                 InterfaceCheckRow(
                                     label: store.interfaceLabel(for: iface.name) ?? iface.name,
                                     health: iface.health,
-                                    isSelected: selectedKeys.contains(iface.seriesKey),
-                                    action: {
-                                        toggleSelection(for: iface.seriesKey)
-                                    }
-                                )
+                                    isSelected: selectedKeys.contains(iface.seriesKey)
+                                ) {
+                                    toggleSelection(for: iface.seriesKey)
+                                }
                             }
                         }
                         VStack(alignment: .leading, spacing: 4) {
@@ -153,11 +152,10 @@ struct InterfaceComparisonView: View {
                                 InterfaceCheckRow(
                                     label: store.interfaceLabel(for: iface.name) ?? iface.name,
                                     health: iface.health,
-                                    isSelected: selectedKeys.contains(iface.seriesKey),
-                                    action: {
-                                        toggleSelection(for: iface.seriesKey)
-                                    }
-                                )
+                                    isSelected: selectedKeys.contains(iface.seriesKey)
+                                ) {
+                                    toggleSelection(for: iface.seriesKey)
+                                }
                             }
                         }
                     }
@@ -286,7 +284,7 @@ private struct MultiSeriesChart: View {
                 }
                 if showTooltip, let x = tooltipX, let vals = tooltipValues {
                     tooltipLine(at: x, width: geo.size.width, height: chartHeight)
-                    ForEach(Array(vals.enumerated()), id: \.offset) { idx, v in
+                    ForEach(Array(vals.enumerated()), id: \.offset) { _, v in
                         tooltipMarker(at: x, width: geo.size.width, height: chartHeight, color: v.color, value: v.value)
                         tooltipLabel(text: v.label, value: v.value, at: x, width: geo.size.width, height: chartHeight, color: v.color)
                     }

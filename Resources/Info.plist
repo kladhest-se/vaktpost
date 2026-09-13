@@ -39,6 +39,13 @@
     <dict/>
     <key>NSFaceIDUsageDescription</key>
     <string>Use Face ID to unlock Vaktpost and enable firewall administrative actions</string>
+    <!-- All encryption used by this app — HTTPS/TLS to the firewall, Keychain
+         storage, and CryptoKit's AES-GCM for the local audit trail — goes
+         through Apple's own OS-provided frameworks rather than a custom or
+         third-party implementation, which is the exempt case. If that stops
+         being true, this key needs to be revisited before the next upload. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

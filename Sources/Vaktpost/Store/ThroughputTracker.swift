@@ -204,3 +204,73 @@ enum Rate {
         return String(format: i == 0 ? "%.0f %@" : "%.1f %@", v, units[i])
     }
 }
+
+// MARK: - Chart axis scale
+
+/// Rounds a peak sample up to a "nice" axis top — 1, 2, 2.5, 5, or 10 times a
+/// power of ten — the way every chart worth reading is scaled, rather than
+/// whatever exact value the highest sample happened to be.
+enum AxisScale {
+    static func niceMax(for peak: Double) -> Double {
+        guard peak > 0, peak.isFinite else { return 1 }
+        let magnitude = pow(10, floor(log10(peak)))
+        let normalised = peak / magnitude
+        let step: Double
+        switch normalised {
+        case ...1: step = 1
+        case ...2: step = 2
+        case ...2.5: step = 2.5
+        case ...5: step = 5
+        default: step = 10
+        }
+        return step * magnitude
+    }
+
+    /// Four tick values from the axis top down to zero, in reading order —
+    /// the order a Y-axis is labelled in, top to bottom.
+    static func ticks(for peak: Double, count: Int = 4) -> [Double] {
+        let top = niceMax(for: peak)
+        guard count > 1 else { return [top] }
+        return (0..<count).map { top * Double(count - 1 - $0) / Double(count - 1) }
+    }
+}
+
+extension RateUnit {
+    /// The divisor and suffix every tick on one axis shares, chosen from the
+    /// axis top so "2.5" and "10.0" on the same chart read in the same unit
+    /// rather than each auto-scaling on its own — which is exactly the
+    /// mismatch that made the tooltip and the legend once disagree.
+    ///
+    /// Axis labels use the short "bps/Kbps/Mbps" family rather than
+    /// `Rate.bits`'s "bit/s" — a Y-axis column is narrow, and the shorter
+    /// form is also the convention every reference dashboard uses on one.
+    private func axisStep(for axisMax: Double) -> (divisor: Double, suffix: String) {
+        switch self {
+        case .bits:
+            let units = ["bps", "Kbps", "Mbps", "Gbps"]
+            var v = axisMax, i = 0
+            while v >= 1000, i < units.count - 1 { v /= 1000; i += 1 }
+            return (pow(1000, Double(i)), units[i])
+        case .bytes:
+            let units = ["B/s", "KiB/s", "MiB/s", "GiB/s"]
+            var v = axisMax, i = 0
+            while v >= 1024, i < units.count - 1 { v /= 1024; i += 1 }
+            return (pow(1024, Double(i)), units[i])
+        }
+    }
+
+    /// A tick label in the axis's shared unit — the origin always reads "0"
+    /// in the base unit, matching the convention every reference dashboard
+    /// uses even when the rest of the axis is in Kbps or Mbps.
+    func axisLabel(_ value: Double, axisMax: Double) -> String {
+        guard value > 0 else {
+            switch self {
+            case .bits: return "0 bps"
+            case .bytes: return "0 B/s"
+            }
+        }
+        let step = axisStep(for: axisMax)
+        let scaled = value / step.divisor
+        return String(format: step.divisor == 1 ? "%.0f %@" : "%.1f %@", scaled, step.suffix)
+    }
+}

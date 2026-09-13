@@ -134,7 +134,7 @@ enum Investigation {
     /// "10.253.21.10/32" — so a whole-field comparison would miss almost
     /// everything a rule actually says.
     private static func tokens(in text: String) -> [String] {
-        text.split(whereSeparator: { " ,;\t".contains($0) })
+        text.split { " ,;\t".contains($0) }
             .map { token -> String in
                 // A single-host prefix is that host. Anything else keeps its
                 // prefix and will simply not match, which is correct: this
@@ -148,6 +148,22 @@ enum Investigation {
 
     // MARK: Gathering
 
+    /// Everything that might mention the subject, gathered in one place so
+    /// `findings(for:in:)` takes a single argument instead of eleven.
+    struct Sources {
+        var clients: [NetworkClient]
+        var arp: [ARPEntry]
+        var leases: [DHCPLease]
+        var staticMappings: [StaticMapping]
+        var hostOverrides: [HostOverride]
+        var aliases: [FirewallAliasEntry]
+        var rules: [FirewallRule]
+        var portForwards: [PortForward]
+        var openvpnServers: [OpenVPNServerStatus]
+        var wireguardPeers: [WireGuardPeer]
+        var dnsblClients: [DNSBLCount]
+    }
+
     /// Everything that mentions the subject, in the order a person reads it:
     /// what the thing is first, then what touches it.
     ///
@@ -155,21 +171,10 @@ enum Investigation {
     /// naming an alias is about every address in it. Without that step, the
     /// most interesting answer — which of my rules actually applies to this
     /// device — is the one the search misses.
-    static func findings(for subject: Subject,
-                         clients: [NetworkClient],
-                         arp: [ARPEntry],
-                         leases: [DHCPLease],
-                         staticMappings: [StaticMapping],
-                         hostOverrides: [HostOverride],
-                         aliases: [FirewallAliasEntry],
-                         rules: [FirewallRule],
-                         portForwards: [PortForward],
-                         openvpnServers: [OpenVPNServerStatus],
-                         wireguardPeers: [WireGuardPeer],
-                         dnsblClients: [DNSBLCount]) -> [Finding] {
+    static func findings(for subject: Subject, in sources: Sources) -> [Finding] {
         var out: [Finding] = []
 
-        for client in clients where matches(subject, client.ip) || matches(subject, client.mac)
+        for client in sources.clients where matches(subject, client.ip) || matches(subject, client.mac)
             || matches(subject, client.hostname) || matches(subject, client.descr) {
             out.append(Finding(id: "client-\(client.id)", kind: .client,
                                title: client.name,
@@ -177,7 +182,7 @@ enum Investigation {
                                via: nil))
         }
 
-        for entry in arp where matches(subject, entry.ip) || matches(subject, entry.mac)
+        for entry in sources.arp where matches(subject, entry.ip) || matches(subject, entry.mac)
             || matches(subject, entry.hostname) {
             out.append(Finding(id: "arp-\(entry.id)", kind: .arp,
                                title: entry.ip,
@@ -185,7 +190,7 @@ enum Investigation {
                                via: nil))
         }
 
-        for lease in leases where matches(subject, lease.ip) || matches(subject, lease.mac)
+        for lease in sources.leases where matches(subject, lease.ip) || matches(subject, lease.mac)
             || matches(subject, lease.hostname) {
             out.append(Finding(id: "lease-\(lease.id)", kind: .lease,
                                title: lease.ip,
@@ -193,7 +198,7 @@ enum Investigation {
                                via: nil))
         }
 
-        for mapping in staticMappings where matches(subject, mapping.ip) || matches(subject, mapping.mac)
+        for mapping in sources.staticMappings where matches(subject, mapping.ip) || matches(subject, mapping.mac)
             || matches(subject, mapping.hostname) {
             out.append(Finding(id: "static-\(mapping.id)", kind: .staticMapping,
                                title: mapping.ip,
@@ -201,7 +206,7 @@ enum Investigation {
                                via: nil))
         }
 
-        for override in hostOverrides where matches(subject, override.ip)
+        for override in sources.hostOverrides where matches(subject, override.ip)
             || matches(subject, "\(override.host).\(override.domain)") {
             out.append(Finding(id: "override-\(override.id)", kind: .hostOverride,
                                title: "\(override.host).\(override.domain)",
@@ -211,7 +216,7 @@ enum Investigation {
         // Aliases first, and their names kept: a rule that names one is about
         // every address it holds.
         var aliasNames: Set<String> = []
-        for alias in aliases {
+        for alias in sources.aliases {
             let byName = matches(subject, alias.name)
             let member = alias.addresses.first { matches(subject, $0) }
             guard byName || member != nil else { continue }
@@ -222,7 +227,7 @@ enum Investigation {
                                via: member.map { "contains \($0)" }))
         }
 
-        for rule in rules {
+        for rule in sources.rules {
             // `sourceSide.address`, not `source`. The latter is the display
             // string and appends ":443" when the rule has a port, which makes
             // an exact address comparison fail on exactly the rules most worth
@@ -240,7 +245,7 @@ enum Investigation {
                                     ?? (rule.disabled ? "rule is disabled" : nil)))
         }
 
-        for forward in portForwards {
+        for forward in sources.portForwards {
             let direct = matches(subject, forward.target)
                 || matches(subject, forward.destinationSide.address)
                 || matches(subject, forward.sourceSide.address)
@@ -255,7 +260,7 @@ enum Investigation {
                                     ?? (forward.disabled ? "rule is disabled" : nil)))
         }
 
-        for server in openvpnServers {
+        for server in sources.openvpnServers {
             for connection in server.connections where matches(subject, connection.virtualAddress)
                 || matches(subject, connection.remoteHost) || matches(subject, connection.commonName) {
                 out.append(Finding(id: "ovpn-\(server.id)-\(connection.id)", kind: .vpn,
@@ -266,7 +271,7 @@ enum Investigation {
             }
         }
 
-        for peer in wireguardPeers {
+        for peer in sources.wireguardPeers {
             let byAddress = peer.allowedIPs.first { matches(subject, $0) }
             guard byAddress != nil || matches(subject, peer.endpoint)
                 || matches(subject, peer.descr) else { continue }
@@ -276,7 +281,7 @@ enum Investigation {
                                via: "peer on \(peer.tunnel) · \(peer.statusLabel)"))
         }
 
-        for client in dnsblClients where matches(subject, client.name) {
+        for client in sources.dnsblClients where matches(subject, client.name) {
             out.append(Finding(id: "dnsbl-\(client.id)", kind: .dnsbl,
                                title: "\(client.count) DNS requests blocked",
                                detail: client.name, via: nil))

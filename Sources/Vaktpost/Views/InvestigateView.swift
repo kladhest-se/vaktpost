@@ -24,17 +24,19 @@ struct InvestigateView: View {
         guard let subject else { return [] }
         return Investigation.findings(
             for: subject,
-            clients: store.overviewLayout.clients,
-            arp: store.arp,
-            leases: store.leases,
-            staticMappings: store.staticMappings,
-            hostOverrides: store.hostOverrides,
-            aliases: store.aliases,
-            rules: store.rules,
-            portForwards: store.portForwards,
-            openvpnServers: store.openvpnServers,
-            wireguardPeers: store.wireguardPeers,
-            dnsblClients: store.dnsblStats?.clients ?? []
+            in: Investigation.Sources(
+                clients: store.overviewLayout.clients,
+                arp: store.arp,
+                leases: store.leases,
+                staticMappings: store.staticMappings,
+                hostOverrides: store.hostOverrides,
+                aliases: store.aliases,
+                rules: store.rules,
+                portForwards: store.portForwards,
+                openvpnServers: store.openvpnServers,
+                wireguardPeers: store.wireguardPeers,
+                dnsblClients: store.dnsblStats?.clients ?? []
+            )
         )
     }
 
@@ -87,7 +89,8 @@ struct InvestigateView: View {
         if query.isEmpty {
             Notice(symbol: "magnifyingglass",
                    title: "Search everything at once",
-                   detail: "An address, a MAC or part of a name. This looks through the client list, ARP, leases, static mappings, DNS overrides, aliases, firewall rules, port forwards, VPN connections and DNSBL.")
+                   detail: "An address, a MAC or part of a name. This looks through the client list, ARP, leases, static mappings, "
+                       + "DNS overrides, aliases, firewall rules, port forwards, VPN connections and DNSBL.")
         } else if subject == nil {
             Notice(symbol: "text.magnifyingglass",
                    title: "Keep typing",
