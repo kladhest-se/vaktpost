@@ -155,6 +155,21 @@ struct FirewallView: View {
         // most people never open. Nothing called this, so the tab was empty.
         .task { await store.loadFirewallObjects() }
         .navigationTitle("Firewall")
+        // Not on `orderChangedBar`, where this used to live. That bar exists
+        // only `if ruleOrderIsDirty`, and `rulePendingOrder = nil` — which
+        // runs in both the success AND the failure branch of
+        // `saveRuleOrder()` — makes `ruleOrderIsDirty` false immediately.
+        // On failure specifically, that removed the bar, and with it this
+        // alert, at the exact moment the alert was needed: a SwiftUI alert
+        // cannot present on a view that is no longer part of the hierarchy.
+        // This is the identical shape of bug `RuleEditSheet` and
+        // `PortForwardEditSheet` were already fixed for — an error caught on
+        // a view that is not the one left on screen when it happens — and
+        // this feature was built without carrying that lesson over. Anchored
+        // here instead: the same stable, always-present container `.task`
+        // and `.navigationTitle` already live on, so it exists whether or
+        // not a reorder is in progress.
+        .writeErrorAlert(isErrorPresented: $showReorderErrorAlert, error: $reorderError)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 // Only on the rules pane, and only once an interface is
@@ -459,7 +474,6 @@ struct FirewallView: View {
             onConfirm: saveRuleOrder,
             onCancel: {}
         )
-        .writeErrorAlert(isErrorPresented: $showReorderErrorAlert, error: $reorderError)
     }
 
     private var reorderPreview: String {

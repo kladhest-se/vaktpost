@@ -1,5 +1,44 @@
 # Changelog
 
+## A reorder failure could never actually show its error
+
+Found by re-reading my own reasoning rather than proposing another guess: I
+had concluded "no error appeared, so the write and its verification must have
+succeeded" — and that conclusion was wrong, because the alert that would have
+shown a failure could not physically present, regardless of whether the
+write failed or not. The absence of an error proved nothing.
+
+`.writeErrorAlert` for a failed reorder was attached to `orderChangedBar` —
+the "Order changed / Discard / Save order" bar itself, which only renders
+`if ruleOrderIsDirty`. `rulePendingOrder = nil` runs in *both* the success
+and the failure branch of `saveRuleOrder()` — success, correctly, and
+failure, from the round that fixed "stuck resubmitting a doomed payload
+forever." Either way, the moment that line runs, `ruleOrderIsDirty` becomes
+false and the bar disappears — taking its attached alert with it. On
+failure specifically, that removes the alert at the exact instant it needed
+to appear: a SwiftUI alert cannot present on a view that is no longer part
+of the hierarchy.
+
+This is the identical shape of bug `RuleEditSheet` and `PortForwardEditSheet`
+were already fixed for, earlier in this project — an error caught on a view
+that is not the one left on screen when the failure happens. This feature
+was built without carrying that lesson forward into new code, which is worse
+than not knowing the lesson existed.
+
+The alert is now attached to the screen's own stable container — the same
+one `.task`, `.navigationTitle`, and `.toolbar` already live on — which
+exists regardless of pane, interface selection, or whether a pending order
+exists. Every other `.writeErrorAlert` in this file was already anchored
+this way; this one was the sole exception, and is not anymore.
+
+**What this means for the actual reorder problem**: unresolved. The write
+may have been failing with a real, specific error this whole time, silently,
+because the alert meant to show it could not appear. The next attempt should
+finally surface whatever that error actually is — which may be the tracker
+mismatch already investigated, or may be something this bug has been hiding
+entirely. Everything concluded from "no error was shown" in the last two
+rounds should be treated as unproven rather than ruled out.
+
 ## Rule and forward rows resolved aliases pfSense shows by name
 
 pfSense's own rules list shows "alias_host_nas003" — the alias, clickable,
