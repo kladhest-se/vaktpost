@@ -3118,6 +3118,29 @@ struct PHPSnippet: Sendable {
                 $vaktpost_detail[] = "separators not currently on this interface: " . implode(", ", $vaktpost_extra_seps);
               }
             }
+            // Two rounds of this reported specific missing or extra trackers
+            // and keys, and the same two trackers kept coming back "no
+            // longer exists anywhere" regardless. That answers whether a
+            // mismatch exists, but not the more useful question: what does
+            // the firewall actually have on this interface right now,
+            // independent of anything the app believes? Reported plainly
+            // here — every tracker and description currently on this
+            // interface, every separator key and its text — so the two
+            // sides of the disagreement are both visible in the same
+            // message rather than one being inferred from the other.
+            $vaktpost_current_summary = [];
+            foreach ($vaktpost_original_trackers as $vaktpost_cur_tracker) {
+              $vaktpost_cur_rule = $vaktpost_by_tracker[$vaktpost_cur_tracker];
+              $vaktpost_current_summary[] = $vaktpost_cur_tracker . ' ("' .
+                strval($vaktpost_cur_rule["descr"] ?? "") . '")';
+            }
+            foreach ($vaktpost_existing_sep_keys as $vaktpost_cur_sep_key) {
+              $vaktpost_cur_sep = $vaktpost_existing_seps[$vaktpost_cur_sep_key];
+              $vaktpost_current_summary[] = $vaktpost_cur_sep_key . ' ("' .
+                strval($vaktpost_cur_sep["text"] ?? "") . '", separator)';
+            }
+            $vaktpost_detail[] = 'currently on "' . $vaktpost_interface . '": '
+              . (empty($vaktpost_current_summary) ? "(nothing)" : implode(", ", $vaktpost_current_summary));
             $toreturn["status"] = "mismatch";
             // Colon, not a parenthesis, ahead of the detail clause: the
             // publish gate's function-call scanner reads PHP string contents

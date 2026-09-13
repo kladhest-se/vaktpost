@@ -1,5 +1,32 @@
 # Changelog
 
+## The mismatch error now shows both sides of the disagreement
+
+The alert fix worked — the real error finally surfaced, and it is genuinely
+reproducible: the same two trackers, every attempt, reported as not existing
+anywhere in the ruleset, now joined by a third fact — the separator key
+itself doesn't match either. That rules out the silent-failure theory
+entirely. What it does not yet say is which side is actually wrong: whether
+this app is reading incorrect or stale trackers for these two rules, or
+whether it has a genuinely different picture of what's on this interface
+than the firewall does, for a reason not yet found.
+
+Rather than propose a ninth hypothesis, the error now shows both sides
+directly. Every previous round reported what was *missing* or *extra* in the
+submission, one tracker or key at a time, relative to what the interface
+already had — useful when most of a submission was right and one item was
+wrong, useless when nothing overlaps at all, which is exactly what's
+happening here. It now also states plainly what the interface currently
+has, in full, regardless of what was submitted: every rule's tracker and
+description, every separator's key and text. The next failure should show
+directly whether the app's own two trackers appear in that list under
+different values, or whether the interface's real rules turn out to be two
+completely different rules the app isn't showing at all.
+
+Verified against the real PHP interpreter: a new `write-contract` case
+submits an order with zero overlap with the interface's actual state and
+asserts the response reports the interface's true current contents in full.
+
 ## A reorder failure could never actually show its error
 
 Found by re-reading my own reasoning rather than proposing another guess: I
