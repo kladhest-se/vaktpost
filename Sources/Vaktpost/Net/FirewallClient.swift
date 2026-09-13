@@ -520,6 +520,36 @@ actor FirewallClient {
         )
     }
 
+    /// Creates or updates one separator in an interface's filter rules.
+    func saveFilterSeparator(separator: JSONDict) async throws -> JSONDict {
+        try requireAdministration()
+        let isCreate = separator.bool("create") ?? false
+        let key = separator.string("key") ?? ""
+        guard (isCreate && key.isEmpty) || (!isCreate && !key.isEmpty) else {
+            throw RPCError.malformed(isCreate
+                                     ? "Separator creation must not supply a key."
+                                     : "Separator editing requires its pfSense key.")
+        }
+        let dict = try await rpc.runObjectOnce(PHPSnippet.saveFilterSeparator(separator: separator))
+        let result = try Self.validatedPendingWriteResponse(dict, operation: "Separator save")
+        guard !(result.string("key") ?? "").isEmpty else {
+            throw RPCError.fault(0, "Separator save did not return its pfSense key.")
+        }
+        return result
+    }
+
+    /// Deletes one separator from an interface's filter rules.
+    func deleteFilterSeparator(interface: String, key: String) async throws -> JSONDict {
+        try requireAdministration()
+        guard !interface.isEmpty, !key.isEmpty else {
+            throw RPCError.malformed("Separator deletion requires an interface and key.")
+        }
+        let dict = try await rpc.runObjectOnce(
+            PHPSnippet.deleteFilterSeparator(interface: interface, key: key)
+        )
+        return try Self.validatedPendingWriteResponse(dict, operation: "Separator deletion")
+    }
+
     /// One item in a drag-produced order: a rule by tracker, or a separator
     /// by its pfSense key.
     enum ReorderItem {

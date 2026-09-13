@@ -62,7 +62,9 @@ struct PHPSnippet: Sendable {
         "save_nat_rule",        // replaces one NAT rule
         "restart_service",      // restarts one named service
         "flush_states",         // drops the state table, or one interface's
-        "reorder_filter_rules"  // reorders one interface's rules and separators
+        "reorder_filter_rules", // reorders one interface's rules and separators
+        "save_filter_separator",// creates or edits one filter separator
+        "delete_filter_separator" // removes one filter separator
         // A NAT equivalent was written and removed before it was wired to
         // anything. pfSense assigns no tracker to a NAT rule at all — neither
         // `firewall_nat.php` nor `firewall_nat_edit.php` reference one — so a
@@ -72,10 +74,11 @@ struct PHPSnippet: Sendable {
         // changelog for what that would take.
     ]
 
-    // The last two were not on this list when it was first written, and the
-    // check found them. That is the argument for having it: the app's write
-    // surface was believed to be six operations and was eight, and nothing
-    // anywhere said so.
+    // Earlier operations were not on this list when it was first written,
+    // and the check found them. That is the argument for having it: the app's
+    // write surface was once believed to be six operations and was eight,
+    // and nothing anywhere said so. New reorder and separator writes are now
+    // explicit here at the moment they are introduced.
     //
     // The names these snippets carried made that worse — `delete_rule_\(tracker)`
     // and `save_nat_\(descr)` meant every call produced a different name, so
@@ -2473,33 +2476,10 @@ struct PHPSnippet: Sendable {
     """)
 
     /// The grouping bars pfSense draws between rules — "Teamspeak" in a list
-    /// of port forwards, for instance. Read-only: there is no
-    /// `writeOperations` entry for this, and there never should be one from
-    /// evidence this thin.
-    ///
-    /// Confirmed from pfSense's own source: they live at
-    /// `filter/separator/<lowercase interface>`, one `sepN` entry per
-    /// separator. What is **not** confirmed — because nothing short of a
-    /// live firewall or the actual rendering function would confirm it — is
-    /// the exact key holding the label inside one `sepN` entry (`text` on
-    /// some pfSense versions, `subtext` reported elsewhere) or the precise
-    /// meaning of its position field. So every plausible key is tried in
-    /// order and the position is passed through as the raw string pfSense
-    /// wrote, for the app to interpret defensively rather than this snippet
-    /// asserting a meaning it cannot verify.
-    ///
-    /// NAT's own separator path is read the same way, one level down at
-    /// `nat/separator`, on the working assumption that it mirrors the filter
-    /// side — visible in the pfSense UI, but not something this snippet's
-    /// author has confirmed against source. If the assumption is wrong this
-    /// simply returns nothing for NAT, which is a quiet miss, not a wrong
-    /// answer.
-    /// The grouping bars pfSense draws between rules — "Teamspeak" in a list
-    /// of port forwards, for instance. Read-only: there is no
-    /// `writeOperations` entry for this, and reordering rules or separators
-    /// safely needs pfSense's own `shift_separators()` renumbering logic
-    /// ported faithfully first — see the note on `RuleSeparator` for why
-    /// that is a separate piece of work.
+    /// of port forwards, for instance. Filter separators can be created,
+    /// edited, deleted and reordered; NAT separators remain read-only because
+    /// their flat, cross-interface position semantics are a different write
+    /// surface.
     ///
     /// Confirmed against pfSense's actual `filter.inc` (`display_separator`,
     /// `separator_rows`), not inferred, because the first version of this
@@ -3039,7 +3019,188 @@ struct PHPSnippet: Sendable {
         """)
     }
 
-    /// Deletes a NAT/port forward rule by tracker ID.
+    /// Creates or updates one filter-rule separator using pfSense's native
+    /// `filter/separator/<interface>/sepN` shape. Position is the number of
+    /// interface rules preceding the separator, encoded as `["frN"]`.
+    static func saveFilterSeparator(separator: JSONDict) -> PHPSnippet {
+        let encoded = payload(separator)
+        return PHPSnippet("save_filter_separator", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        global $config;
+        $toreturn = [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_interface = trim(strval($vaktpost_input["interface"] ?? ""));
+        $vaktpost_key = trim(strval($vaktpost_input["key"] ?? ""));
+        $vaktpost_text = trim(strval($vaktpost_input["text"] ?? ""));
+        $vaktpost_color = trim(strval($vaktpost_input["color"] ?? "info"));
+        $vaktpost_position = intval($vaktpost_input["position"] ?? -1);
+        $vaktpost_create = ($vaktpost_input["create"] ?? false) === true;
+
+        $vaktpost_filter = is_array($config["filter"] ?? null) ? $config["filter"] : [];
+        $vaktpost_rules = is_array($vaktpost_filter["rule"] ?? null)
+          ? $vaktpost_filter["rule"] : [];
+        $vaktpost_interface_rule_count = 0;
+        foreach ($vaktpost_rules as $vaktpost_rule) {
+          if (!is_array($vaktpost_rule)) { continue; }
+          $vaktpost_rule_interface = $vaktpost_rule["interface"] ?? "";
+          $vaktpost_rule_interface = is_array($vaktpost_rule_interface)
+            ? implode(",", $vaktpost_rule_interface) : strval($vaktpost_rule_interface);
+          if ($vaktpost_rule_interface === $vaktpost_interface) {
+            $vaktpost_interface_rule_count = $vaktpost_interface_rule_count + 1;
+          }
+        }
+
+        if (!array_key_exists($vaktpost_interface, get_configured_interface_with_descr())
+            || $vaktpost_text === ""
+            || !in_array($vaktpost_color, ["info", "success", "warning", "danger"], true)
+            || $vaktpost_position < 0
+            || $vaktpost_position > $vaktpost_interface_rule_count) {
+          $toreturn["status"] = "validation_failed";
+          $toreturn["error"] = "The separator interface, text, color, or position is invalid";
+        } else {
+          $vaktpost_all_separators = is_array($vaktpost_filter["separator"] ?? null)
+            ? $vaktpost_filter["separator"] : [];
+          $vaktpost_separators = is_array($vaktpost_all_separators[$vaktpost_interface] ?? null)
+            ? $vaktpost_all_separators[$vaktpost_interface] : [];
+
+          if ($vaktpost_create) {
+            $vaktpost_number = 0;
+            $vaktpost_key = "sep" . $vaktpost_number;
+            while (array_key_exists($vaktpost_key, $vaktpost_separators)) {
+              $vaktpost_number = $vaktpost_number + 1;
+              $vaktpost_key = "sep" . $vaktpost_number;
+            }
+            $vaktpost_separators[$vaktpost_key] = [];
+          }
+
+          if ($vaktpost_key === "" || !array_key_exists($vaktpost_key, $vaktpost_separators)) {
+            $toreturn["status"] = "not_found";
+            $toreturn["error"] = "The separator is no longer present";
+          } else {
+            $vaktpost_separators[$vaktpost_key]["text"] = $vaktpost_text;
+            $vaktpost_separators[$vaktpost_key]["color"] = $vaktpost_color;
+            $vaktpost_separators[$vaktpost_key]["row"] = ["fr" . $vaktpost_position];
+            $vaktpost_all_separators[$vaktpost_interface] = $vaktpost_separators;
+            $vaktpost_filter["separator"] = $vaktpost_all_separators;
+            $config["filter"] = $vaktpost_filter;
+
+            $vaktpost_audit_session_started = false;
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              $vaktpost_audit_session_started = session_start([
+                "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+              ]);
+            }
+            $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+            if ($vaktpost_authenticated_user !== "") {
+              $_SESSION["Username"] = $vaktpost_authenticated_user;
+              $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+              if (is_array($vaktpost_authcfg)) {
+                $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+                $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+                if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                  $_SESSION["authsource"] = "Local Database";
+                } else {
+                  $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                    . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+                }
+              }
+            }
+            write_config($vaktpost_create
+              ? "Vaktpost: added a rule separator on " . $vaktpost_interface
+              : "Vaktpost: edited a rule separator on " . $vaktpost_interface);
+            if ($vaktpost_audit_session_started) {
+              if (session_status() !== PHP_SESSION_ACTIVE) {
+                session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+              }
+              if (session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION = [];
+                session_destroy();
+              }
+            }
+            mark_subsystem_dirty("filter");
+            $toreturn = [
+              "status" => "ok", "apply_pending" => true,
+              "key" => $vaktpost_key, "interface" => $vaktpost_interface,
+              "text" => $vaktpost_text, "color" => $vaktpost_color,
+              "position" => $vaktpost_position, "created" => $vaktpost_create
+            ];
+          }
+        }
+        """)
+    }
+
+    /// Deletes one filter-rule separator without touching the rules around it.
+    static func deleteFilterSeparator(interface: String, key: String) -> PHPSnippet {
+        let encoded = payload(JSONDict([
+            "interface": .string(interface), "key": .string(key)
+        ]))
+        return PHPSnippet("delete_filter_separator", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        global $config;
+        $toreturn = [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_interface = trim(strval($vaktpost_input["interface"] ?? ""));
+        $vaktpost_key = trim(strval($vaktpost_input["key"] ?? ""));
+        $vaktpost_filter = is_array($config["filter"] ?? null) ? $config["filter"] : [];
+        $vaktpost_all_separators = is_array($vaktpost_filter["separator"] ?? null)
+          ? $vaktpost_filter["separator"] : [];
+        $vaktpost_separators = is_array($vaktpost_all_separators[$vaktpost_interface] ?? null)
+          ? $vaktpost_all_separators[$vaktpost_interface] : [];
+
+        if ($vaktpost_interface === "" || $vaktpost_key === ""
+            || !array_key_exists($vaktpost_key, $vaktpost_separators)) {
+          $toreturn["status"] = "not_found";
+          $toreturn["error"] = "The separator is no longer present";
+        } else {
+          unset($vaktpost_separators[$vaktpost_key]);
+          $vaktpost_all_separators[$vaktpost_interface] = $vaktpost_separators;
+          $vaktpost_filter["separator"] = $vaktpost_all_separators;
+          $config["filter"] = $vaktpost_filter;
+
+          $vaktpost_audit_session_started = false;
+          if (session_status() !== PHP_SESSION_ACTIVE) {
+            $vaktpost_audit_session_started = session_start([
+              "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+            ]);
+          }
+          $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+          if ($vaktpost_authenticated_user !== "") {
+            $_SESSION["Username"] = $vaktpost_authenticated_user;
+            $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+            if (is_array($vaktpost_authcfg)) {
+              $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+              $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+              if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                $_SESSION["authsource"] = "Local Database";
+              } else {
+                $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                  . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+              }
+            }
+          }
+          write_config("Vaktpost: deleted a rule separator on " . $vaktpost_interface);
+          if ($vaktpost_audit_session_started) {
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+            }
+            if (session_status() === PHP_SESSION_ACTIVE) {
+              $_SESSION = [];
+              session_destroy();
+            }
+          }
+          mark_subsystem_dirty("filter");
+          $toreturn = ["status" => "ok", "apply_pending" => true,
+            "key" => $vaktpost_key, "interface" => $vaktpost_interface];
+        }
+        """)
+    }
+
     /// Reorders one interface's filter rules, and recomputes its separators'
     /// positions to match — the operation behind dragging a rule or a
     /// separator to a new spot.

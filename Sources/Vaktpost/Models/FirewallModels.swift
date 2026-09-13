@@ -509,14 +509,10 @@ struct DNSBLStats {
 /// One grouping bar pfSense draws between rules, on one interface, in one
 /// section (filter rules or NAT).
 ///
-/// Read-only in every direction: there is no write path for this and none is
-/// planned from what is confirmed here. pfSense stores separator position as
-/// a bare row count rather than anchoring it to a rule's tracker, and its own
-/// users report separators drifting out of place after an ordinary insert or
-/// delete performed from pfSense's *own* web UI. Writing this from a second,
-/// independent piece of software without the exact placement semantics
-/// confirmed would risk making that worse, for a feature that changes
-/// nothing about what traffic is allowed.
+/// pfSense stores separator position as a bare row count rather than anchoring
+/// it to a rule's tracker. Vaktpost therefore validates and writes the complete
+/// native `["frN"]` position, then reads the separator back before reporting
+/// success. Drag reordering and the editor use the same count semantics.
 struct RuleSeparator: Identifiable {
     /// Filter keys are only unique within one interface, since storage itself
     /// groups them that way; NAT keys are already unique on their own, since

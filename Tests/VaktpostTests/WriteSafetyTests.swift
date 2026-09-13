@@ -95,6 +95,15 @@ final class WriteSafetyTests: XCTestCase {
         XCTAssertEqual(AdministrativeWrite.saveRule(rule: move, displayName: "old").action, .reorderRules)
         XCTAssertEqual(AdministrativeWrite.saveNatRule(rule: create, displayName: "new").action, .addPortForward)
         XCTAssertEqual(AdministrativeWrite.saveNatRule(rule: edit, displayName: "old").action, .editPortForward)
+        XCTAssertEqual(AdministrativeWrite.saveFilterSeparator(
+            separator: create, displayName: "new"
+        ).action, .addSeparator)
+        XCTAssertEqual(AdministrativeWrite.saveFilterSeparator(
+            separator: edit, displayName: "old"
+        ).action, .editSeparator)
+        XCTAssertEqual(AdministrativeWrite.deleteFilterSeparator(
+            interface: "lan", key: "sep0", displayName: "old"
+        ).action, .deleteSeparator)
     }
 
     func testAdministrativePreviewNamesNativeSystemSelectors() {

@@ -2,66 +2,43 @@ import SwiftUI
 
 /// View for reloading the firewall ruleset.
 ///
-/// Provides a single action to reload the pf ruleset in place without
-/// restarting services. The user must explicitly confirm before the
-/// operation is executed, and the action is logged to the audit trail.
+/// This screen is itself the review and confirmation step: it shows the
+/// pending changes and provides one explicit action to load them.
 struct FirewallReloadView: View {
 
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
     @Environment(\.dismiss) private var dismiss
 
-    @State private var showConfirmation = false
     @State private var isReloading = false
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
     @State private var lastReloadTime: Date?
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    statusCard
+        ScrollView {
+            VStack(spacing: 18) {
+                statusCard
 
-                    AdministrationModeNotice()
+                pendingChangesSection
 
-                    pendingChangesSection
+                AdministrationModeNotice()
 
-                    reloadCard
+                applyButton
 
-                    historySection
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 24)
-                .padding(.bottom, 28)
+                historySection
             }
-            .background(theme.bg.ignoresSafeArea())
-            .navigationTitle("Apply firewall changes")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    if !isReloading {
-                        Button("Done") { dismiss() }
-                    } else {
-                        ProgressView()
-                    }
-                }
-            }
-            .confirmationSheet(
-                isPresented: $showConfirmation,
-                title: "Apply firewall changes",
-                message: applyPreview,
-                destructive: true,
-                destructiveLabel: "Apply Changes",
-                confirmLabel: "Cancel",
-                onConfirm: confirmReload,
-                onCancel: {}
-            )
-            .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
-            .task { await store.refresh() }
-            .refreshable {
-                await store.refresh()
-            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 28)
+        }
+        .background(theme.bg.ignoresSafeArea())
+        .navigationTitle("Apply firewall changes")
+        .navigationBarTitleDisplayMode(.inline)
+        .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+        .task { await store.refresh() }
+        .refreshable {
+            await store.refresh()
         }
     }
 
@@ -90,6 +67,7 @@ struct FirewallReloadView: View {
     private func isStagedFirewallChange(_ action: AuditAction) -> Bool {
         switch action {
         case .addRule, .editRule, .deleteRule, .reorderRules,
+             .addSeparator, .editSeparator, .deleteSeparator,
              .addPortForward, .editPortForward, .deletePortForward, .quickBlock:
             return true
         default:
@@ -192,20 +170,9 @@ struct FirewallReloadView: View {
         case .editRule, .editPortForward: return "pencil"
         case .deleteRule, .deletePortForward: return "trash"
         case .reorderRules: return "arrow.up.arrow.down"
+        case .addSeparator, .editSeparator, .deleteSeparator: return "rectangle.split.1x2"
         default: return "circle"
         }
-    }
-
-    private var applyPreview: String {
-        var text = store.writeCoordinator.preview(for: .reloadFirewall)
-        if !pendingVaktpostChanges.isEmpty {
-            text += "\n\nVaktpost changes since the last apply:"
-            for entry in pendingVaktpostChanges {
-                text += "\n• \(entry.summary)"
-            }
-        }
-        text += "\n\nThis applies pfSense's complete pending ruleset, which may also contain changes made outside Vaktpost."
-        return text
     }
 
     // MARK: - Status card
@@ -220,92 +187,55 @@ struct FirewallReloadView: View {
                     .scaledFont(15, weight: .semibold)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Loaded rules")
-                        .scaledFont(13)
-                        .foregroundStyle(theme.labelMuted)
-                    Spacer()
-                    Text("\(store.rules.count)")
-                        .scaledFont(13, weight: .semibold)
-                        .foregroundStyle(theme.label)
-                }
-
-                HStack {
-                    Text("Port forwards")
-                        .scaledFont(13)
-                        .foregroundStyle(theme.labelMuted)
-                    Spacer()
-                    Text("\(store.portForwards.count)")
-                        .scaledFont(13, weight: .semibold)
-                        .foregroundStyle(theme.label)
-                }
-
-                HStack {
-                    Text("Aliases")
-                        .scaledFont(13)
-                        .foregroundStyle(theme.labelMuted)
-                    Spacer()
-                    Text("\(store.aliases.count)")
-                        .scaledFont(13, weight: .semibold)
-                        .foregroundStyle(theme.label)
-                }
-
-                HStack {
-                    Text("Pending changes")
-                        .scaledFont(13)
-                        .foregroundStyle(theme.labelMuted)
-                    Spacer()
-                    Text(store.firewallChangesPending ? "Waiting to be applied" : "None")
-                        .scaledFont(13, weight: .semibold)
-                        .foregroundStyle(store.firewallChangesPending ? theme.warn : theme.ok)
-                }
+            HStack(spacing: 0) {
+                rulesetMetric("Rules", store.rules.count)
+                Divider().overlay(theme.hairline)
+                rulesetMetric("Forwards", store.portForwards.count)
+                Divider().overlay(theme.hairline)
+                rulesetMetric("Aliases", store.aliases.count)
             }
         }
         .padding(16)
         .background(theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    // MARK: - Reload action card
+    private func rulesetMetric(_ label: String, _ value: Int) -> some View {
+        VStack(spacing: 3) {
+            Text("\(value)")
+                .scaledFont(16, weight: .semibold, design: .monospaced)
+                .foregroundStyle(theme.label)
+            Text(label)
+                .scaledFont(10, weight: .medium)
+                .foregroundStyle(theme.labelMuted)
+        }
+        .frame(maxWidth: .infinity)
+    }
 
-    private var reloadCard: some View {
-        VStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: "arrow.clockwise")
-                        .scaledFont(14)
-                        .foregroundStyle(theme.warn)
-                    Text("Apply Changes")
-                        .scaledFont(14, weight: .semibold)
-                }
+    // MARK: - Apply action
 
-                Text("Apply all pending filter and NAT changes saved on pfSense, including changes made in the web UI or by another administrator.")
-                    .scaledFont(13)
-                    .foregroundStyle(theme.labelMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
+    private var applyButton: some View {
+        VStack(spacing: 9) {
             Button {
                 writeError = nil
-                showConfirmation = true
+                Task { await confirmReload() }
             } label: {
-                HStack {
+                HStack(spacing: 9) {
                     if isReloading {
                         ProgressView()
                             .progressViewStyle(.circular)
                         Text("Applying…")
                     } else {
-                        Spacer()
-                        Text(store.firewallChangesPending ? "Apply Changes" : "No changes to apply")
                         Image(systemName: store.firewallChangesPending ? "arrow.clockwise" : "checkmark")
+                        Text(store.firewallChangesPending ? "Apply Changes" : "No changes to apply")
                     }
                 }
-                .foregroundStyle(theme.warn)
+                .foregroundStyle(.white)
                 .font(.headline)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-                .background(theme.warn.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .padding(.vertical, 14)
+                .background(theme.accentColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
+            .buttonStyle(.plain)
             .disabled(isReloading || !store.canAdminister || !store.firewallChangesPending)
             .opacity(store.canAdminister && store.firewallChangesPending ? 1 : 0.55)
 
@@ -320,8 +250,6 @@ struct FirewallReloadView: View {
                 }
             }
         }
-        .padding(16)
-        .background(theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     // MARK: - History section
@@ -342,7 +270,7 @@ struct FirewallReloadView: View {
     }
 
     private var recentApplies: [AuditTrail.Entry] {
-        Array(store.auditTrail.entries.filter { $0.action == .reloadFirewall }.suffix(5))
+        Array(store.auditTrail.entries.filter { $0.action == .reloadFirewall }.suffix(3))
     }
 
     private func auditRow(_ entry: AuditTrail.Entry) -> some View {
@@ -372,6 +300,12 @@ struct FirewallReloadView: View {
             _ = try await store.writeCoordinator.execute(.reloadFirewall)
             lastReloadTime = Date()
             await store.refreshFirewallObjectsAfterWrite()
+            // The review has served its purpose once pfSense confirms that
+            // nothing remains staged. Keep it open if a concurrent WebUI or
+            // administrator change left the global dirty marker set.
+            if !store.firewallChangesPending {
+                dismiss()
+            }
         } catch {
             writeError = WriteError.from(error, operation: .reloadFirewall)
             showErrorAlert = true

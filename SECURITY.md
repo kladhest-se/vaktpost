@@ -99,7 +99,7 @@ safe retry.
 
 Read-only calls may retry once after a transient transport failure.
 Administrative calls use a separate one-attempt transport and are never
-automatically resent. This distinction is enforced for all eight operations by
+automatically resent. This distinction is enforced for all eleven operations by
 `vaktpost-tools/tests/lost-response.sh`.
 
 Audit records are separated by firewall and encrypted with AES-GCM. The audit
@@ -215,12 +215,12 @@ this app could undo it.
 
 This build **is not read-only**, and the comparison has to start there rather
 than with how the difference is checked. It can delete a firewall rule. What it
-offers instead is an **enumerated** surface: eight operations, named in one
+offers instead is an **enumerated** surface: eleven operations, named in one
 file, each one a line somebody had to add on purpose, with a check that fails if
-a ninth appears or if one of the eight quietly stops being used.
+a twelfth appears or if one of the eleven quietly stops being used.
 
 Every newly added or migrated firewall nevertheless starts in **monitor-only
-mode**. The client rejects all eight mutation methods before transport in that
+mode**. The client rejects all eleven mutation methods before transport in that
 mode. Enabling administration is stored per firewall and requires an explicit
 risk acknowledgement, but no Face ID or Touch ID evaluation. Biometric checks
 remain in place for revealing or replacing a stored password and for the

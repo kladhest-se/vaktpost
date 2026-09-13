@@ -1,5 +1,43 @@
 # Changelog
 
+## Filter separators can be added, edited, moved, and deleted
+
+The Firewall screen's plus action is now a menu with Rule and Separator.
+Choosing Separator opens a focused editor for its label, pfSense colour, and
+position relative to the selected interface's rules.
+
+Existing filter separators are tappable. Their detail screen supports rename,
+colour and position changes, plus deletion. Every separator write uses the
+same administration guard, protected audit record, single-attempt transport,
+fresh-state preflight, and read-back verification as rule writes. Saving only
+marks pfSense's filter configuration dirty; it remains inactive until the
+shared Apply Changes screen is used.
+
+## Successful Apply returns to the rules screen
+
+After Apply Changes succeeds, Vaktpost now refreshes the firewall objects and
+checks pfSense's global dirty marker. When nothing remains pending, the review
+screen closes automatically. It stays open if a concurrent WebUI or other
+administrator change left more work waiting, or if applying reports an error.
+
+## Rule details use the standard back button
+
+Firewall-rule and port-forward detail screens no longer add a redundant Close
+action beside the navigation title. The standard back button is now the single
+way to return to the rules list.
+
+## Apply Changes is now the confirmation, not a route to another one
+
+The Apply firewall changes page now uses the ordinary navigation back button;
+its duplicate Done action and nested navigation stack are gone. The page no
+longer opens another confirmation popup after the user has already reviewed
+the pending changes and deliberately pressed Apply Changes.
+
+The layout is more compact: rules, forwards, and aliases are presented as a
+single summary row, the pending-change review remains the focus, only three
+recent applies are shown, and the apply action is a centred, full-width primary
+button without a second surrounding card repeating the same explanation.
+
 ## Disabled rules, staged editing, and Apply review now match pfSense
 
 pfSense represents configuration presence flags such as `<disabled/>` and
@@ -27,7 +65,7 @@ Quick Block, filter-rule save/delete/reorder, and port-forward save/delete no
 longer reload the live ruleset. They write the configuration and set pfSense's
 native `filter` or `natconf` dirty marker, like the corresponding WebUI pages.
 The Firewall screen reads those markers, shows a pending-changes banner, and
-links to **Apply firewall changes**. Its confirmation warns that applying
+links to **Apply firewall changes**. The review page warns that applying
 activates every pending filter and NAT edit on the appliance, including WebUI
 changes from another administrator.
 

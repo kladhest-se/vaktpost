@@ -19,6 +19,8 @@ struct FirewallView: View {
     @State private var selection: String?
     /// A new rule being drafted, if any. Nil closes the sheet.
     @State private var newRule: RuleEditForm?
+    /// A new filter separator being drafted for the selected interface.
+    @State private var newSeparator: SeparatorEditForm?
     /// A new port forward being drafted.
     @State private var newForward: PortForwardEditForm?
     // No writeError/showErrorAlert here any more. createRule and
@@ -52,6 +54,8 @@ struct FirewallView: View {
                 // the ids cannot collide: a rule's is its tracker.
                 if let rule = store.rules.first(where: { $0.id == id }) {
                     RuleDetailView(rule: rule)
+                } else if let separator = store.filterSeparators.first(where: { $0.id == id }) {
+                    SeparatorDetailView(separator: separator)
                 } else if let pf = store.portForwards.first(where: { $0.id == id }) {
                     PortForwardDetailView(forward: pf)
                 } else {
@@ -209,10 +213,25 @@ struct FirewallView: View {
                 if let interface = interfaceFilter {
                     switch pane {
                     case .rules:
-                        Button {
-                            newRule = RuleEditForm.blank(interface: interface)
+                        Menu {
+                            Button {
+                                newRule = RuleEditForm.blank(interface: interface)
+                            } label: {
+                                Label("Rule", systemImage: "shield")
+                            }
+                            Button {
+                                let ruleCount = store.rules.filter {
+                                    !$0.isFloating && $0.interfaceName == interface
+                                }.count
+                                newSeparator = SeparatorEditForm.blank(
+                                    interface: interface,
+                                    position: ruleCount
+                                )
+                            } label: {
+                                Label("Separator", systemImage: "rectangle.split.1x2")
+                            }
                         } label: {
-                            Label("New rule", systemImage: "plus")
+                            Label("Add", systemImage: "plus")
                         }
                     case .nat:
                         Button {
@@ -240,6 +259,15 @@ struct FirewallView: View {
                               "interface": .string(form.interface)
                           ]))),
                           onSave: { saved in try await createRule(saved) })
+        }
+        .sheet(item: $newSeparator) { form in
+            SeparatorEditSheet(
+                form: form,
+                rules: store.rules.filter {
+                    !$0.isFloating && $0.interfaceName == form.interface
+                },
+                onSave: { saved in try await createSeparator(saved) }
+            )
         }
         .sheet(item: $newForward) { form in
             PortForwardEditSheet(form: form,
@@ -286,6 +314,16 @@ struct FirewallView: View {
             )
         )
         await store.refreshManually()
+    }
+
+    /// Add a filter separator. Like rule edits, this only changes pfSense's
+    /// saved configuration; the shared Apply Changes screen activates the
+    /// pending ruleset in one deliberate step.
+    private func createSeparator(_ form: SeparatorEditForm) async throws {
+        _ = try await store.writeCoordinator.execute(
+            .saveFilterSeparator(separator: form.toDict(), displayName: form.text)
+        )
+        await store.refreshFirewallObjectsAfterWrite()
     }
 
     // MARK: Rules
@@ -421,7 +459,7 @@ struct FirewallView: View {
     private var rulesPane: some View {
         if let err = store.errors[.firewall] {
             Notice(symbol: "exclamationmark.triangle", title: "Rules unavailable", detail: err, health: .warn)
-        } else if filteredRules.isEmpty {
+        } else if filteredRules.isEmpty && rulesSeparatorsForCurrentSelection.isEmpty {
             let title = showFloating ? "No floating rules" : "No rules returned"
             Notice(symbol: "shield.slash", title: query.isEmpty ? title : "No matches")
         } else if !untrackedRulesOnSelectedInterface.isEmpty {
@@ -546,7 +584,10 @@ struct FirewallView: View {
                     Button { selection = rule.id } label: { RuleRow(rule: rule) }
                         .buttonStyle(.plain)
                 case .separator(let separator):
-                    SeparatorBar(separator: separator)
+                    Button { selection = separator.id } label: {
+                        SeparatorBar(separator: separator, showsDisclosure: true)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -841,8 +882,7 @@ struct RuleDragHandle: View {
     }
 }
 
-/// One of pfSense's own grouping bars, drawn the way its list draws them:
-/// a coloured strip with a label, no rail, nothing tappable.
+/// One of pfSense's own grouping bars, drawn the way its list draws them.
 ///
 /// The colour names — info/warning/danger/success — come from the ansible
 /// pfSense module's own documented choices for this field, not from this
@@ -850,6 +890,7 @@ struct RuleDragHandle: View {
 struct SeparatorBar: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     let separator: RuleSeparator
+    var showsDisclosure = false
 
     /// Every separator was rendering in the same colour, and an exact
     /// switch on the stored string is the likely reason why. `color` is read
@@ -878,12 +919,333 @@ struct SeparatorBar: View {
                 .scaledFont(12, weight: .semibold)
                 .foregroundStyle(theme.label)
             Spacer()
+            if showsDisclosure {
+                Image(systemName: "chevron.right")
+                    .scaledFont(10, weight: .semibold)
+                    .foregroundStyle(theme.labelFaint)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
         .background(tint.opacity(0.18))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
+
+/// Editable representation of a filter-rule separator.
+struct SeparatorEditForm: Equatable, Identifiable {
+    var id: String { "\(isCreating ? "new" : "edit")-\(interface)-\(key)" }
+
+    var interface: String
+    var key: String
+    var text: String
+    var color: String
+    /// Number of rules before the separator. Zero means before the first.
+    var position: Int
+    var isCreating: Bool
+
+    static func blank(interface: String, position: Int) -> SeparatorEditForm {
+        SeparatorEditForm(
+            interface: interface,
+            key: "",
+            text: "",
+            color: "info",
+            position: max(0, position),
+            isCreating: true
+        )
+    }
+
+    init(from separator: RuleSeparator) {
+        interface = separator.interfaceName ?? ""
+        key = separator.key
+        text = separator.text
+        color = Self.canonicalColor(separator.colorName)
+        position = max(0, separator.precedingRuleCount ?? 0)
+        isCreating = false
+    }
+
+    private init(interface: String, key: String, text: String, color: String,
+                 position: Int, isCreating: Bool) {
+        self.interface = interface
+        self.key = key
+        self.text = text
+        self.color = color
+        self.position = position
+        self.isCreating = isCreating
+    }
+
+    func toDict() -> JSONDict {
+        JSONDict([
+            "interface": .string(interface),
+            "key": .string(key),
+            "text": .string(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+            "color": .string(color),
+            "position": .number(Double(position)),
+            "create": .bool(isCreating)
+        ])
+    }
+
+    private static func canonicalColor(_ stored: String) -> String {
+        let value = stored.lowercased()
+        if value.contains("success") { return "success" }
+        if value.contains("warning") { return "warning" }
+        if value.contains("danger") { return "danger" }
+        return "info"
+    }
+}
+
+/// One filter separator, with the same edit/delete flow as a firewall rule.
+struct SeparatorDetailView: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.dismiss) private var dismiss
+
+    let separator: RuleSeparator
+
+    @State private var editorForm: SeparatorEditForm?
+    @State private var isSaving = false
+    @State private var showErrorAlert = false
+    @State private var writeError: WriteError?
+
+    private var separatorInterface: String { separator.interfaceName ?? "" }
+
+    private var separatorInterfaceRules: [FirewallRule] {
+        store.rules.filter { !$0.isFloating && $0.interfaceName == separatorInterface }
+    }
+
+    private var positionLabel: String {
+        let position = separator.precedingRuleCount ?? 0
+        guard position > 0 else { return "Before the first rule" }
+        guard let preceding = separatorInterfaceRules.indices.contains(position - 1)
+                ? separatorInterfaceRules[position - 1] : nil else {
+            return "After rule \(position)"
+        }
+        let name = preceding.descr.isEmpty ? "rule \(position)" : preceding.descr
+        return "After \(name)"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                SeparatorBar(separator: separator)
+
+                GroupHeading(text: "Separator")
+                Slab(rail: .info) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        FieldRow(key: "Label", value: separator.text, mono: false)
+                        FieldRow(key: "Color", value: separator.colorName.capitalized, mono: false)
+                        FieldRow(
+                            key: "Interface",
+                            value: store.interfaceLabel(for: separatorInterface) ?? separatorInterface
+                        )
+                        FieldRow(key: "Position", value: positionLabel, mono: false)
+                        FieldRow(key: "Key", value: separator.key)
+                    }
+                }
+
+                AdministrationModeNotice()
+
+                if !isSaving {
+                    VStack(spacing: 8) {
+                        Button {
+                            editorForm = SeparatorEditForm(from: separator)
+                        } label: {
+                            Label("Edit Separator", systemImage: "pencil")
+                                .scaledFont(14, weight: .medium)
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(theme.accentColor, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            Task { await deleteSeparator() }
+                        } label: {
+                            Label("Delete Separator", systemImage: "trash")
+                                .scaledFont(14, weight: .medium)
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color.red, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .disabled(!store.canAdminister)
+                    .opacity(store.canAdminister ? 1 : 0.55)
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+        }
+        .background(theme.bg.ignoresSafeArea())
+        .navigationTitle(separator.text.isEmpty ? "Separator" : separator.text)
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $editorForm) { form in
+            SeparatorEditSheet(
+                form: form,
+                rules: separatorInterfaceRules,
+                onSave: { saved in try await save(changes: saved) }
+            )
+        }
+        .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+    }
+
+    private func save(changes: SeparatorEditForm) async throws {
+        _ = try await store.writeCoordinator.execute(
+            .saveFilterSeparator(separator: changes.toDict(), displayName: separator.text)
+        )
+        await store.refreshFirewallObjectsAfterWrite()
+    }
+
+    private func deleteSeparator() async {
+        isSaving = true
+        defer { isSaving = false }
+
+        do {
+            _ = try await store.writeCoordinator.execute(
+                .deleteFilterSeparator(
+                    interface: separatorInterface,
+                    key: separator.key,
+                    displayName: separator.text.isEmpty ? separator.key : separator.text
+                )
+            )
+            dismiss()
+            await store.refreshFirewallObjectsAfterWrite()
+        } catch {
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
+        }
+    }
+}
+
+/// Add or edit a filter separator without activating the pending ruleset.
+struct SeparatorEditSheet: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dismiss) private var dismiss
+
+    let rules: [FirewallRule]
+    let onSave: (SeparatorEditForm) async throws -> Void
+
+    @State private var edited: SeparatorEditForm
+    @State private var isSaving = false
+    @State private var showErrorAlert = false
+    @State private var writeError: WriteError?
+
+    private let original: SeparatorEditForm
+    private let colors = ["info", "success", "warning", "danger"]
+
+    init(form: SeparatorEditForm, rules: [FirewallRule],
+         onSave: @escaping (SeparatorEditForm) async throws -> Void) {
+        self.rules = rules
+        self.onSave = onSave
+        var available = form
+        available.position = min(max(0, form.position), rules.count)
+        original = available
+        _edited = State(initialValue: available)
+    }
+
+    private var isDirty: Bool { edited.isCreating || edited != original }
+
+    private var isValid: Bool {
+        !edited.interface.isEmpty
+            && !edited.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && colors.contains(edited.color)
+            && (0...rules.count).contains(edited.position)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Slab(rail: .info, title: "Separator") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            EditField(
+                                label: "Label",
+                                text: $edited.text,
+                                prompt: "Name shown between rules",
+                                mono: false
+                            )
+                            EditChoice(label: "Color", options: colors, selection: $edited.color)
+                        }
+                    }
+
+                    Slab(rail: .info, title: "Position") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Picker("", selection: $edited.position) {
+                                Text("Before the first rule").tag(0)
+                                ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
+                                    Text(positionLabel(after: rule, number: index + 1))
+                                        .tag(index + 1)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .tint(theme.accentColor)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text("The position is checked against the current rules before saving.")
+                                .scaledFont(10)
+                                .foregroundStyle(theme.labelFaint)
+                        }
+                    }
+
+                    Notice(
+                        symbol: "clock.badge.checkmark",
+                        title: "Saved as a pending firewall change",
+                        detail: "Use Apply Changes on the Firewall screen when the complete ruleset is ready.",
+                        health: .warn
+                    )
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 28)
+            }
+            .background(theme.bg.ignoresSafeArea())
+            .navigationTitle(edited.isCreating ? "New separator" : "Edit separator")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .disabled(isSaving)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isSaving {
+                        ProgressView()
+                    } else {
+                        Button("Save") {
+                            Task { await save() }
+                        }
+                        .disabled(!isDirty || !isValid)
+                    }
+                }
+            }
+            .interactiveDismissDisabled(isSaving)
+            .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+        }
+    }
+
+    private func positionLabel(after rule: FirewallRule, number: Int) -> String {
+        let name = rule.descr.isEmpty ? "rule \(number)" : rule.descr
+        return number == rules.count ? "After \(name) (last)" : "After \(name)"
+    }
+
+    private func save() async {
+        guard !isSaving, isDirty, isValid else { return }
+        isSaving = true
+        defer { isSaving = false }
+
+        do {
+            try await onSave(edited)
+            dismiss()
+        } catch {
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
+        }
     }
 }
 
@@ -1103,13 +1465,6 @@ struct RuleDetailView: View {
                     Label("Test", systemImage: "waveform.badge.magnifyingglass")
                 }
                 .disabled(isSaving)
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                if isSaving {
-                    ProgressView()
-                } else {
-                    Button("Close") { dismiss() }
-                }
             }
         }
         // Built here, at presentation, rather than in `onAppear`.
@@ -1338,13 +1693,6 @@ struct PortForwardDetailView: View {
                     Label("Duplicate", systemImage: "plus.square.on.square")
                 }
                 .disabled(isSaving)
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                if isSaving {
-                    ProgressView()
-                } else {
-                    Button("Close") { dismiss() }
-                }
             }
         }
         // Same as the rule editor: assembled at presentation, because there is

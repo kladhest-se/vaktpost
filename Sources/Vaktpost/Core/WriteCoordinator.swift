@@ -16,6 +16,8 @@ enum AdministrativeWrite: Sendable {
     case deleteNatRule(tracker: String, displayName: String)
     case saveNatRule(rule: JSONDict, displayName: String)
     case reorderFilterRules(interface: String, items: [FirewallClient.ReorderItem], displayName: String)
+    case saveFilterSeparator(separator: JSONDict, displayName: String)
+    case deleteFilterSeparator(interface: String, key: String, displayName: String)
 
     var action: AuditAction {
         switch self {
@@ -30,6 +32,9 @@ enum AdministrativeWrite: Sendable {
         case .deleteNatRule: return .deletePortForward
         case .saveNatRule(let rule, _): return Self.isCreate(rule) ? .addPortForward : .editPortForward
         case .reorderFilterRules: return .reorderRules
+        case .saveFilterSeparator(let separator, _):
+            return separator.bool("create") == true ? .addSeparator : .editSeparator
+        case .deleteFilterSeparator: return .deleteSeparator
         }
     }
 
@@ -45,6 +50,9 @@ enum AdministrativeWrite: Sendable {
              .deleteNatRule(_, let displayName), .saveNatRule(_, let displayName):
             return displayName
         case .reorderFilterRules(_, _, let displayName):
+            return displayName
+        case .saveFilterSeparator(_, let displayName),
+             .deleteFilterSeparator(_, _, let displayName):
             return displayName
         }
     }
@@ -72,6 +80,10 @@ enum AdministrativeWrite: Sendable {
             let separators = items.filter { if case .separator = $0 { return true }; return false }.count
             return "Reorder rules on \(displayName)"
                 + (separators > 0 ? " (\(separators) separator\(separators == 1 ? "" : "s"))" : "")
+        case .saveFilterSeparator(let separator, let displayName):
+            return "\(separator.bool("create") == true ? "Add" : "Edit") separator \(displayName)"
+        case .deleteFilterSeparator(_, _, let displayName):
+            return "Delete separator \(displayName)"
         }
     }
 
@@ -107,6 +119,11 @@ enum AdministrativeWrite: Sendable {
             var text = "Rearrange \(interface) to the new order — \(ruleCount) rule\(ruleCount == 1 ? "" : "s")"
             if sepCount > 0 { text += " and \(sepCount) separator\(sepCount == 1 ? "" : "s")" }
             return text + ". Every other interface's rules are left exactly where they are."
+        case .saveFilterSeparator(let separator, let displayName):
+            let verb = separator.bool("create") == true ? "Add" : "Update"
+            return "\(verb) separator “\(displayName)” on \(separator.string("interface") ?? "unknown interface"), after \(separator.int("position") ?? 0) rules."
+        case .deleteFilterSeparator(let interface, _, let displayName):
+            return "Delete separator “\(displayName)” from \(interface)."
         }
     }
 
@@ -393,6 +410,32 @@ final class WriteCoordinator {
             }
         case .reloadFirewall, .flushStates:
             break
+        case .saveFilterSeparator(let separator, _):
+            let isCreate = separator.bool("create") ?? false
+            let interface = separator.string("interface") ?? ""
+            let key = separator.string("key") ?? ""
+            let text = separator.string("text")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let color = separator.string("color") ?? ""
+            let position = separator.int("position") ?? -1
+            guard !interface.isEmpty else {
+                throw WriteCoordinatorError.invalidOperation("a separator interface is required")
+            }
+            guard (isCreate && key.isEmpty) || (!isCreate && !key.isEmpty) else {
+                throw WriteCoordinatorError.invalidOperation("the separator key does not match create/edit mode")
+            }
+            guard !text.isEmpty else {
+                throw WriteCoordinatorError.invalidOperation("separator text is required")
+            }
+            guard ["info", "success", "warning", "danger"].contains(color) else {
+                throw WriteCoordinatorError.invalidOperation("the separator color is invalid")
+            }
+            guard position >= 0 else {
+                throw WriteCoordinatorError.invalidOperation("the separator position is invalid")
+            }
+        case .deleteFilterSeparator(let interface, let key, _):
+            guard !interface.isEmpty, !key.isEmpty else {
+                throw WriteCoordinatorError.invalidOperation("a separator interface and key are required")
+            }
         case .reorderFilterRules(let interface, let items, _):
             guard !interface.isEmpty else {
                 throw WriteCoordinatorError.invalidOperation("an interface is required")
@@ -455,6 +498,12 @@ final class WriteCoordinator {
         case .reorderFilterRules(let interface, let items, _):
             let result = try await client.reorderFilterRules(interface: interface, items: items)
             return Receipt(status: result.string("status") ?? "ok", tracker: nil)
+        case .saveFilterSeparator(let separator, _):
+            let result = try await client.saveFilterSeparator(separator: separator)
+            return Receipt(status: result.string("status") ?? "ok", tracker: result.string("key"))
+        case .deleteFilterSeparator(let interface, let key, _):
+            let result = try await client.deleteFilterSeparator(interface: interface, key: key)
+            return Receipt(status: result.string("status") ?? "ok", tracker: key)
         }
     }
 
@@ -546,6 +595,36 @@ final class WriteCoordinator {
                     "the port forward is no longer present, or has changed since it was fetched")
             }
             return Self.natSnapshot(forward)
+        case .saveFilterSeparator(let expected, _):
+            let interface = expected.string("interface") ?? ""
+            let position = expected.int("position") ?? -1
+            let rules = try await client.firewallRules()
+            let ruleCount = rules.filter { $0.interfaceName == interface }.count
+            guard position <= ruleCount else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "the selected separator position is no longer available")
+            }
+            let separatorPayload = try await client.ruleSeparators()
+            let separators = separatorPayload.filter
+            if expected.bool("create") == true {
+                return "separators=\(separators.filter { $0.interfaceName == interface }.count);new_key=unassigned"
+            }
+            let key = expected.string("key") ?? ""
+            guard let separator = separators.first(where: {
+                $0.interfaceName == interface && $0.key == key
+            }) else {
+                throw WriteCoordinatorError.invalidOperation("the separator is no longer present")
+            }
+            return Self.separatorSnapshot(separator)
+        case .deleteFilterSeparator(let interface, let key, _):
+            let separatorPayload = try await client.ruleSeparators()
+            let separators = separatorPayload.filter
+            guard let separator = separators.first(where: {
+                $0.interfaceName == interface && $0.key == key
+            }) else {
+                throw WriteCoordinatorError.invalidOperation("the separator is no longer present")
+            }
+            return Self.separatorSnapshot(separator)
         case .reorderFilterRules(let interface, let items, _):
             // Validated early, against a fresh read, so a drag made against
             // data that has since changed on the firewall is refused with a
@@ -663,6 +742,38 @@ final class WriteCoordinator {
             return Verification(state: matches ? .verified : .mismatch,
                                 detail: detail,
                                 snapshot: Self.natSnapshot(actual))
+        case .saveFilterSeparator(let expected, _):
+            let interface = expected.string("interface") ?? ""
+            let key = receipt.tracker ?? expected.string("key") ?? ""
+            let separators = try await client.ruleSeparators()
+            let actual = separators.filter.first {
+                $0.interfaceName == interface && $0.key == key
+            }
+            guard let actual else {
+                return Verification(state: .mismatch,
+                                    detail: "The separator was not found during read-back.",
+                                    snapshot: nil)
+            }
+            let matches = actual.text == (expected.string("text") ?? "")
+                && actual.colorName == (expected.string("color") ?? "")
+                && actual.precedingRuleCount == expected.int("position")
+            return Verification(
+                state: matches ? .verified : .mismatch,
+                detail: matches
+                    ? "The separator matches the requested text, color, and position."
+                    : "The separator returned different values after saving.",
+                snapshot: Self.separatorSnapshot(actual)
+            )
+        case .deleteFilterSeparator(let interface, let key, _):
+            let separators = try await client.ruleSeparators()
+            let exists = separators.filter.contains {
+                $0.interfaceName == interface && $0.key == key
+            }
+            return Verification(
+                state: exists ? .mismatch : .verified,
+                detail: exists ? "The deleted separator is still present." : "The separator is absent during read-back.",
+                snapshot: exists ? "interface=\(interface);key=\(key);present=true" : "interface=\(interface);key=\(key);present=false"
+            )
         }
     }
 
@@ -721,6 +832,12 @@ final class WriteCoordinator {
          forward.sourceSide.storageKind.rawValue, forward.sourceSide.text,
          forward.destinationSide.storageKind.rawValue, forward.destinationSide.text, forward.target,
          forward.localPort ?? "", forward.descr, String(forward.disabled)]
+            .joined(separator: "|")
+    }
+
+    private static func separatorSnapshot(_ separator: RuleSeparator) -> String {
+        [separator.interfaceName ?? "", separator.key, separator.text,
+         separator.colorName, String(separator.precedingRuleCount ?? -1)]
             .joined(separator: "|")
     }
 
