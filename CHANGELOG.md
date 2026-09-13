@@ -1,5 +1,137 @@
 # Changelog
 
+## The actual cause, found by a live A/B test rather than reasoning about scope
+
+`reorderFilterRules` never declared `global $config;` anywhere in its body.
+Neither did `saveRule`, `deleteRule`, `saveNatRule`, or `deleteNatRule` — every
+administrative write in this app shared the identical gap. Every read-only
+snippet, including both diagnostic probes written during this investigation,
+declared it.
+
+This was found empirically, not by reading pfSense's own `exec_php` source
+and reasoning about it — that reasoning was tried first, concluded the
+declaration shouldn't matter (`eval()` executes in its caller's scope, and
+that caller already declares `global $config` one level up), and was wrong,
+or at least incomplete for whatever this specific pfSense version actually
+does. What settled it was a direct, controlled experiment: the reorder
+snippet's exact validation logic, given a hardcoded, definitely-correct
+interface and item list — bypassing the payload entirely — run live against
+the real firewall. It failed, identically to every previous attempt. An
+otherwise near-identical read-only probe, differing only in explicitly
+declaring `global $config;`, succeeded against the same firewall at the same
+moment. That is about as close to a controlled experiment as this kind of
+investigation gets, and it pointed at the one line every failing snippet
+was missing and every working one had.
+
+All five now declare it, in the same place every other snippet in this file
+already does: right after the `require_once` lines, before `$config` is
+first read.
+
+This should also explain the earlier, never-resolved failure editing an
+unrelated rule several rounds ago — "the rule tracker no longer exists,"
+attributed at the time to a probable race with something else on the
+firewall. That explanation was a guess made without this evidence. `saveRule`
+had the identical gap the whole time.
+
+## The raw base64 diagnostic is replaced with the parsed items directly
+
+Decoding the previous round's base64 payload by hand suggested the
+submission contained one rule tracker twice and never included the other
+one at all — a real, plausible bug shape. But checking that specific
+scenario directly against `array_diff`'s actual behaviour predicted a
+different error message than the one actually shown, which means the
+transcription — dense, wrapped, multi-line base64 read out of a screenshot
+by hand — most likely introduced an error of its own along the way. A
+single misread character in base64 produces a plausible-looking but wrong
+reconstruction, with nothing about the reconstruction itself to reveal
+that it happened.
+
+Rather than ask for the same transcription again and risk the identical
+failure mode, the diagnostic itself is fixed: the mismatch error now shows
+`$vaktpost_items`, already parsed by this snippet's own code, directly —
+kind and id for every entry, in the order submitted. Nothing about reading
+this can introduce a transcription error, because there is nothing left to
+transcribe.
+
+`decoded interface as hex` stays, since it already gave a clean, direct
+answer last round — `6f707435` decoded to exactly `opt5`, byte for byte,
+which is real and did not depend on reading anything dense by hand.
+
+Verified against the real PHP interpreter: the existing `write-contract`
+case now asserts the exact parsed-items string a known submission produces,
+rather than asserting on the base64 encoding of it.
+
+## The validation logic itself is confirmed correct — the payload is now visible directly
+
+A probe run against the real firewall proved the underlying data was never
+the problem: both rules exist, on the correct interface, as plain strings,
+exactly matching what config.xml itself shows — reading `$config` the exact
+way this snippet reads it. A second probe went further: the reorder
+snippet's own validation logic, copied verbatim and given a hardcoded input
+matching exactly what the app's own confirmation dialog said it was
+submitting, succeeded — no mismatch, against a synthetic copy of this
+firewall's real ruleset. That isolates the disagreement to one specific
+place: somewhere between what Swift encodes and what this snippet decodes,
+not the data, and not the logic that checks it.
+
+The mismatch error now shows both directly rather than inferring one from
+the other: the exact base64 payload this attempt received, and the interface
+value decoded from it, rendered as hex rather than text — since a value that
+prints identically to `opt5` could still differ from it byte for byte, and
+text rendering is exactly the thing that would hide that.
+
+Two mistakes caught before this shipped, both in the new code itself rather
+than in what it was diagnosing:
+
+- The labels were originally stored as array keys, joined into the final
+  message with `implode()` — which joins only values and discards keys
+  silently. The two labels would have vanished from the actual output,
+  leaving two unexplained bare values in their place. Rewritten as plain
+  indexed strings with the label written into the text itself, matching
+  every other line in this same array.
+- The label `"raw payload ("` tripped the identical false positive from two
+  rounds ago — the publish gate reads PHP string contents the same as PHP
+  syntax, and cannot tell a label containing an open parenthesis from an
+  actual function call. Reworded rather than escaped.
+
+`bin2hex` is now on the function allowlist — a pure, built-in string
+conversion with no file, network, or config access, added and reviewed
+rather than silently included.
+
+Verified against the real PHP interpreter: a new `write-contract` case
+confirms both new fields appear in a mismatch response, and that the hex
+shown is a genuine encoding of that response's own interface value rather
+than a fixed placeholder.
+
+## Removing the requires changed nothing: ruled out, cleanly
+
+The experiment came back conclusive. Identical error, identical wording,
+the same two trackers -- removing `reorderFilterRules`'s `require_once`
+lines had no effect on the failure whatsoever. That rules the requires out
+as the cause, with actual evidence rather than another guess left standing.
+
+## Checking pfSense's own config cache directly
+
+pfSense caches its parsed configuration at `/tmp/config.cache` and reads
+from that cache rather than reparsing `config.xml` on every request,
+refreshing it only when `write_config()` properly invalidates it. If that
+cache were stale on this firewall for any reason, `global $config` could be
+reading old data consistently across every attempt -- which would explain
+precisely what's been observed: the *same* two trackers, failing the *same*
+way, no matter what changed on the app's side between attempts.
+
+Rather than propose this as an eleventh hypothesis, the mismatch error now
+checks it directly and reports what it finds: whether `/tmp/config.cache`
+exists, how old it is in seconds, and whether the specific trackers this
+attempt says are missing appear anywhere in that file as plain text. If they
+do, that is about as close to a smoking gun as this investigation is likely
+to get without shell access to the firewall itself. If they don't, that
+rules out the cache too, and narrows what's left to look at considerably.
+
+This is read-only and unconditional -- it only runs after a mismatch has
+already happened, costs one file check and one string search, and cannot
+itself change anything about the outcome.
+
 ## Experiment: removed reorderFilterRules's require_once statements
 
 Not a confirmed fix — an experiment, run because the array-interface theory

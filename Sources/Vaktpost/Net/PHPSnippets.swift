@@ -173,6 +173,11 @@ struct PHPSnippet: Sendable {
         "file_exists", "file_get_contents", "filemtime", "glob", "basename",
         "sort", "usort", "strval", "substr", "function_exists", "config_get_path", "strpos", "strlen", "filesize",
         "array_key_exists", "intval",
+        // Pure, built-in string conversion — no side effects, no file or
+        // system access. Used once, to show a submitted interface value as
+        // hex in a diagnostic message, since a value that looks identical to
+        // "opt5" printed as text could still differ from it byte for byte.
+        "bin2hex",
         "date", "time", "max", "min",
         // pfSense read-only accessors
         "get_pkg_info", "get_uptime_sec", "get_temp", "get_single_sysctl", "get_load_average", "get_cpufreq",
@@ -2918,6 +2923,7 @@ struct PHPSnippet: Sendable {
         ini_set('display_errors', 0);
         require_once '/etc/inc/util.inc';
         require_once '/etc/inc/filter.inc';
+        global $config;
         $toreturn = [];
         $vaktpost_payload = "\(encoded)";
         \(decodePayload)
@@ -2990,20 +2996,24 @@ struct PHPSnippet: Sendable {
         ]))
         return PHPSnippet("reorder_filter_rules", """
         ini_set('display_errors', 0);
-        // Experiment, not a confirmed fix: `saveRule`, `deleteRule`, and this
-        // snippet all require the identical two files and all read
-        // `$config["filter"]["rule"]` the identical way; the read-only
-        // `firewallRules` snippet requires neither and has never shown a
-        // rule reported as missing when it plainly still exists. That
-        // pattern doesn't prove these requires are the cause — direct
-        // inspection of both files found no top-level code that touches
-        // `$config` at all — but the two functions this snippet actually
-        // calls, `write_config()` and `write_filter()`, are defined in
-        // neither file either, and pfSense's own config bootstrap runs
-        // before any snippet executes regardless of what it requires. If
-        // they are genuinely unnecessary here, removing them is safe; if
-        // they are not, the failure mode is an immediate, unambiguous fatal
-        // error rather than another silent mismatch — informative either way.
+        // Restored. Removing these to test whether they were implicated in
+        // a persistent, reproducible "this rule does not exist" failure
+        // changed nothing about it — identical error, identical wording,
+        // against the real firewall. That experiment is what ruled the
+        // requires out; there is no remaining reason to diverge from
+        // `saveRule` and `deleteRule`, which keep them.
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        // Confirmed the actual, load-bearing cause by direct A/B test against
+        // the real firewall, not by reasoning about scope from source alone:
+        // this exact validation logic, run with a hardcoded, definitely-correct
+        // interface and item list — bypassing payload decoding entirely —
+        // still failed live, identically to every prior attempt, while an
+        // otherwise near-identical probe that explicitly declared this
+        // succeeded at the same moment against the same $config. Every other
+        // working snippet in this file declares it; this one, and the other
+        // four administrative writes, silently did not.
+        global $config;
         $toreturn = [];
         $vaktpost_payload = "\(encoded)";
         \(decodePayload)
@@ -3095,7 +3105,32 @@ struct PHPSnippet: Sendable {
             // the only chance to see what actually disagreed before trying
             // again blind, so the specific difference is computed and
             // reported rather than only the fact that one exists.
-            $vaktpost_detail = [];
+            //
+            // A hardcoded, realistic reproduction of this exact validation
+            // logic against a synthetic copy of this exact ruleset passed —
+            // no mismatch, run outside the payload path entirely. That rules
+            // the validation logic out and points at how this specific value
+            // gets from Swift into this variable, which is what these two
+            // lines exist to finally see directly rather than infer.
+            // The raw base64 was here before this and was worse than
+            // useless: reading it back required transcribing dense,
+            // multi-line, wrapped text out of a screenshot by hand, and a
+            // single misread character there produces a plausible-looking
+            // but wrong reconstruction with no way to tell it apart from a
+            // real finding. Decoded already, in the one place that cannot
+            // introduce that error: the parsed items array, exactly as this
+            // snippet itself understood the submission, kind and id for
+            // each entry in submitted order.
+            $vaktpost_items_summary = [];
+            foreach ($vaktpost_items as $vaktpost_summary_item) {
+              $vaktpost_items_summary[] = is_array($vaktpost_summary_item)
+                ? (strval($vaktpost_summary_item["kind"] ?? "?") . ":" . strval($vaktpost_summary_item["id"] ?? "?"))
+                : "(not an object)";
+            }
+            $vaktpost_detail = [
+              "submitted items in order: " . implode(", ", $vaktpost_items_summary),
+              "decoded interface as hex: " . bin2hex($vaktpost_interface),
+            ];
             if (!$vaktpost_shape_valid) {
               $vaktpost_detail[] = "the submitted order contains an item with no kind or id";
             }
@@ -3174,6 +3209,35 @@ struct PHPSnippet: Sendable {
             }
             $vaktpost_detail[] = 'currently on "' . $vaktpost_interface . '": '
               . (empty($vaktpost_current_summary) ? "(nothing)" : implode(", ", $vaktpost_current_summary));
+            // pfSense caches its parsed configuration at /tmp/config.cache
+            // and reads from that cache rather than reparsing config.xml on
+            // every request, refreshing it only when write_config() properly
+            // invalidates it. Removing this snippet's require_once lines
+            // changed nothing about the failure, which rules out those two
+            // files specifically -- but not a stale cache read further back,
+            // in whatever loads $config before this snippet's own code ever
+            // runs. Checked directly here, read-only, rather than guessed at
+            // again: whether the file exists, when it was last written, and
+            // whether the missing trackers appear in it as plain text --
+            // cheap enough to always include once a mismatch has already
+            // happened, and worth far more than another blind hypothesis.
+            $vaktpost_cache_path = "/tmp/config.cache";
+            if (file_exists($vaktpost_cache_path)) {
+              $vaktpost_cache_age = time() - filemtime($vaktpost_cache_path);
+              $vaktpost_cache_text = file_get_contents($vaktpost_cache_path);
+              $vaktpost_cache_hits = [];
+              foreach ($vaktpost_extra_rules as $vaktpost_check_tracker) {
+                if ($vaktpost_cache_text !== false && strpos($vaktpost_cache_text, $vaktpost_check_tracker) !== false) {
+                  $vaktpost_cache_hits[] = $vaktpost_check_tracker;
+                }
+              }
+              $vaktpost_detail[] = "config.cache is " . $vaktpost_cache_age . "s old"
+                . (empty($vaktpost_cache_hits)
+                  ? "; the missing trackers do not appear in it as text either"
+                  : "; these missing trackers DO appear in it as text: " . implode(", ", $vaktpost_cache_hits));
+            } else {
+              $vaktpost_detail[] = "config.cache does not exist";
+            }
             $toreturn["status"] = "mismatch";
             // Colon, not a parenthesis, ahead of the detail clause: the
             // publish gate's function-call scanner reads PHP string contents
@@ -3238,6 +3302,7 @@ struct PHPSnippet: Sendable {
         ini_set('display_errors', 0);
         require_once '/etc/inc/util.inc';
         require_once '/etc/inc/filter.inc';
+        global $config;
         $toreturn = [];
         $vaktpost_payload = "\(encoded)";
         \(decodePayload)
@@ -3286,6 +3351,7 @@ struct PHPSnippet: Sendable {
         ini_set('display_errors', 0);
         require_once '/etc/inc/util.inc';
         require_once '/etc/inc/filter.inc';
+        global $config;
         $toreturn = [];
         $vaktpost_payload = "\(encoded)";
         \(decodePayload)
@@ -3602,6 +3668,7 @@ struct PHPSnippet: Sendable {
         ini_set('display_errors', 0);
         require_once '/etc/inc/util.inc';
         require_once '/etc/inc/filter.inc';
+        global $config;
         $toreturn = [];
         $vaktpost_payload = "\(encoded)";
         \(decodePayload)
