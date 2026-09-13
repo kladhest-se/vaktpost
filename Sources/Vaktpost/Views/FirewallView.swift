@@ -18,6 +18,8 @@ struct FirewallView: View {
     @State private var selection: String?
     /// A new rule being drafted, if any. Nil closes the sheet.
     @State private var newRule: RuleEditForm?
+    /// A new port forward being drafted.
+    @State private var newForward: PortForwardEditForm?
 
     var body: some View {
         MasterDetail(
@@ -138,12 +140,24 @@ struct FirewallView: View {
                 // chosen. A new rule has to land somewhere, and asking which
                 // interface inside the editor would be a question with fifteen
                 // answers in a sheet that is already long.
-                if pane == .rules, let interface = interfaceFilter {
-                    Button {
-                        newRule = RuleEditForm.blank(interface: interface)
-                    } label: {
-                        Label("New rule", systemImage: "plus")
+                if let interface = interfaceFilter {
+                    switch pane {
+                    case .rules:
+                        Button {
+                            newRule = RuleEditForm.blank(interface: interface)
+                        } label: {
+                            Label("New rule", systemImage: "plus")
+                        }
+                    case .nat:
+                        Button {
+                            newForward = PortForwardEditForm.blank(interface: interface)
+                        } label: {
+                            Label("New forward", systemImage: "plus")
+                        }
                     }
+                    // Exhaustive, with no `default`. A third pane added later
+                    // has to decide what its plus button does rather than
+                    // silently getting none.
                 }
             }
         }
@@ -160,6 +174,31 @@ struct FirewallView: View {
                               "interface": .string(form.interface)
                           ]))),
                           onSave: { saved in await createRule(saved) })
+        }
+        .sheet(item: $newForward) { form in
+            PortForwardEditSheet(form: form,
+                                 interfaces: store.interfaces.map(\.internalName).compactMap { $0 },
+                                 aliases: Set(store.aliases.map(\.name)),
+                                 onSave: { saved in await createForward(saved) })
+        }
+    }
+
+    /// Write a new port forward and refresh.
+    ///
+    /// Through the same coordinator as an edit: rate limit, audit, read-back.
+    private func createForward(_ form: PortForwardEditForm) async -> Bool {
+        let dict = form.toDict(interface: form.interface)
+        do {
+            _ = try await store.writeCoordinator.execute(
+                .saveNatRule(
+                    rule: dict,
+                    displayName: form.descr.isEmpty ? "new forward on \(form.interface)" : form.descr
+                )
+            )
+            await store.refreshManually()
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -490,6 +529,7 @@ struct RuleDetailView: View {
     @State private var showEditSheet = false
     /// The form the sheet opens with — an edit of this rule, or a copy of it.
     @State private var editorForm: RuleEditForm?
+    @State private var showSimulation = false
     @State private var isSaving = false
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
@@ -598,11 +638,22 @@ struct RuleDetailView: View {
                 // Duplicate rather than "new rule like this": the copy opens
                 // in the editor and is not written until it is reviewed, so
                 // this is a starting point rather than an action.
-                Button {
-                    editorForm = RuleEditForm.duplicating(rule)
-                    showEditSheet = true
+                Menu {
+                    Button {
+                        editorForm = RuleEditForm.duplicating(rule)
+                        showEditSheet = true
+                    } label: {
+                        Label("Duplicate", systemImage: "plus.square.on.square")
+                    }
+                    // The simulation was reachable only from its own
+                    // `#Preview` — an entire feature nobody could open.
+                    Button {
+                        showSimulation = true
+                    } label: {
+                        Label("Test against the log", systemImage: "waveform.badge.magnifyingglass")
+                    }
                 } label: {
-                    Label("Duplicate", systemImage: "plus.square.on.square")
+                    Label("More", systemImage: "ellipsis.circle")
                 }
                 .disabled(isSaving)
             }
@@ -638,6 +689,9 @@ struct RuleDetailView: View {
                           ruleset: store.rules,
                           subject: rule,
                           onSave: { saved in await save(changes: saved) })
+        }
+        .sheet(isPresented: $showSimulation) {
+            RuleSimulationSheet(rule: rule)
         }
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
     }
@@ -728,6 +782,8 @@ struct PortForwardDetailView: View {
 
     @State private var showDeleteConfirm = false
     @State private var showEditSheet = false
+    /// The form the sheet opens with — an edit of this forward, or a copy.
+    @State private var editorForm: PortForwardEditForm?
     @State private var isSaving = false
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
@@ -797,6 +853,7 @@ struct PortForwardDetailView: View {
                 if !isSaving {
                     VStack(spacing: 8) {
                         Button {
+                            editorForm = PortForwardEditForm(from: forward)
                             showEditSheet = true
                         } label: {
                             Label("Edit Forward", systemImage: "pencil")
@@ -832,6 +889,19 @@ struct PortForwardDetailView: View {
         .navigationTitle(forward.descr.isEmpty ? "Port forward" : forward.descr)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                // The copy opens in the editor and is not written until it is
+                // reviewed. Its destination port is cleared: two forwards on
+                // one interface sharing a port is a conflict pfSense accepts
+                // and only one of them will work.
+                Button {
+                    editorForm = PortForwardEditForm.duplicating(forward)
+                    showEditSheet = true
+                } label: {
+                    Label("Duplicate", systemImage: "plus.square.on.square")
+                }
+                .disabled(isSaving)
+            }
             ToolbarItem(placement: .confirmationAction) {
                 if isSaving {
                     ProgressView()
@@ -843,7 +913,7 @@ struct PortForwardDetailView: View {
         // Same as the rule editor: assembled at presentation, because there is
         // nothing to fetch and the spinner was the entire delay.
         .sheet(isPresented: $showEditSheet) {
-            PortForwardEditSheet(form: PortForwardEditForm(from: forward),
+            PortForwardEditSheet(form: editorForm ?? PortForwardEditForm(from: forward),
                                  interfaces: store.interfaces.map(\.internalName).compactMap { $0 },
                                  aliases: Set(store.aliases.map(\.name)),
                                  onSave: { saved in await save(changes: saved) })
@@ -1276,8 +1346,20 @@ struct RuleEditSheet: View {
     }
 }
 
-struct PortForwardEditForm: Equatable {
+struct PortForwardEditForm: Equatable, Identifiable {
+    /// Identity for `sheet(item:)`, so a draft and an edit cannot be mistaken
+    /// for the same sheet.
+    var id: String { "\(isCreating ? "new" : "edit")-\(interface)-\(descr)-\(destinationPort)" }
+
     var tracker: String
+    /// True when this will add a forward rather than change one.
+    ///
+    /// It matters more here than for a filter rule. A forward with no tracker
+    /// is matched back by interface, destination, port and target — and a copy
+    /// is identical to its original in all four, so without this a duplicate
+    /// would match what it was copied from and replace it. Duplicate would
+    /// delete the thing it duplicated.
+    var isCreating = false
     var descr: String
     var proto: String
     var interface: String
@@ -1288,6 +1370,46 @@ struct PortForwardEditForm: Equatable {
     var localPort: String
     var disabled: Bool
     var addressFamily: String
+
+    /// A new forward on an interface.
+    ///
+    /// Disabled to start with, for the same reason a new rule is: the thing
+    /// that cannot be undone from a phone is traffic that reached somewhere it
+    /// should not while the forward was being written.
+    ///
+    /// The destination defaults to the interface address, which is what a port
+    /// forward on a WAN almost always means and what pfSense's own form
+    /// prefills.
+    static func blank(interface: String) -> PortForwardEditForm {
+        var form = PortForwardEditForm(from: PortForward(JSONDict([
+            "interface": .string(interface),
+            "protocol": .string("tcp"),
+            "ipprotocol": .string("inet"),
+            "disabled": .bool(true),
+            "descr": .string(""),
+            "source": .object(["address": .string("any")]),
+            "destination": .object(["address": .string("")]),
+            "target": .string("")
+        ])))
+        form.isCreating = true
+        return form
+    }
+
+    /// A copy, ready to be saved as another forward.
+    ///
+    /// The port is cleared as well as the description being marked. Two
+    /// forwards on one interface with the same destination port is a conflict
+    /// pfSense will take and only one of them will work — and a copy that
+    /// keeps its original's port is exactly that, made by accident.
+    static func duplicating(_ forward: PortForward) -> PortForwardEditForm {
+        var form = PortForwardEditForm(from: forward)
+        form.isCreating = true
+        form.tracker = ""
+        form.destinationPort = ""
+        form.descr = forward.descr.isEmpty ? "Copy" : "\(forward.descr) (copy)"
+        form.disabled = true
+        return form
+    }
 
     init(from forward: PortForward) {
         tracker = forward.tracker
@@ -1306,7 +1428,10 @@ struct PortForwardEditForm: Equatable {
 
     func toDict(interface: String) -> JSONDict {
         var dict: [String: JSONValue] = [
-            "tracker": .string(tracker),
+            // Empty when creating, so the firewall appends rather than
+            // matching. See `isCreating`.
+            "tracker": .string(isCreating ? "" : tracker),
+            "create": .bool(isCreating),
             "interface": .string(interface),
             "protocol": .string(proto.isEmpty ? "any" : proto),
             "ipprotocol": .string(addressFamily),
@@ -1503,7 +1628,7 @@ struct PortForwardEditSheet: View {
                 .padding(.bottom, 28)
             }
             .background(theme.bg.ignoresSafeArea())
-            .navigationTitle("Edit port forward")
+            .navigationTitle(edited.isCreating ? "New port forward" : "Edit port forward")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1528,7 +1653,7 @@ struct PortForwardEditSheet: View {
             .interactiveDismissDisabled(isSaving)
             .confirmationSheet(
                 isPresented: $showSaveConfirmation,
-                title: "Review port-forward changes",
+                title: edited.isCreating ? "Review new port forward" : "Review port-forward changes",
                 message: changePreview,
                 destructive: false,
                 destructiveLabel: "Save forward",
@@ -1540,6 +1665,20 @@ struct PortForwardEditSheet: View {
     }
 
     private var changePreview: String {
+        if edited.isCreating {
+            // Against nothing, every field is a change. What matters is what
+            // the forward will do and that it is not live yet.
+            var text = "A new port forward will be added to \(edited.interface):\n\n"
+            text += "• \(edited.proto.isEmpty ? "any" : edited.proto)"
+            text += " to \(edited.destinationAddress.isEmpty ? "this interface" : edited.destinationAddress)"
+            if !edited.destinationPort.isEmpty { text += " port \(edited.destinationPort)" }
+            text += "\n• forwarded to \(edited.targetAddress.isEmpty ? "nowhere yet" : edited.targetAddress)"
+            if !edited.localPort.isEmpty { text += " port \(edited.localPort)" }
+            text += "\n• \(edited.disabled ? "Disabled" : "Enabled") on creation"
+            text += "\n\nAppended to the end of the NAT table."
+            return text
+        }
+
         var changes: [String] = []
         Self.describe("Interface", original.interface, edited.interface, into: &changes)
         Self.describe("Protocol", original.proto, edited.proto, into: &changes)

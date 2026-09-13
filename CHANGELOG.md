@@ -1,5 +1,80 @@
 # Changelog
 
+## Rule simulation: reachable, and answering a real question
+
+`RuleSimulationView` was referenced exactly once in the whole tree — by its own
+`#Preview`. A complete simulation feature that nobody could open.
+
+It is reachable now, from a rule's More menu, prefilled with that rule. It
+answers what `RulePlacement` deliberately refuses to: placement compares rules
+to each other by literal value, this compares a rule to packets the firewall
+actually logged.
+
+### The engine it replaces produced a meaningless number
+
+`RuleSimulationEngine`'s headline was
+`max(matchedAddresses.count + matchedPorts.count, 1)`:
+
+- it added a count of **addresses** to a count of **ports**, which are not the
+  same unit and cannot be summed into anything;
+- it matched an address appearing as source **or** destination, so a rule from
+  A to B counted every host that was A or B and never checked that traffic went
+  from one to the other;
+- and `max(…, 1)` meant it could never report zero — a rule affecting nothing
+  claimed one match.
+
+That figure was shown beside a "risk level" derived from it, immediately before
+a write. A plausible number that quantifies nothing is more dangerous than no
+number, because somebody believes it.
+
+### What is there instead
+
+Every figure is a count of log lines, and the screen says so. It evaluates the
+rule against each logged packet — source, destination, ports, protocol,
+interface — and reports what the firewall did with the matching traffic at the
+time. That last part is the actionable one: **"12 of those were passed at the
+time, so this rule would stop traffic that is getting through today"** is a
+sentence the old engine could not produce.
+
+It states where it is blind, next to the number rather than in a footnote:
+pfSense logs only the rules with logging enabled plus the default deny, so a
+zero means nothing matching was **logged**, not that no such traffic exists.
+Matching is literal — a rule naming an alias or a network matches nothing here.
+Lines the parser cannot read are counted separately, because a log that failed
+to parse and a log with no matching traffic otherwise give the same zero.
+
+Fourteen tests. The first three are the three things the old number could not
+do. The fixtures are built from real syslog text at the offsets the parser
+documents, because `filterFields` is parsed from the line rather than stored —
+a fixture that set the fields directly would test a struct the app never sees.
+
+## Creating and duplicating port forwards
+
+The last round added `create: true` handling to `save_nat_rule` and taught the
+coordinator to accept it, and then wired the UI for filter rules only. So the
+snippet had a path nothing could reach, and rules could be added from the app
+while forwards could not — the dangerous half done and the useful half missing.
+
+- **New forward** on the NAT pane once an interface is selected, and
+  **Duplicate** in a forward's toolbar, matching the rule side.
+- **A duplicate drops the original's tracker and sets `create`.** This matters
+  more for a forward than for a rule: with no tracker, a forward is matched
+  back by interface, destination, port and target — and a copy is identical to
+  its original in all four. Without the flag, saving a duplicate matches what
+  it was copied from and replaces it. Duplicate would have deleted the thing it
+  duplicated.
+- **A duplicate also clears the destination port.** Two forwards on one
+  interface sharing a port is a conflict pfSense accepts and only one of them
+  will work — and a copy that keeps its original's port is exactly that, made
+  by accident.
+- New forwards start disabled and with an empty target, so validation refuses
+  to save until somewhere to send traffic has been named.
+- Creates go through the same coordinator as edits: rate limit, audit,
+  read-back.
+- The plus button's switch over the pane is exhaustive with no `default`. A
+  third pane added later has to decide what its button does rather than
+  silently getting none.
+
 ## Creating and duplicating rules
 
 - **New rule** on the Firewall screen, once an interface is selected. It has to

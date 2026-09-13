@@ -237,3 +237,74 @@ final class RuleCreationTests: XCTestCase {
                           RuleEditForm(from: existing()).id)
     }
 }
+
+/// Creating and duplicating port forwards.
+///
+/// The stakes are higher here than for a filter rule. A forward with no
+/// tracker is matched back by interface, destination, port and target — and a
+/// copy is identical to its original in all four. Without the create flag a
+/// duplicate matches what it was copied from and replaces it, so "duplicate"
+/// deletes the thing it duplicated.
+final class PortForwardCreationTests: XCTestCase {
+
+    private func existing() -> PortForward {
+        PortForward(JSONDict([
+            "tracker": .string("1700000000"),
+            "interface": .string("wan"),
+            "protocol": .string("tcp"),
+            "ipprotocol": .string("inet"),
+            "descr": .string("Web"),
+            "source": .object(["address": .string("any")]),
+            "destination": .object(["address": .string("any")]),
+            "destination_port": .string("443"),
+            "target": .string("10.0.0.5")
+        ]))
+    }
+
+    func testANewForwardSendsNoTrackerAndAsksToCreate() {
+        let dict = PortForwardEditForm.blank(interface: "wan").toDict(interface: "wan")
+        XCTAssertEqual(dict.string("tracker"), "")
+        XCTAssertEqual(dict.bool("create"), true)
+    }
+
+    func testAnEditKeepsItsTrackerAndDoesNotAskToCreate() {
+        let dict = PortForwardEditForm(from: existing()).toDict(interface: "wan")
+        XCTAssertEqual(dict.string("tracker"), "1700000000")
+        XCTAssertEqual(dict.bool("create"), false)
+    }
+
+    func testADuplicateIsACreateAndDropsTheOriginalTracker() {
+        let form = PortForwardEditForm.duplicating(existing())
+        let dict = form.toDict(interface: "wan")
+        XCTAssertEqual(dict.bool("create"), true)
+        XCTAssertEqual(dict.string("tracker"), "")
+    }
+
+    func testADuplicateClearsTheDestinationPort() {
+        // Two forwards on one interface sharing a destination port is a
+        // conflict pfSense accepts and only one of them will work. A copy that
+        // keeps its original's port is exactly that, made by accident.
+        XCTAssertEqual(PortForwardEditForm.duplicating(existing()).destinationPort, "")
+    }
+
+    func testADuplicateIsDistinguishableFromItsOriginal() {
+        XCTAssertEqual(PortForwardEditForm.duplicating(existing()).descr, "Web (copy)")
+    }
+
+    func testNewAndDuplicatedForwardsStartDisabled() {
+        XCTAssertTrue(PortForwardEditForm.blank(interface: "wan").disabled)
+        XCTAssertTrue(PortForwardEditForm.duplicating(existing()).disabled)
+    }
+
+    func testABlankForwardHasNoTargetSoValidationBlocksIt() {
+        // A forward with nowhere to send traffic must not be saveable, and the
+        // validator already refuses an empty target.
+        let form = PortForwardEditForm.blank(interface: "wan")
+        XCTAssertFalse(FieldValidator.problems(inForward: form, aliases: []).isEmpty)
+    }
+
+    func testADraftIsIdentifiedSeparatelyFromAnEdit() {
+        XCTAssertNotEqual(PortForwardEditForm.blank(interface: "wan").id,
+                          PortForwardEditForm(from: existing()).id)
+    }
+}
