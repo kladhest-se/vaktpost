@@ -144,6 +144,15 @@ final class WriteSafetyTests: XCTestCase {
         XCTAssertEqual(AdministrativeWrite.deleteFilterSeparator(
             interface: "lan", key: "sep0", displayName: "old"
         ).action, .deleteSeparator)
+        XCTAssertEqual(AdministrativeWrite.saveNatSeparator(
+            separator: create, displayName: "new NAT group"
+        ).action, .addSeparator)
+        XCTAssertEqual(AdministrativeWrite.saveNatSeparator(
+            separator: edit, displayName: "old NAT group"
+        ).action, .editSeparator)
+        XCTAssertEqual(AdministrativeWrite.deleteNatSeparator(
+            key: "sep0", displayName: "old NAT group"
+        ).action, .deleteSeparator)
     }
 
     func testAdministrativePreviewNamesNativeSystemSelectors() {

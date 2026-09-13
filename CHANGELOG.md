@@ -1,5 +1,28 @@
 # Changelog
 
+## NAT separators are managed beside port forwards
+
+The NAT add menu now offers both Port Forward Rule and Separator. Existing NAT
+separator bars open a detail screen and can be renamed, recolored, repositioned,
+or deleted. These operations use pfSense's native flat `nat/separator/sepN`
+shape and `frN` row positions, preserve unknown fields, carry authenticated
+configuration-history attribution, and remain staged under `natconf` until
+Apply Changes.
+
+## Firewall management controls survive Rules-to-NAT switching
+
+The navigation-bar add control is now one persistent menu instead of a
+conditional toolbar item that could be created empty on All or Floating and
+remain absent after switching to NAT. On a selected Rules interface it always
+offers both Rule and Separator; on NAT it offers Port Forward Rule regardless
+of the previous Rules chip. NAT drag handles remain available across the
+complete unfiltered port-forward table.
+
+`make install` now runs Xcode's clean action before building for a physical
+device. This prevents an extracted source archive with older file timestamps
+from reinstalling stale DerivedData—the failure mode visible when an installed
+screen still showed the old Local port label and read-only NAT separator text.
+
 ## Redirect target ports use pfSense's native field
 
 NAT rules now read Redirect target port from pfSense's native `local-port`

@@ -19,6 +19,8 @@ enum AdministrativeWrite: Sendable {
     case reorderNatRules(items: [FirewallClient.NatReorderItem], displayName: String)
     case saveFilterSeparator(separator: JSONDict, displayName: String)
     case deleteFilterSeparator(interface: String, key: String, displayName: String)
+    case saveNatSeparator(separator: JSONDict, displayName: String)
+    case deleteNatSeparator(key: String, displayName: String)
 
     var action: AuditAction {
         switch self {
@@ -35,7 +37,9 @@ enum AdministrativeWrite: Sendable {
         case .reorderFilterRules, .reorderNatRules: return .reorderRules
         case .saveFilterSeparator(let separator, _):
             return separator.bool("create") == true ? .addSeparator : .editSeparator
-        case .deleteFilterSeparator: return .deleteSeparator
+        case .saveNatSeparator(let separator, _):
+            return separator.bool("create") == true ? .addSeparator : .editSeparator
+        case .deleteFilterSeparator, .deleteNatSeparator: return .deleteSeparator
         }
     }
 
@@ -54,7 +58,9 @@ enum AdministrativeWrite: Sendable {
              .reorderNatRules(_, let displayName):
             return displayName
         case .saveFilterSeparator(_, let displayName),
-             .deleteFilterSeparator(_, _, let displayName):
+             .deleteFilterSeparator(_, _, let displayName),
+             .saveNatSeparator(_, let displayName),
+             .deleteNatSeparator(_, let displayName):
             return displayName
         }
     }
@@ -88,6 +94,10 @@ enum AdministrativeWrite: Sendable {
             return "\(separator.bool("create") == true ? "Add" : "Edit") separator \(displayName)"
         case .deleteFilterSeparator(_, _, let displayName):
             return "Delete separator \(displayName)"
+        case .saveNatSeparator(let separator, let displayName):
+            return "\(separator.bool("create") == true ? "Add" : "Edit") NAT separator \(displayName)"
+        case .deleteNatSeparator(_, let displayName):
+            return "Delete NAT separator \(displayName)"
         }
     }
 
@@ -130,6 +140,11 @@ enum AdministrativeWrite: Sendable {
             return "\(verb) separator “\(displayName)” on \(separator.string("interface") ?? "unknown interface"), after \(separator.int("position") ?? 0) rules."
         case .deleteFilterSeparator(let interface, _, let displayName):
             return "Delete separator “\(displayName)” from \(interface)."
+        case .saveNatSeparator(let separator, let displayName):
+            let verb = separator.bool("create") == true ? "Add" : "Update"
+            return "\(verb) NAT separator “\(displayName)”, after \(separator.int("position") ?? 0) port forwards."
+        case .deleteNatSeparator(_, let displayName):
+            return "Delete NAT separator “\(displayName)”."
         }
     }
 
@@ -442,6 +457,27 @@ final class WriteCoordinator {
             guard !interface.isEmpty, !key.isEmpty else {
                 throw WriteCoordinatorError.invalidOperation("a separator interface and key are required")
             }
+        case .saveNatSeparator(let separator, _):
+            let isCreate = separator.bool("create") ?? false
+            let key = separator.string("key") ?? ""
+            let text = separator.string("text")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let color = separator.string("color") ?? ""
+            let position = separator.int("position") ?? -1
+            guard (isCreate && key.isEmpty) || (!isCreate && !key.isEmpty) else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "the NAT separator key does not match create/edit mode")
+            }
+            guard !text.isEmpty else {
+                throw WriteCoordinatorError.invalidOperation("NAT separator text is required")
+            }
+            guard ["info", "success", "warning", "danger"].contains(color), position >= 0 else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "the NAT separator color or position is invalid")
+            }
+        case .deleteNatSeparator(let key, _):
+            guard !key.isEmpty else {
+                throw WriteCoordinatorError.invalidOperation("a NAT separator key is required")
+            }
         case .reorderFilterRules(let interface, let items, _):
             guard !interface.isEmpty else {
                 throw WriteCoordinatorError.invalidOperation("an interface is required")
@@ -522,6 +558,12 @@ final class WriteCoordinator {
             return Receipt(status: result.string("status") ?? "ok", tracker: result.string("key"))
         case .deleteFilterSeparator(let interface, let key, _):
             let result = try await client.deleteFilterSeparator(interface: interface, key: key)
+            return Receipt(status: result.string("status") ?? "ok", tracker: key)
+        case .saveNatSeparator(let separator, _):
+            let result = try await client.saveNatSeparator(separator: separator)
+            return Receipt(status: result.string("status") ?? "ok", tracker: result.string("key"))
+        case .deleteNatSeparator(let key, _):
+            let result = try await client.deleteNatSeparator(key: key)
             return Receipt(status: result.string("status") ?? "ok", tracker: key)
         }
     }
@@ -642,6 +684,30 @@ final class WriteCoordinator {
                 $0.interfaceName == interface && $0.key == key
             }) else {
                 throw WriteCoordinatorError.invalidOperation("the separator is no longer present")
+            }
+            return Self.separatorSnapshot(separator)
+        case .saveNatSeparator(let expected, _):
+            let position = expected.int("position") ?? -1
+            let forwards = try await client.portForwards()
+            guard position <= forwards.count else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "the selected NAT separator position is no longer available")
+            }
+            let separatorPayload = try await client.ruleSeparators()
+            let separators = separatorPayload.nat
+            if expected.bool("create") == true {
+                return "nat_separators=\(separators.count);new_key=unassigned"
+            }
+            let key = expected.string("key") ?? ""
+            guard let separator = separators.first(where: { $0.key == key }) else {
+                throw WriteCoordinatorError.invalidOperation("the NAT separator is no longer present")
+            }
+            return Self.separatorSnapshot(separator)
+        case .deleteNatSeparator(let key, _):
+            let separatorPayload = try await client.ruleSeparators()
+            let separators = separatorPayload.nat
+            guard let separator = separators.first(where: { $0.key == key }) else {
+                throw WriteCoordinatorError.invalidOperation("the NAT separator is no longer present")
             }
             return Self.separatorSnapshot(separator)
         case .reorderFilterRules(let interface, let items, _):
@@ -825,6 +891,35 @@ final class WriteCoordinator {
                 state: exists ? .mismatch : .verified,
                 detail: exists ? "The deleted separator is still present." : "The separator is absent during read-back.",
                 snapshot: exists ? "interface=\(interface);key=\(key);present=true" : "interface=\(interface);key=\(key);present=false"
+            )
+        case .saveNatSeparator(let expected, _):
+            let key = receipt.tracker ?? expected.string("key") ?? ""
+            let separators = try await client.ruleSeparators()
+            let actual = separators.nat.first { $0.key == key }
+            guard let actual else {
+                return Verification(state: .mismatch,
+                                    detail: "The NAT separator was not found during read-back.",
+                                    snapshot: nil)
+            }
+            let matches = actual.text == (expected.string("text") ?? "")
+                && actual.colorName == (expected.string("color") ?? "")
+                && actual.precedingRuleCount == expected.int("position")
+            return Verification(
+                state: matches ? .verified : .mismatch,
+                detail: matches
+                    ? "The NAT separator matches the requested text, color, and position."
+                    : "The NAT separator returned different values after saving.",
+                snapshot: Self.separatorSnapshot(actual)
+            )
+        case .deleteNatSeparator(let key, _):
+            let separators = try await client.ruleSeparators()
+            let exists = separators.nat.contains { $0.key == key }
+            return Verification(
+                state: exists ? .mismatch : .verified,
+                detail: exists
+                    ? "The deleted NAT separator is still present."
+                    : "The NAT separator is absent during read-back.",
+                snapshot: "key=\(key);present=\(exists)"
             )
         }
     }

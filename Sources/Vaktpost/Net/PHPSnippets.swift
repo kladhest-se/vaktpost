@@ -65,7 +65,9 @@ struct PHPSnippet: Sendable {
         "reorder_filter_rules", // reorders one interface's rules and separators
         "reorder_nat_rules",    // reorders the complete flat NAT rule table
         "save_filter_separator",// creates or edits one filter separator
-        "delete_filter_separator" // removes one filter separator
+        "delete_filter_separator", // removes one filter separator
+        "save_nat_separator",   // creates or edits one flat NAT separator
+        "delete_nat_separator"  // removes one flat NAT separator
     ]
 
     // Earlier operations were not on this list when it was first written,
@@ -3191,6 +3193,161 @@ struct PHPSnippet: Sendable {
           mark_subsystem_dirty("filter");
           $toreturn = ["status" => "ok", "apply_pending" => true,
             "key" => $vaktpost_key, "interface" => $vaktpost_interface];
+        }
+        """)
+    }
+
+    /// Creates or updates one separator in pfSense's flat NAT table.
+    static func saveNatSeparator(separator: JSONDict) -> PHPSnippet {
+        let encoded = payload(separator)
+        return PHPSnippet("save_nat_separator", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        global $config;
+        $toreturn = [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_key = trim(strval($vaktpost_input["key"] ?? ""));
+        $vaktpost_text = trim(strval($vaktpost_input["text"] ?? ""));
+        $vaktpost_color = trim(strval($vaktpost_input["color"] ?? "info"));
+        $vaktpost_position = intval($vaktpost_input["position"] ?? -1);
+        $vaktpost_create = ($vaktpost_input["create"] ?? false) === true;
+
+        $vaktpost_nat = is_array($config["nat"] ?? null) ? $config["nat"] : [];
+        $vaktpost_rules = is_array($vaktpost_nat["rule"] ?? null)
+          ? array_values($vaktpost_nat["rule"]) : [];
+        $vaktpost_separators = is_array($vaktpost_nat["separator"] ?? null)
+          ? $vaktpost_nat["separator"] : [];
+
+        if ($vaktpost_text === ""
+            || !in_array($vaktpost_color, ["info", "success", "warning", "danger"], true)
+            || $vaktpost_position < 0 || $vaktpost_position > count($vaktpost_rules)) {
+          $toreturn["status"] = "validation_failed";
+          $toreturn["error"] = "The NAT separator text, color, or position is invalid";
+        } else {
+          if ($vaktpost_create) {
+            $vaktpost_number = 0;
+            $vaktpost_key = "sep" . $vaktpost_number;
+            while (array_key_exists($vaktpost_key, $vaktpost_separators)) {
+              $vaktpost_number = $vaktpost_number + 1;
+              $vaktpost_key = "sep" . $vaktpost_number;
+            }
+            $vaktpost_separators[$vaktpost_key] = [];
+          }
+
+          if ($vaktpost_key === "" || !array_key_exists($vaktpost_key, $vaktpost_separators)) {
+            $toreturn["status"] = "not_found";
+            $toreturn["error"] = "The NAT separator is no longer present";
+          } else {
+            $vaktpost_separators[$vaktpost_key]["text"] = $vaktpost_text;
+            $vaktpost_separators[$vaktpost_key]["color"] = $vaktpost_color;
+            $vaktpost_separators[$vaktpost_key]["row"] = ["fr" . $vaktpost_position];
+            $vaktpost_nat["separator"] = $vaktpost_separators;
+            $config["nat"] = $vaktpost_nat;
+
+            $vaktpost_audit_session_started = false;
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              $vaktpost_audit_session_started = session_start([
+                "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+              ]);
+            }
+            $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+            if ($vaktpost_authenticated_user !== "") {
+              $_SESSION["Username"] = $vaktpost_authenticated_user;
+              $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+              if (is_array($vaktpost_authcfg)) {
+                $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+                $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+                if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                  $_SESSION["authsource"] = "Local Database";
+                } else {
+                  $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                    . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+                }
+              }
+            }
+            write_config($vaktpost_create
+              ? "Vaktpost: added a NAT separator"
+              : "Vaktpost: edited a NAT separator");
+            if ($vaktpost_audit_session_started) {
+              if (session_status() !== PHP_SESSION_ACTIVE) {
+                session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+              }
+              if (session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION = [];
+                session_destroy();
+              }
+            }
+            mark_subsystem_dirty("natconf");
+            $toreturn = [
+              "status" => "ok", "apply_pending" => true,
+              "key" => $vaktpost_key, "text" => $vaktpost_text,
+              "color" => $vaktpost_color, "position" => $vaktpost_position,
+              "created" => $vaktpost_create
+            ];
+          }
+        }
+        """)
+    }
+
+    /// Deletes one flat NAT separator without changing surrounding forwards.
+    static func deleteNatSeparator(key: String) -> PHPSnippet {
+        let encoded = payload(JSONDict(["key": .string(key)]))
+        return PHPSnippet("delete_nat_separator", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        global $config;
+        $toreturn = [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_key = trim(strval($vaktpost_input["key"] ?? ""));
+        $vaktpost_nat = is_array($config["nat"] ?? null) ? $config["nat"] : [];
+        $vaktpost_separators = is_array($vaktpost_nat["separator"] ?? null)
+          ? $vaktpost_nat["separator"] : [];
+
+        if ($vaktpost_key === "" || !array_key_exists($vaktpost_key, $vaktpost_separators)) {
+          $toreturn["status"] = "not_found";
+          $toreturn["error"] = "The NAT separator is no longer present";
+        } else {
+          unset($vaktpost_separators[$vaktpost_key]);
+          $vaktpost_nat["separator"] = $vaktpost_separators;
+          $config["nat"] = $vaktpost_nat;
+
+          $vaktpost_audit_session_started = false;
+          if (session_status() !== PHP_SESSION_ACTIVE) {
+            $vaktpost_audit_session_started = session_start([
+              "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+            ]);
+          }
+          $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+          if ($vaktpost_authenticated_user !== "") {
+            $_SESSION["Username"] = $vaktpost_authenticated_user;
+            $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+            if (is_array($vaktpost_authcfg)) {
+              $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+              $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+              if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                $_SESSION["authsource"] = "Local Database";
+              } else {
+                $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                  . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+              }
+            }
+          }
+          write_config("Vaktpost: deleted a NAT separator");
+          if ($vaktpost_audit_session_started) {
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+            }
+            if (session_status() === PHP_SESSION_ACTIVE) {
+              $_SESSION = [];
+              session_destroy();
+            }
+          }
+          mark_subsystem_dirty("natconf");
+          $toreturn = ["status" => "ok", "apply_pending" => true, "key" => $vaktpost_key];
         }
         """)
     }

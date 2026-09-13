@@ -191,7 +191,7 @@ install:
 	@$(REQUIRE_DEVICE)
 	@$(MAKE) --no-print-directory project
 	@set -e; $(bump_build); \
-	xcodebuild build -project $(PROJECT) -scheme $(SCHEME) \
+	xcodebuild clean build -project $(PROJECT) -scheme $(SCHEME) \
 		-destination 'id=$(DEVICE)' -allowProvisioningUpdates \
 		DEVELOPMENT_TEAM=$(TEAM_ID) CODE_SIGN_STYLE=Automatic \
 		CURRENT_PROJECT_VERSION=$$build -quiet; \

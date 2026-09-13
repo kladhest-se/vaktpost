@@ -21,6 +21,8 @@ struct FirewallView: View {
     @State private var newRule: RuleEditForm?
     /// A new filter separator being drafted for the selected interface.
     @State private var newSeparator: SeparatorEditForm?
+    /// A new separator in pfSense's flat NAT port-forward table.
+    @State private var newNatSeparator: SeparatorEditForm?
     /// A new port forward being drafted.
     @State private var newForward: PortForwardEditForm?
     // No writeError/showErrorAlert here any more. createRule and
@@ -60,7 +62,9 @@ struct FirewallView: View {
                 if let rule = store.rules.first(where: { $0.id == id }) {
                     RuleDetailView(rule: rule)
                 } else if let separator = store.filterSeparators.first(where: { $0.id == id }) {
-                    SeparatorDetailView(separator: separator)
+                    SeparatorDetailView(separator: separator, scope: .filter)
+                } else if let separator = store.natSeparators.first(where: { $0.id == id }) {
+                    SeparatorDetailView(separator: separator, scope: .nat)
                 } else if let pf = store.portForwards.first(where: { $0.id == id }) {
                     PortForwardDetailView(forward: pf)
                 } else {
@@ -211,12 +215,15 @@ struct FirewallView: View {
         .writeErrorAlert(isErrorPresented: $showReorderErrorAlert, error: $reorderError)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                switch pane {
-                case .rules:
-                    // A filter rule or separator belongs to one selected
-                    // interface, so the Rules add menu only appears there.
-                    if let interface = interfaceFilter {
-                        Menu {
+                // Keep one real toolbar item mounted at all times. When this
+                // was an `if` inside ToolbarItem, opening Firewall on All or
+                // Floating created an empty item; SwiftUI could keep that
+                // empty navigation-bar snapshot after switching to NAT, so
+                // its add action never appeared.
+                Menu {
+                    switch pane {
+                    case .rules:
+                        if let interface = interfaceFilter {
                             Button {
                                 newRule = RuleEditForm.blank(interface: interface)
                             } label: {
@@ -233,21 +240,31 @@ struct FirewallView: View {
                             } label: {
                                 Label("Separator", systemImage: "rectangle.split.1x2")
                             }
+                        }
+                    case .nat:
+                        // NAT is one flat table. This choice is independent
+                        // of whichever Rules chip was previously selected.
+                        Button {
+                            newForward = PortForwardEditForm.blank(interface: defaultNatInterface)
                         } label: {
-                            Label("Add", systemImage: "plus")
+                            Label("Port Forward Rule", systemImage: "arrow.right.square")
+                        }
+                        Button {
+                            newNatSeparator = SeparatorEditForm.blank(
+                                interface: "nat",
+                                position: store.portForwards.count
+                            )
+                        } label: {
+                            Label("Separator", systemImage: "rectangle.split.1x2")
                         }
                     }
-                case .nat:
-                    // NAT is one flat table. Its add action must not disappear
-                    // just because the Rules pane was left on All or Floating.
-                    Button {
-                        newForward = PortForwardEditForm.blank(interface: defaultNatInterface)
-                    } label: {
-                        Label("New forward", systemImage: "plus")
-                    }
+                } label: {
+                    Label("Add", systemImage: "plus")
                 }
-                // Exhaustive, with no `default`. A third pane added later has
-                // to decide what its plus button does.
+                // Filter rules and separators need one concrete interface.
+                // NAT does not, so moving from All/Floating to NAT enables
+                // this same persistent item immediately.
+                .disabled(pane == .rules && interfaceFilter == nil)
             }
         }
         // `item:` rather than `isPresented:` — the form is the reason the
@@ -271,6 +288,13 @@ struct FirewallView: View {
                     !$0.isFloating && $0.interfaceName == form.interface
                 },
                 onSave: { saved in try await createSeparator(saved) }
+            )
+        }
+        .sheet(item: $newNatSeparator) { form in
+            SeparatorEditSheet(
+                form: form,
+                forwards: store.portForwards,
+                onSave: { saved in try await createNatSeparator(saved) }
             )
         }
         .sheet(item: $newForward) { form in
@@ -326,6 +350,14 @@ struct FirewallView: View {
     private func createSeparator(_ form: SeparatorEditForm) async throws {
         _ = try await store.writeCoordinator.execute(
             .saveFilterSeparator(separator: form.toDict(), displayName: form.text)
+        )
+        await store.refreshFirewallObjectsAfterWrite()
+    }
+
+    /// Stage a separator in the flat NAT table without applying the ruleset.
+    private func createNatSeparator(_ form: SeparatorEditForm) async throws {
+        _ = try await store.writeCoordinator.execute(
+            .saveNatSeparator(separator: form.toDict(), displayName: form.text)
         )
         await store.refreshFirewallObjectsAfterWrite()
     }
@@ -714,7 +746,7 @@ struct FirewallView: View {
                 // the condition `natSeparatorsForCurrentSelection` already
                 // enforces.
                 ForEach(separators.filter { $0.precedingRuleCount == index }) { separator in
-                    SeparatorBar(separator: separator)
+                    natSeparatorRow(separator)
                 }
                 if canReorderNatRules {
                     natReorderableRow(item)
@@ -723,9 +755,16 @@ struct FirewallView: View {
                 }
             }
             ForEach(separators.filter { ($0.precedingRuleCount ?? Int.max) >= visibleItems.count }) { separator in
-                SeparatorBar(separator: separator)
+                natSeparatorRow(separator)
             }
         }
+    }
+
+    private func natSeparatorRow(_ separator: RuleSeparator) -> some View {
+        Button { selection = separator.id } label: {
+            SeparatorBar(separator: separator, showsDisclosure: true)
+        }
+        .buttonStyle(.plain)
     }
 
     private var natOrderChangedBar: some View {
@@ -1145,13 +1184,19 @@ struct SeparatorEditForm: Equatable, Identifiable {
     }
 }
 
-/// One filter separator, with the same edit/delete flow as a firewall rule.
+enum SeparatorScope: Equatable {
+    case filter
+    case nat
+}
+
+/// One filter or NAT separator, with the same edit/delete flow as a rule.
 struct SeparatorDetailView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
     @Environment(\.dismiss) private var dismiss
 
     let separator: RuleSeparator
+    let scope: SeparatorScope
 
     @State private var editorForm: SeparatorEditForm?
     @State private var isSaving = false
@@ -1167,12 +1212,22 @@ struct SeparatorDetailView: View {
     private var positionLabel: String {
         let position = separator.precedingRuleCount ?? 0
         guard position > 0 else { return "Before the first rule" }
-        guard let preceding = separatorInterfaceRules.indices.contains(position - 1)
-                ? separatorInterfaceRules[position - 1] : nil else {
-            return "After rule \(position)"
+        switch scope {
+        case .filter:
+            guard separatorInterfaceRules.indices.contains(position - 1) else {
+                return "After rule \(position)"
+            }
+            let preceding = separatorInterfaceRules[position - 1]
+            let name = preceding.descr.isEmpty ? "rule \(position)" : preceding.descr
+            return "After \(name)"
+        case .nat:
+            guard store.portForwards.indices.contains(position - 1) else {
+                return "After port forward \(position)"
+            }
+            let preceding = store.portForwards[position - 1]
+            let name = preceding.descr.isEmpty ? "port forward \(position)" : preceding.descr
+            return "After \(name)"
         }
-        let name = preceding.descr.isEmpty ? "rule \(position)" : preceding.descr
-        return "After \(name)"
     }
 
     var body: some View {
@@ -1185,10 +1240,14 @@ struct SeparatorDetailView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         FieldRow(key: "Label", value: separator.text, mono: false)
                         FieldRow(key: "Color", value: separator.colorName.capitalized, mono: false)
-                        FieldRow(
-                            key: "Interface",
-                            value: store.interfaceLabel(for: separatorInterface) ?? separatorInterface
-                        )
+                        if scope == .filter {
+                            FieldRow(
+                                key: "Interface",
+                                value: store.interfaceLabel(for: separatorInterface) ?? separatorInterface
+                            )
+                        } else {
+                            FieldRow(key: "Table", value: "NAT port forwards", mono: false)
+                        }
                         FieldRow(key: "Position", value: positionLabel, mono: false)
                         FieldRow(key: "Key", value: separator.key)
                     }
@@ -1238,19 +1297,34 @@ struct SeparatorDetailView: View {
         .navigationTitle(separator.text.isEmpty ? "Separator" : separator.text)
         .navigationBarTitleDisplayMode(.inline)
         .sheet(item: $editorForm) { form in
-            SeparatorEditSheet(
-                form: form,
-                rules: separatorInterfaceRules,
-                onSave: { saved in try await save(changes: saved) }
-            )
+            if scope == .filter {
+                SeparatorEditSheet(
+                    form: form,
+                    rules: separatorInterfaceRules,
+                    onSave: { saved in try await save(changes: saved) }
+                )
+            } else {
+                SeparatorEditSheet(
+                    form: form,
+                    forwards: store.portForwards,
+                    onSave: { saved in try await save(changes: saved) }
+                )
+            }
         }
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
     }
 
     private func save(changes: SeparatorEditForm) async throws {
-        _ = try await store.writeCoordinator.execute(
-            .saveFilterSeparator(separator: changes.toDict(), displayName: separator.text)
-        )
+        switch scope {
+        case .filter:
+            _ = try await store.writeCoordinator.execute(
+                .saveFilterSeparator(separator: changes.toDict(), displayName: separator.text)
+            )
+        case .nat:
+            _ = try await store.writeCoordinator.execute(
+                .saveNatSeparator(separator: changes.toDict(), displayName: separator.text)
+            )
+        }
         await store.refreshFirewallObjectsAfterWrite()
     }
 
@@ -1259,13 +1333,23 @@ struct SeparatorDetailView: View {
         defer { isSaving = false }
 
         do {
-            _ = try await store.writeCoordinator.execute(
-                .deleteFilterSeparator(
-                    interface: separatorInterface,
-                    key: separator.key,
-                    displayName: separator.text.isEmpty ? separator.key : separator.text
+            switch scope {
+            case .filter:
+                _ = try await store.writeCoordinator.execute(
+                    .deleteFilterSeparator(
+                        interface: separatorInterface,
+                        key: separator.key,
+                        displayName: separator.text.isEmpty ? separator.key : separator.text
+                    )
                 )
-            )
+            case .nat:
+                _ = try await store.writeCoordinator.execute(
+                    .deleteNatSeparator(
+                        key: separator.key,
+                        displayName: separator.text.isEmpty ? separator.key : separator.text
+                    )
+                )
+            }
             dismiss()
             await store.refreshFirewallObjectsAfterWrite()
         } catch {
@@ -1280,7 +1364,8 @@ struct SeparatorEditSheet: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dismiss) private var dismiss
 
-    let rules: [FirewallRule]
+    let positionLabels: [String]
+    let firstPositionLabel: String
     let onSave: (SeparatorEditForm) async throws -> Void
 
     @State private var edited: SeparatorEditForm
@@ -1293,10 +1378,28 @@ struct SeparatorEditSheet: View {
 
     init(form: SeparatorEditForm, rules: [FirewallRule],
          onSave: @escaping (SeparatorEditForm) async throws -> Void) {
-        self.rules = rules
+        firstPositionLabel = "Before the first rule"
+        positionLabels = rules.enumerated().map { index, rule in
+            let name = rule.descr.isEmpty ? "rule \(index + 1)" : rule.descr
+            return index + 1 == rules.count ? "After \(name) (last)" : "After \(name)"
+        }
         self.onSave = onSave
         var available = form
         available.position = min(max(0, form.position), rules.count)
+        original = available
+        _edited = State(initialValue: available)
+    }
+
+    init(form: SeparatorEditForm, forwards: [PortForward],
+         onSave: @escaping (SeparatorEditForm) async throws -> Void) {
+        firstPositionLabel = "Before the first port forward"
+        positionLabels = forwards.enumerated().map { index, forward in
+            let name = forward.descr.isEmpty ? "port forward \(index + 1)" : forward.descr
+            return index + 1 == forwards.count ? "After \(name) (last)" : "After \(name)"
+        }
+        self.onSave = onSave
+        var available = form
+        available.position = min(max(0, form.position), forwards.count)
         original = available
         _edited = State(initialValue: available)
     }
@@ -1307,7 +1410,7 @@ struct SeparatorEditSheet: View {
         !edited.interface.isEmpty
             && !edited.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && colors.contains(edited.color)
-            && (0...rules.count).contains(edited.position)
+            && (0...positionLabels.count).contains(edited.position)
     }
 
     var body: some View {
@@ -1329,9 +1432,9 @@ struct SeparatorEditSheet: View {
                     Slab(rail: .info, title: "Position") {
                         VStack(alignment: .leading, spacing: 8) {
                             Picker("", selection: $edited.position) {
-                                Text("Before the first rule").tag(0)
-                                ForEach(Array(rules.enumerated()), id: \.element.id) { index, rule in
-                                    Text(positionLabel(after: rule, number: index + 1))
+                                Text(firstPositionLabel).tag(0)
+                                ForEach(Array(positionLabels.enumerated()), id: \.offset) { index, label in
+                                    Text(label)
                                         .tag(index + 1)
                                 }
                             }
@@ -1377,11 +1480,6 @@ struct SeparatorEditSheet: View {
             .interactiveDismissDisabled(isSaving)
             .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
         }
-    }
-
-    private func positionLabel(after rule: FirewallRule, number: Int) -> String {
-        let name = rule.descr.isEmpty ? "rule \(number)" : rule.descr
-        return number == rules.count ? "After \(name) (last)" : "After \(name)"
     }
 
     private func save() async {
@@ -2757,7 +2855,7 @@ struct PortForwardEditSheet: View {
                                  edited.destinationStorageKind, into: &changes)
         Self.describe("Destination port", original.destinationPort, edited.destinationPort, into: &changes)
         Self.describe("Target", original.targetAddress, edited.targetAddress, into: &changes)
-        Self.describe("Local port", original.localPort, edited.localPort, into: &changes)
+        Self.describe("Redirect target port", original.localPort, edited.localPort, into: &changes)
         Self.describe("Description", original.descr, edited.descr, into: &changes)
         if original.disabled != edited.disabled { changes.append("Disabled: \(original.disabled ? "yes" : "no") → \(edited.disabled ? "yes" : "no")") }
         return "The coordinator will save and read back:\n\n" + changes.map { "• \($0)" }.joined(separator: "\n")

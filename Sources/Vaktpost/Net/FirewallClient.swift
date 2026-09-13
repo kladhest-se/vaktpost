@@ -550,6 +550,34 @@ actor FirewallClient {
         return try Self.validatedPendingWriteResponse(dict, operation: "Separator deletion")
     }
 
+    /// Creates or updates one separator in the flat NAT port-forward table.
+    func saveNatSeparator(separator: JSONDict) async throws -> JSONDict {
+        try requireAdministration()
+        let isCreate = separator.bool("create") ?? false
+        let key = separator.string("key") ?? ""
+        guard (isCreate && key.isEmpty) || (!isCreate && !key.isEmpty) else {
+            throw RPCError.malformed(isCreate
+                                     ? "NAT separator creation must not supply a key."
+                                     : "NAT separator editing requires its pfSense key.")
+        }
+        let dict = try await rpc.runObjectOnce(PHPSnippet.saveNatSeparator(separator: separator))
+        let result = try Self.validatedPendingWriteResponse(dict, operation: "NAT separator save")
+        guard !(result.string("key") ?? "").isEmpty else {
+            throw RPCError.fault(0, "NAT separator save did not return its pfSense key.")
+        }
+        return result
+    }
+
+    /// Deletes one separator from the flat NAT port-forward table.
+    func deleteNatSeparator(key: String) async throws -> JSONDict {
+        try requireAdministration()
+        guard !key.isEmpty else {
+            throw RPCError.malformed("NAT separator deletion requires its pfSense key.")
+        }
+        let dict = try await rpc.runObjectOnce(PHPSnippet.deleteNatSeparator(key: key))
+        return try Self.validatedPendingWriteResponse(dict, operation: "NAT separator deletion")
+    }
+
     /// One item in a drag-produced order: a rule by tracker, or a separator
     /// by its pfSense key.
     enum ReorderItem {
