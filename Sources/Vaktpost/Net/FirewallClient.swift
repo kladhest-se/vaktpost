@@ -520,6 +520,40 @@ actor FirewallClient {
         )
     }
 
+    /// Creates or updates an inline firewall alias. The change is deliberately
+    /// staged: it does not alter the active ruleset until Apply Changes runs.
+    func saveAlias(alias: JSONDict) async throws -> JSONDict {
+        try requireAdministration()
+        let isCreate = alias.bool("create") ?? false
+        let name = alias.string("name") ?? ""
+        let originalName = alias.string("original_name") ?? ""
+        guard !name.isEmpty,
+              (isCreate && originalName.isEmpty) || (!isCreate && originalName == name) else {
+            throw RPCError.malformed(isCreate
+                                     ? "Alias creation requires a new name."
+                                     : "Alias editing requires its unchanged original name.")
+        }
+        let dict = try await rpc.runObjectOnce(PHPSnippet.saveAlias(alias: alias))
+        let result = try Self.validatedPendingWriteResponse(dict, operation: "Alias save")
+        guard result.string("name") == name,
+              result.bool("created") == isCreate else {
+            throw RPCError.fault(0, "Alias save returned an inconsistent result.")
+        }
+        return result
+    }
+
+    /// Deletes an unused firewall alias and leaves the change pending apply.
+    func deleteAlias(name: String) async throws -> JSONDict {
+        try requireAdministration()
+        guard !name.isEmpty else { throw RPCError.malformed("Alias deletion requires a name.") }
+        let dict = try await rpc.runObjectOnce(PHPSnippet.deleteAlias(name: name))
+        let result = try Self.validatedPendingWriteResponse(dict, operation: "Alias deletion")
+        guard result.string("name") == name else {
+            throw RPCError.fault(0, "Alias deletion returned a different alias name.")
+        }
+        return result
+    }
+
     /// Creates or updates one separator in an interface's filter rules.
     func saveFilterSeparator(separator: JSONDict) async throws -> JSONDict {
         try requireAdministration()

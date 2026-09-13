@@ -67,7 +67,9 @@ struct PHPSnippet: Sendable {
         "save_filter_separator",// creates or edits one filter separator
         "delete_filter_separator", // removes one filter separator
         "save_nat_separator",   // creates or edits one flat NAT separator
-        "delete_nat_separator"  // removes one flat NAT separator
+        "delete_nat_separator", // removes one flat NAT separator
+        "save_alias",           // creates or edits one inline firewall alias
+        "delete_alias"          // removes one unused firewall alias
     ]
 
     // Earlier operations were not on this list when it was first written,
@@ -172,7 +174,7 @@ struct PHPSnippet: Sendable {
         "array_slice", "array_values", "array_keys", "array_reverse", "file",
         "file_exists", "file_get_contents", "filemtime", "glob", "basename",
         "sort", "usort", "strval", "substr", "function_exists", "config_get_path", "strpos", "strlen", "filesize",
-        "strtoupper",
+        "strtoupper", "strtolower",
         "array_key_exists", "intval",
         // Pure, built-in string conversion — no side effects, no file or
         // system access. Used once, to show a submitted interface value as
@@ -193,7 +195,8 @@ struct PHPSnippet: Sendable {
         // Native pfSense validators used by the two administrative rule-save
         // snippets before they touch `$config`.
         "get_specialnet", "is_ipaddroralias", "is_ipaddrv4", "is_ipaddrv6",
-        "is_port_or_alias",
+        "is_subnet", "is_iprange", "is_fqdn",
+        "is_port_or_alias", "is_port_or_range_or_alias", "is_alias_inuse",
         "return_gateways_status", "return_gateways_array",
         "get_services", "get_service_status",
         "get_carp_status", "get_carp_interface_status",
@@ -250,7 +253,7 @@ struct PHPSnippet: Sendable {
         //
         // Listed once. They were here twice, from two separate edits, which is
         // how an allowlist stops being something anybody reads.
-        "write_config", "mark_subsystem_dirty", "filter_configure_sync",
+        "write_config", "mark_subsystem_dirty", "clear_subsystem_dirty", "filter_configure_sync",
         "pfctl_clear_states", "pfctl_clear_states_by_if",
         "auth_get_authserver",
         "session_status", "session_start", "session_destroy", "is_subsystem_dirty",
@@ -2506,7 +2509,8 @@ struct PHPSnippet: Sendable {
     $toreturn = [
       "filter" => [],
       "nat" => [],
-      "apply_pending" => is_subsystem_dirty("filter") || is_subsystem_dirty("natconf"),
+      "apply_pending" => is_subsystem_dirty("filter") || is_subsystem_dirty("natconf")
+        || is_subsystem_dirty("aliases"),
     ];
 
     // Filter: genuinely grouped by interface. Position is the count of rules
@@ -2779,6 +2783,9 @@ struct PHPSnippet: Sendable {
     require_once '/etc/inc/filter.inc';
     $vaktpost_reload_result = filter_configure_sync();
     if ($vaktpost_reload_result === 0) {
+      // Alias edits use pfSense's own dirty subsystem and remain staged until
+      // this explicit Apply Changes action succeeds.
+      clear_subsystem_dirty("aliases");
       $toreturn = ["status" => "ok"];
     } else {
       $toreturn = [
@@ -3348,6 +3355,246 @@ struct PHPSnippet: Sendable {
           }
           mark_subsystem_dirty("natconf");
           $toreturn = ["status" => "ok", "apply_pending" => true, "key" => $vaktpost_key];
+        }
+        """)
+    }
+
+    /// Creates or updates a host, network, or port alias without loading the
+    /// resulting ruleset. pfSense's alias page follows the same two-phase
+    /// model: save config, mark `aliases` dirty, then apply separately.
+    static func saveAlias(alias: JSONDict) -> PHPSnippet {
+        let encoded = payload(alias)
+        return PHPSnippet("save_alias", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        require_once '/etc/inc/pfsense-utils.inc';
+        global $config;
+        $toreturn = [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_create = ($vaktpost_input["create"] ?? false) === true;
+        $vaktpost_original = trim(strval($vaktpost_input["original_name"] ?? ""));
+        $vaktpost_name = trim(strval($vaktpost_input["name"] ?? ""));
+        $vaktpost_type = strtolower(trim(strval($vaktpost_input["type"] ?? "")));
+        $vaktpost_descr = trim(strval($vaktpost_input["descr"] ?? ""));
+        $vaktpost_members = $vaktpost_input["members"] ?? [];
+        $vaktpost_details = $vaktpost_input["details"] ?? [];
+        $vaktpost_alias_root = $config["aliases"] ?? [];
+        $vaktpost_aliases = (is_array($vaktpost_alias_root)
+          && is_iterable($vaktpost_alias_root["alias"] ?? null))
+          ? $vaktpost_alias_root["alias"] : [];
+        $vaktpost_error = "";
+        if ($vaktpost_name === "" || preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', $vaktpost_name) !== 1) {
+          $vaktpost_error = "Alias names must start with a letter or underscore and contain only letters, numbers, and underscores";
+        } elseif (!in_array($vaktpost_type, ["host", "network", "port"], true)) {
+          $vaktpost_error = "Only host, network, and port aliases can be edited in Vaktpost";
+        } elseif (!is_array($vaktpost_members) || count($vaktpost_members) < 1 || count($vaktpost_members) > 5000) {
+          $vaktpost_error = "At least one alias member is required";
+        } elseif (!is_array($vaktpost_details)) {
+          $vaktpost_error = "Alias member descriptions are malformed";
+        }
+
+        $vaktpost_found = -1;
+        if ($vaktpost_error === "") {
+          foreach ($vaktpost_aliases as $vaktpost_index => $vaktpost_existing) {
+            if (!is_array($vaktpost_existing)) { continue; }
+            $vaktpost_existing_name = trim(strval($vaktpost_existing["name"] ?? ""));
+            if (strtolower($vaktpost_existing_name) === strtolower($vaktpost_name)) {
+              if ($vaktpost_create || $vaktpost_existing_name !== $vaktpost_original) {
+                $vaktpost_error = "An alias with this name already exists";
+                break;
+              }
+              $vaktpost_found = intval($vaktpost_index);
+            }
+            if (!$vaktpost_create && $vaktpost_existing_name === $vaktpost_original) {
+              $vaktpost_found = intval($vaktpost_index);
+            }
+          }
+          if (!$vaktpost_create && ($vaktpost_original === "" || $vaktpost_name !== $vaktpost_original)) {
+            $vaktpost_error = "Existing alias names cannot be changed because firewall rules may reference them";
+          } elseif (!$vaktpost_create && $vaktpost_found < 0) {
+            $vaktpost_error = "The alias is no longer present";
+          } elseif (!$vaktpost_create
+              && strtolower(trim(strval($vaktpost_aliases[$vaktpost_found]["type"] ?? ""))) !== $vaktpost_type) {
+            $vaktpost_error = "Existing alias types cannot be changed because firewall rules may reference them";
+          }
+        }
+
+        $vaktpost_clean_members = [];
+        $vaktpost_clean_details = [];
+        if ($vaktpost_error === "") {
+          foreach ($vaktpost_members as $vaktpost_index => $vaktpost_member_value) {
+            $vaktpost_member = trim(strval($vaktpost_member_value));
+            if ($vaktpost_member === "") {
+              $vaktpost_error = "Alias members cannot be blank";
+              break;
+            }
+            if ($vaktpost_member === $vaktpost_name) {
+              $vaktpost_error = "An alias cannot include itself";
+              break;
+            }
+            $vaktpost_valid = $vaktpost_type === "port"
+              ? is_port_or_range_or_alias($vaktpost_member)
+              : (is_ipaddroralias($vaktpost_member) || is_subnet($vaktpost_member)
+                || is_iprange($vaktpost_member) || is_fqdn($vaktpost_member));
+            if (!$vaktpost_valid) {
+              $vaktpost_error = "One or more alias members are invalid for this alias type";
+              break;
+            }
+            $vaktpost_clean_members[] = $vaktpost_member;
+            $vaktpost_clean_details[] = trim(strval($vaktpost_details[$vaktpost_index] ?? ""));
+          }
+        }
+
+        if ($vaktpost_error !== "") {
+          $toreturn = ["status" => "validation_failed", "error" => $vaktpost_error];
+        } else {
+          $vaktpost_entry = $vaktpost_create ? [] : $vaktpost_aliases[$vaktpost_found];
+          $vaktpost_entry["name"] = $vaktpost_name;
+          $vaktpost_entry["type"] = $vaktpost_type;
+          $vaktpost_entry["address"] = implode(" ", $vaktpost_clean_members);
+          $vaktpost_entry["detail"] = implode("||", $vaktpost_clean_details);
+          if ($vaktpost_descr === "") {
+            unset($vaktpost_entry["descr"]);
+          } else {
+            $vaktpost_entry["descr"] = $vaktpost_descr;
+          }
+          if ($vaktpost_create) {
+            $vaktpost_aliases[] = $vaktpost_entry;
+          } else {
+            $vaktpost_aliases[$vaktpost_found] = $vaktpost_entry;
+          }
+          $config["aliases"]["alias"] = array_values($vaktpost_aliases);
+          $vaktpost_audit_session_started = false;
+          if (session_status() !== PHP_SESSION_ACTIVE) {
+            $vaktpost_audit_session_started = session_start([
+              "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+            ]);
+          }
+          $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+          if ($vaktpost_authenticated_user !== "") {
+            $_SESSION["Username"] = $vaktpost_authenticated_user;
+            $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+            if (is_array($vaktpost_authcfg)) {
+              $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+              $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+              if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                $_SESSION["authsource"] = "Local Database";
+              } else {
+                $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                  . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+              }
+            }
+          }
+          write_config($vaktpost_create
+            ? "Vaktpost: added firewall alias " . $vaktpost_name
+            : "Vaktpost: edited firewall alias " . $vaktpost_name);
+          if ($vaktpost_audit_session_started) {
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+            }
+            if (session_status() === PHP_SESSION_ACTIVE) {
+              $_SESSION = [];
+              session_destroy();
+            }
+          }
+          mark_subsystem_dirty("aliases");
+          $toreturn = [
+            "status" => "ok", "apply_pending" => true,
+            "created" => $vaktpost_create, "name" => $vaktpost_name
+          ];
+        }
+        """)
+    }
+
+    /// Deletes an alias only when pfSense reports no rule references and no
+    /// other alias contains it. The config is staged; Apply Changes performs
+    /// the actual ruleset reload later.
+    static func deleteAlias(name: String) -> PHPSnippet {
+        let encoded = payload(JSONDict(["name": .string(name)]))
+        return PHPSnippet("delete_alias", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        require_once '/etc/inc/pfsense-utils.inc';
+        global $config;
+        $toreturn = [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_name = trim(strval($vaktpost_input["name"] ?? ""));
+        $vaktpost_alias_root = $config["aliases"] ?? [];
+        $vaktpost_aliases = (is_array($vaktpost_alias_root)
+          && is_iterable($vaktpost_alias_root["alias"] ?? null))
+          ? $vaktpost_alias_root["alias"] : [];
+        $vaktpost_found = -1;
+        $vaktpost_nested_use = false;
+        foreach ($vaktpost_aliases as $vaktpost_index => $vaktpost_existing) {
+          if (!is_array($vaktpost_existing)) { continue; }
+          $vaktpost_existing_name = trim(strval($vaktpost_existing["name"] ?? ""));
+          if ($vaktpost_existing_name === $vaktpost_name) {
+            $vaktpost_found = intval($vaktpost_index);
+            continue;
+          }
+          $vaktpost_existing_members = explode(" ", trim(strval($vaktpost_existing["address"] ?? "")));
+          foreach ($vaktpost_existing_members as $vaktpost_existing_member) {
+            if (trim(strval($vaktpost_existing_member)) === $vaktpost_name) {
+              $vaktpost_nested_use = true;
+              break;
+            }
+          }
+        }
+        // pfSense's helper covers the principal address/target fields. The
+        // exact-string scan is intentionally conservative and additionally
+        // catches filter/NAT port references on versions whose helper omits
+        // them. A false positive refuses deletion; it never removes policy.
+        $vaktpost_policy_text = json_encode([
+          $config["filter"] ?? [], $config["nat"] ?? []
+        ]);
+        $vaktpost_policy_use = strpos($vaktpost_policy_text, '"' . $vaktpost_name . '"') !== false;
+        if ($vaktpost_name === "" || $vaktpost_found < 0) {
+          $toreturn = ["status" => "not_found", "error" => "The alias is no longer present"];
+        } elseif (is_alias_inuse($vaktpost_name) || $vaktpost_policy_use || $vaktpost_nested_use) {
+          $toreturn = [
+            "status" => "in_use",
+            "error" => "This alias is used by a firewall rule, NAT rule, or another alias"
+          ];
+        } else {
+          unset($vaktpost_aliases[$vaktpost_found]);
+          $config["aliases"]["alias"] = array_values($vaktpost_aliases);
+          $vaktpost_audit_session_started = false;
+          if (session_status() !== PHP_SESSION_ACTIVE) {
+            $vaktpost_audit_session_started = session_start([
+              "use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0
+            ]);
+          }
+          $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+          if ($vaktpost_authenticated_user !== "") {
+            $_SESSION["Username"] = $vaktpost_authenticated_user;
+            $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+            if (is_array($vaktpost_authcfg)) {
+              $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+              $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+              if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                $_SESSION["authsource"] = "Local Database";
+              } else {
+                $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                  . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+              }
+            }
+          }
+          write_config("Vaktpost: deleted firewall alias " . $vaktpost_name);
+          if ($vaktpost_audit_session_started) {
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+            }
+            if (session_status() === PHP_SESSION_ACTIVE) {
+              $_SESSION = [];
+              session_destroy();
+            }
+          }
+          mark_subsystem_dirty("aliases");
+          $toreturn = ["status" => "ok", "apply_pending" => true, "name" => $vaktpost_name];
         }
         """)
     }

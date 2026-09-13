@@ -37,13 +37,13 @@
   <div class="wrap hero__grid">
     <div>
       <h1>Your firewall,<br>on your phone.</h1>
-      <p class="hero__sub">Vaktpost is an iOS app for monitoring a pfSense firewall — clients, interfaces, gateways, tunnels, certificates, logs — and performing a constrained set of confirmed administrative actions. It is open source and free.</p>
-      <p class="needs">Each firewall starts in monitor-only mode. Administrative actions require separate per-firewall enablement and Face ID or Touch ID.</p>
+      <p class="hero__sub">Vaktpost is an open-source iOS app for monitoring and carefully administering pfSense CE and pfSense Plus.</p>
+      <p class="needs">Version 0.1.0 is preparing for its first public release. Its feature set is frozen while compatibility, safety, accessibility, and release quality are finished.</p>
       <div class="actions">
         <a class="btn btn--solid" href="#setup">Set it up</a>
-        <a class="btn btn--ghost" href="#source">Read the source</a>
+        <a class="btn btn--ghost" href="#features">See version 0.1</a>
       </div>
-      <p class="needs">Needs pfSense CE or Plus and an account on the firewall. Nothing to install on it. iOS 17 or later.</p>
+      <p class="needs">Every firewall starts in monitor-only mode. Administration is enabled separately for each firewall. Nothing is installed on pfSense. Requires iOS 17 or later.</p>
     </div>
 
     <div class="device" role="img" aria-label="A rendering of the Vaktpost overview screen showing a health banner, an uplink throughput chart, CPU and memory meters, and two gateway rows.">
@@ -134,45 +134,59 @@
 
 <section class="section--sunken" id="features">
   <div class="wrap">
-    <h2>What it shows</h2>
-    <p class="lede">Everything is assembled from what pfSense already knows, with the joins and thresholds done on the phone.</p>
+    <h2>Version 0.1</h2>
+    <p class="lede">A focused first release: broad visibility, a deliberately small administration surface, and no unattended changes.</p>
 
     <div class="features">
       <div class="feature">
+        <h3>Health and traffic</h3>
+        <p>A configurable overview, live and historical interface traffic, gateways, resources, services, freshness, and alerts derived on the phone.</p>
+      </div>
+
+      <div class="feature">
         <h3>Clients, in one list</h3>
-      <p>DHCP leases, the ARP table and static mappings joined into one searchable list, each device named the way the network names it.</p>
-    </div>
+        <p>DHCP leases, ARP, and static mappings joined into one searchable inventory with offline MAC-vendor names and related traffic.</p>
+      </div>
 
-    <div class="card">
-      <h3>Throughput, live</h3>
-      <p>Per-interface rates derived from the firewall's counters, with a full-screen graph that samples every two seconds while you watch it.</p>
-    </div>
+      <div class="feature">
+        <h3>Logs and investigation</h3>
+        <p>Filter, system, authentication, DHCP, and OpenVPN logs, plus a combined incident timeline and network diagnostics.</p>
+      </div>
 
-    <div class="card">
-      <h3>Alerts worth waking up for</h3>
-      <p>Gateways, services, capacity, certificates, updates and stale dynamic DNS. Acknowledge one or silence a whole kind.</p>
-    </div>
-
-    <div class="card">
-      <h3>Tunnels</h3>
+      <div class="feature">
+        <h3>VPN and services</h3>
         <p>OpenVPN, WireGuard and IPsec on their own tabs, with connected peers under each instance.</p>
       </div>
+
       <div class="feature">
-        <h3>Rules you can actually read</h3>
-      <p>Rules by interface, named the way you named them. NAT port forwards, and aliases with their members expanded.</p>
-    </div>
+        <h3>Firewall editing</h3>
+        <p>Create, edit, duplicate, delete, and reorder filter rules and NAT port forwards, including coloured separators and host, network, and port aliases.</p>
+      </div>
 
-    <div class="card">
-      <h3>More than one firewall</h3>
-      <p>Each with its own credentials, TLS settings and refresh interval. Switching is one tap.</p>
-    </div>
+      <div class="feature">
+        <h3>Staged changes</h3>
+        <p>Edits stay inactive until Apply Changes. The review names identifiable Vaktpost edits and warns that pfSense may include other administrators' pending work.</p>
+      </div>
 
-    <div class="card">
-      <h3>Services behind the firewall</h3>
-      <p>HAProxy frontends and backends with their health-check state, and ACME certificates shown next to what they issued.</p>
-    </div>
+      <div class="feature">
+        <h3>Audited actions</h3>
+        <p>Writes are sent once, read back, attributed to the authenticated pfSense user, and recorded in a protected per-firewall audit trail.</p>
+      </div>
 
-    
+      <div class="feature">
+        <h3>More than one firewall</h3>
+        <p>Each profile has its own Keychain credential, TLS settings, refresh interval, monitoring history, and administration switch.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap">
+    <h2>Kept out of the first release</h2>
+    <p class="lede">Version 0.1 is not intended to replace the complete pfSense WebUI.</p>
+    <div class="limit">
+      <p>Outbound and 1:1 NAT, virtual IPs, schedules, traffic shaping, package configuration, firmware installation, backups and restores, bulk editing, templates, automation, and unattended writes are deliberately deferred.</p>
     </div>
   </div>
 </section>
@@ -186,6 +200,7 @@
       <li><p>Create a user under <strong>System → User Manager</strong> and give it the <strong>System - HA node sync</strong> privilege — the one that makes XML-RPC work. Use a dedicated account rather than your own login: it is administrator-equivalent, and the password is stored on the phone.</p></li>
       <li><p>Open Vaktpost, enter the firewall address, that username and its password.</p></li>
       <li><p>Pin the certificate. pfSense ships a self-signed one, so connect once with untrusted TLS allowed, then tap <strong>Pin last seen certificate</strong> in the firewall's settings. After that the connection is accepted only if that exact certificate is presented. Re-pin when you renew it.</p></li>
+      <li><p>Keep the profile in <strong>monitor-only mode</strong> unless you need administration. Firewall edits are staged and use pfSense's global Apply Changes workflow.</p></li>
     </ol>
 
   </div>
@@ -354,7 +369,7 @@
       </div>
       <div>
         <h3>Firewall</h3>
-        <p>Rules by interface, NAT port forwards and aliases with their members resolved.</p>
+        <p>Filter rules, NAT port forwards, separators, and aliases. Create, edit, duplicate, delete, and drag into order, then review staged work before applying it.</p>
       </div>
       <div>
         <h3>Certificates</h3>
@@ -366,19 +381,19 @@
       </div>
       <div>
         <h3>System</h3>
-        <p>Notices, installed packages and firmware with an update check, dynamic DNS, CARP status.</p>
+        <p>Notices, packages, firmware status, Dynamic DNS, CARP, certificates, ACME, HAProxy, and pfBlockerNG.</p>
       </div>
     </div>
   </div>
 </section>
 
-<section id="source">
+<section id="build">
   <div class="wrap">
     <h2>Building it</h2>
-    <p>The project is SwiftUI, targets iOS 17, and uses <a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a> so there is no <code>.xcodeproj</code> in version control. Clone it, run <code>make project</code>, set your development team, and build.</p>
+    <p>The project is SwiftUI, targets iOS 17, and uses <a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a>. Clone the source, run <code>make build</code>, and pass your development team when installing on a device.</p>
     <p>The Catppuccin palettes are used under their MIT licence. Everything else — the layout, the design language, the code — is original to this project.</p>
     <div class="actions" style="margin-top:1.6rem">
-      <a class="btn btn--solid" href="#">Source on GitHub</a>
+      <a class="btn btn--solid" href="#setup">Review setup</a>
       <a class="btn btn--ghost" href="https://docs.netgate.com/pfsense/en/latest/">pfSense docs</a>
     </div>
   </div>

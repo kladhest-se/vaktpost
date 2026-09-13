@@ -1453,6 +1453,17 @@ final class DashboardStore: Observable {
             errors[.firewall] = error.localizedDescription
         }
         do {
+            let value = try await checked(binding, sections: [.aliases]) { try await client.firewallAliases() }
+            guard isCurrent(binding) else { throw RPCError.cancelled }
+            aliases = value
+            errors[.aliases] = nil
+        } catch {
+            guard isCurrent(binding) else { return }
+            // Rules and NAT remain usable if aliases alone fail, but the
+            // alias editor gets its own precise failure banner and retry.
+            errors[.aliases] = error.localizedDescription
+        }
+        do {
             let value = try await checked(binding, sections: [.portForwards]) { try await client.portForwards() }
             guard isCurrent(binding) else { throw RPCError.cancelled }
             portForwards = value

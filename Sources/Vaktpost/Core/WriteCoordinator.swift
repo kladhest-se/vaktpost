@@ -21,6 +21,8 @@ enum AdministrativeWrite: Sendable {
     case deleteFilterSeparator(interface: String, key: String, displayName: String)
     case saveNatSeparator(separator: JSONDict, displayName: String)
     case deleteNatSeparator(key: String, displayName: String)
+    case saveAlias(alias: JSONDict, displayName: String)
+    case deleteAlias(name: String, displayName: String)
 
     var action: AuditAction {
         switch self {
@@ -40,6 +42,8 @@ enum AdministrativeWrite: Sendable {
         case .saveNatSeparator(let separator, _):
             return separator.bool("create") == true ? .addSeparator : .editSeparator
         case .deleteFilterSeparator, .deleteNatSeparator: return .deleteSeparator
+        case .saveAlias(let alias, _): return Self.isCreate(alias) ? .addAlias : .editAlias
+        case .deleteAlias: return .deleteAlias
         }
     }
 
@@ -61,6 +65,8 @@ enum AdministrativeWrite: Sendable {
              .deleteFilterSeparator(_, _, let displayName),
              .saveNatSeparator(_, let displayName),
              .deleteNatSeparator(_, let displayName):
+            return displayName
+        case .saveAlias(_, let displayName), .deleteAlias(_, let displayName):
             return displayName
         }
     }
@@ -102,6 +108,10 @@ enum AdministrativeWrite: Sendable {
             return "\(separator.bool("create") == true ? "Add" : "Edit") NAT separator \(displayName)"
         case .deleteNatSeparator(_, let displayName):
             return "Delete NAT separator \(displayName)"
+        case .saveAlias(let alias, let displayName):
+            return "\(Self.isCreate(alias) ? "Add" : "Edit") alias \(displayName)"
+        case .deleteAlias(_, let displayName):
+            return "Delete alias \(displayName)"
         }
     }
 
@@ -111,7 +121,7 @@ enum AdministrativeWrite: Sendable {
     var preview: String {
         switch self {
         case .reloadFirewall:
-            return "Apply every pending filter and NAT change currently saved on this firewall, including changes made in the web UI or by another administrator. Existing connections may be briefly interrupted."
+            return "Apply every pending filter, NAT, and alias change currently saved on this firewall, including changes made in the web UI or by another administrator. Existing connections may be briefly interrupted."
         case .restartService(_, let displayName):
             return "Restart \(displayName). The service will be temporarily unavailable."
         case .quickBlock(let interface, let address, let description):
@@ -151,6 +161,12 @@ enum AdministrativeWrite: Sendable {
             return "\(verb) NAT separator “\(displayName)”, after \(separator.int("position") ?? 0) port forwards."
         case .deleteNatSeparator(_, let displayName):
             return "Delete NAT separator “\(displayName)”."
+        case .saveAlias(let alias, let displayName):
+            let verb = Self.isCreate(alias) ? "Add" : "Update"
+            let members = alias.list("members").count
+            return "\(verb) \(alias.string("type") ?? "firewall") alias “\(displayName)” with \(members) member\(members == 1 ? "" : "s"). The change will remain inactive until Apply Changes."
+        case .deleteAlias(_, let displayName):
+            return "Delete unused firewall alias “\(displayName)”. The change will remain inactive until Apply Changes."
         }
     }
 
@@ -207,6 +223,10 @@ struct AdministrativeWriteOutcome: Sendable {
     let operationID: UUID
     let verification: AuditVerification
     let detail: String
+    /// Stable identity returned by pfSense for the saved object. This matters
+    /// for a trackerless NAT rule: its first Vaktpost edit assigns a tracker,
+    /// so the list identity changes even though it is still the same rule.
+    let objectID: String?
 }
 
 enum WriteCoordinatorError: LocalizedError {
@@ -378,7 +398,8 @@ final class WriteCoordinator {
         return AdministrativeWriteOutcome(
             operationID: operationID,
             verification: readBack.state,
-            detail: readBack.detail
+            detail: readBack.detail,
+            objectID: receipt.tracker
         )
     }
 
@@ -484,6 +505,37 @@ final class WriteCoordinator {
             guard !key.isEmpty else {
                 throw WriteCoordinatorError.invalidOperation("a NAT separator key is required")
             }
+        case .saveAlias(let alias, _):
+            let isCreate = alias.bool("create") ?? false
+            let name = alias.string("name") ?? ""
+            let originalName = alias.string("original_name") ?? ""
+            let type = alias.string("type") ?? ""
+            let members = alias.list("members").compactMap(\.stringValue)
+            let details = alias.list("details")
+            guard FieldValidator.isAliasName(name) else {
+                throw WriteCoordinatorError.invalidOperation("the alias name is invalid")
+            }
+            guard (isCreate && originalName.isEmpty) || (!isCreate && originalName == name) else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "existing alias names must remain unchanged so rule references stay valid")
+            }
+            guard ["host", "network", "port"].contains(type) else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "only host, network, and port aliases can be edited")
+            }
+            guard !members.isEmpty, members.count == alias.list("members").count,
+                  members.count == details.count,
+                  members.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "at least one non-empty member and one matching description slot are required")
+            }
+            guard !members.contains(name) else {
+                throw WriteCoordinatorError.invalidOperation("an alias cannot include itself")
+            }
+        case .deleteAlias(let name, _):
+            guard FieldValidator.isAliasName(name) else {
+                throw WriteCoordinatorError.invalidOperation("the alias name is invalid")
+            }
         case .reorderFilterRules(let interface, let items, _):
             guard !interface.isEmpty else {
                 throw WriteCoordinatorError.invalidOperation("an interface is required")
@@ -579,6 +631,12 @@ final class WriteCoordinator {
         case .deleteNatSeparator(let key, _):
             let result = try await client.deleteNatSeparator(key: key)
             return Receipt(status: result.string("status") ?? "ok", tracker: key)
+        case .saveAlias(let alias, _):
+            let result = try await client.saveAlias(alias: alias)
+            return Receipt(status: result.string("status") ?? "ok", tracker: result.string("name"))
+        case .deleteAlias(let name, _):
+            let result = try await client.deleteAlias(name: name)
+            return Receipt(status: result.string("status") ?? "ok", tracker: name)
         }
     }
 
@@ -724,6 +782,28 @@ final class WriteCoordinator {
                 throw WriteCoordinatorError.invalidOperation("the NAT separator is no longer present")
             }
             return Self.separatorSnapshot(separator)
+        case .saveAlias(let expected, _):
+            let aliases = try await client.firewallAliases()
+            let name = expected.string("name") ?? ""
+            if expected.bool("create") == true {
+                guard !aliases.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+                    throw WriteCoordinatorError.invalidOperation("an alias with this name already exists")
+                }
+                return "aliases=\(aliases.count);new_name=\(name)"
+            }
+            guard let alias = aliases.first(where: { $0.name == name }) else {
+                throw WriteCoordinatorError.invalidOperation("the alias is no longer present")
+            }
+            guard alias.type.lowercased() == expected.string("type")?.lowercased() else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "an existing alias type must remain unchanged so rule references stay valid")
+            }
+            return Self.aliasSnapshot(alias)
+        case .deleteAlias(let name, _):
+            guard let alias = try await client.firewallAliases().first(where: { $0.name == name }) else {
+                throw WriteCoordinatorError.invalidOperation("the alias is no longer present")
+            }
+            return Self.aliasSnapshot(alias)
         case .reorderFilterRules(let interface, let items, _):
             // Validated early, against a fresh read, so a drag made against
             // data that has since changed on the firewall is refused with a
@@ -938,6 +1018,37 @@ final class WriteCoordinator {
                     : "The NAT separator is absent during read-back.",
                 snapshot: "key=\(key);present=\(exists)"
             )
+        case .saveAlias(let expected, _):
+            let isCreate = expected.bool("create") ?? false
+            let name = receipt.tracker ?? expected.string("name") ?? ""
+            guard let actual = try await client.firewallAliases().first(where: { $0.name == name }) else {
+                return Verification(
+                    state: .mismatch,
+                    detail: "The \(isCreate ? "new" : "edited") alias was not found during read-back.",
+                    snapshot: nil
+                )
+            }
+            let expectedMembers = expected.list("members").compactMap(\.stringValue)
+            let expectedDetails = expected.list("details").compactMap(\.stringValue)
+            let matches = actual.name == name
+                && actual.type == expected.string("type")
+                && (actual.descr ?? "") == (expected.string("descr") ?? "")
+                && actual.addresses == expectedMembers
+                && actual.details == expectedDetails
+            return Verification(
+                state: matches ? .verified : .mismatch,
+                detail: matches
+                    ? "The \(isCreate ? "new" : "edited") alias matches the requested values."
+                    : "The alias returned different values after saving.",
+                snapshot: Self.aliasSnapshot(actual)
+            )
+        case .deleteAlias(let name, _):
+            let exists = try await client.firewallAliases().contains { $0.name == name }
+            return Verification(
+                state: exists ? .mismatch : .verified,
+                detail: exists ? "The deleted alias is still present." : "The alias is absent during read-back.",
+                snapshot: "name=\(name);present=\(exists)"
+            )
         }
     }
 
@@ -1021,6 +1132,13 @@ final class WriteCoordinator {
     private static func separatorSnapshot(_ separator: RuleSeparator) -> String {
         [separator.interfaceName ?? "", separator.key, separator.text,
          separator.colorName, String(separator.precedingRuleCount ?? -1)]
+            .joined(separator: "|")
+    }
+
+    private static func aliasSnapshot(_ alias: FirewallAliasEntry) -> String {
+        [alias.name, alias.type, alias.descr ?? "",
+         alias.addresses.joined(separator: " "),
+         alias.details.joined(separator: "||")]
             .joined(separator: "|")
     }
 

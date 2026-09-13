@@ -1,288 +1,188 @@
 # Vaktpost
 
-A monitoring and administration app for **pfSense CE / pfSense Plus**, built in SwiftUI and themed with all four Catppuccin flavours.
+Vaktpost is an open-source iOS app for monitoring and carefully administering
+**pfSense CE and pfSense Plus**. It is built with SwiftUI, requires iOS 17 or
+later, and uses pfSense's built-in XML-RPC service; nothing is installed on the
+firewall.
 
-*Vaktpost* is Swedish for a sentry post — somewhere you watch the perimeter from, report what you see, and take a small set of deliberate, confirmed actions.
+*Vaktpost* is Swedish for a sentry post: somewhere you watch the perimeter
+from, report what you see, and take a small set of deliberate actions.
 
-It talks to pfSense's **built-in XML-RPC service**. Nothing needs to be
-installed on the firewall.
+> Vaktpost is preparing its first public release, version **0.1.0**. The feature
+> set below is frozen while compatibility, safety, accessibility, and release
+> quality are finished.
 
-**Read [SECURITY.md](SECURITY.md) before using this.** XML-RPC requires an
-account with the "System - HA node sync" privilege, which is
-administrator-equivalent, and that password is stored on the phone and sent on
-every request. Most snippets only inspect the firewall; the complete mutation
-surface is declared and audited in `PHPSnippet.writeOperations`. Firewall and
-NAT edits are staged using pfSense's native pending-change markers and require
-one explicit Apply Changes confirmation before they become active. Immediate
-operations such as service restart and state flush retain their own
-confirmation. The credential itself remains administrator-equivalent.
+Read [SECURITY.md](SECURITY.md) before connecting it to a production firewall.
+The XML-RPC account needs the **System - HA node sync** privilege, which is
+administrator-equivalent.
 
-Every firewall starts in **monitor-only mode**. In that mode the client blocks
-all mutation methods before any request is sent. Administration is enabled per
-firewall from its edit screen after an explicit risk acknowledgement. Enabling
-it does not require Face ID or Touch ID.
+## Version 0.1 scope
 
-When administration is enabled, every change follows one transaction path:
-the app captures the current state, commits an encrypted pending audit record,
-sends the operation once, and reads the affected state back. The Apply Changes
-screen lists the staged Vaktpost edits it can identify and warns when pfSense's
-global pending ruleset may also include WebUI or other administrator changes.
-A lost response is reported as an unknown outcome rather than as a reason to
-repeat the change. Protected history is kept separately for each firewall and
-can be exported in a redacted form from Settings.
+### Monitoring
 
-**Tabs:** Overview · Clients · Network · Logs · More (Alerts, VPN, Firewall, System, Firewalls, Settings).
+- Multiple firewalls, each with separate credentials, TLS settings, refresh
+  interval, and monitoring history.
+- A configurable overview of health, interfaces, gateways, system resources,
+  services, VPNs, logs, and clients.
+- DHCP leases, ARP entries, and static mappings combined into one searchable
+  client list with offline MAC-vendor lookup.
+- Interface counters, live throughput, and RRD-backed history where pfSense
+  exposes it.
+- OpenVPN, WireGuard, and IPsec status with connected peers.
+- Filter, system, authentication, DHCP, and OpenVPN logs, plus a combined
+  incident timeline.
+- Alerts derived on the phone for gateway, service, capacity, certificate,
+  CARP, VPN, update, and Dynamic DNS conditions.
+- System notices, certificates, ACME, Dynamic DNS, HAProxy, pfBlockerNG,
+  package status, and firmware status.
+- Ping, traceroute, DNS lookup, traffic investigation, and configuration
+  diagnostics.
 
----
+### Administration
+
+- Monitor-only mode by default, enabled separately for each firewall.
+- Create, edit, duplicate, delete, and reorder filter rules and NAT port
+  forwards.
+- Create, edit, delete, colour, and reorder filter and NAT separators.
+- Create and edit host, network, and port aliases; delete unused aliases.
+- pfSense-style staged changes: edits are saved first and become active only
+  after **Apply Changes**.
+- A review of identifiable Vaktpost edits before applying the firewall's global
+  pending ruleset.
+- Quick Block as a staged filter rule; service restart and state-table flush as
+  separately confirmed immediate actions.
+- Single-attempt writes, read-back verification, pfSense Configuration History
+  attribution, and a protected per-firewall audit trail.
+
+### Deliberately deferred
+
+Version 0.1 does not aim to replace the entire pfSense WebUI. The following are
+out of scope for the first release:
+
+- Outbound NAT, 1:1 NAT, virtual IP, schedule, traffic-shaper, and package
+  configuration editors.
+- Firmware or package installation, configuration backup/restore, and CARP
+  synchronization controls.
+- Bulk rule editing, templates, automation, and unattended writes.
+- A server-side Vaktpost component, cloud account, or remote-access relay.
+
+Until 0.1 ships, new features should be accepted only when they are needed to
+make the scope above safe, understandable, or compatible with supported
+pfSense versions.
+
+## Safety model
+
+Every firewall starts in monitor-only mode. When administration is enabled,
+all mutations pass through one coordinator that validates the operation,
+records a pending audit entry, sends the request once, and reads the affected
+state back. A lost response is reported as an unknown outcome and is never
+automatically repeated.
+
+Filter, NAT, separator, and alias edits use pfSense's native pending markers.
+The live ruleset changes only when an administrator opens **Apply firewall
+changes** and selects **Apply Changes**. That applies every pending firewall
+change on the appliance, including changes made in the WebUI or by another
+administrator.
+
+Passwords are stored in separate `WhenUnlockedThisDeviceOnly` Keychain items.
+TLS certificate pinning is available and strongly recommended. The complete
+mutation surface is declared in `PHPSnippet.writeOperations` and audited by the
+companion test suite.
+
+## Firewall setup
+
+1. In **System → Advanced → Admin Access**, set **Max Processes** to at least 5.
+   XML-RPC polling shares PHP workers with the WebUI.
+2. Create a dedicated local user under **System → User Manager**. Avoid reusing
+   a personal or domain account.
+3. Grant **System - HA node sync**. This privilege is required by XML-RPC and is
+   administrator-equivalent.
+4. Add the firewall address, username, and password in Vaktpost.
+5. Connect once, then select **Pin last seen certificate** in the firewall
+   settings. Re-pin after intentionally replacing the certificate.
+6. Leave monitor-only mode enabled unless administration is needed.
+
+Administrative revisions retain `Vaktpost:` in their description and use the
+already-authenticated XML-RPC identity for pfSense Configuration History.
+Vaktpost never accepts an audit username from an operation payload.
 
 ## Build
 
-Requires Xcode 15+ and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
-`make` on its own lists everything.
+Requirements:
+
+- Xcode 15 or later
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+- iOS 17 or later
 
 ```sh
-make build       # does it compile — boots nothing
-make run         # build and launch on a simulator, logs in this terminal
-make test        # the tests, on a simulator
-make open        # generate the project and open it in Xcode
-make archive TEAM_ID=ABCDE12345
-make install DEVICE=00008132-… TEAM_ID=ABCDE12345
-make oui         # refresh the bundled IEEE MAC vendor database
-make web         # serve public-web/ on :8000
+brew install xcodegen
+make build
 ```
 
-`make devices`, `make teams` and `make destinations` print the values those
-last two want.
+Common targets:
 
-The scheme is declared in `project.yml` rather than left to Xcode. Without it
-XcodeGen writes no scheme, Xcode invents a non-shared one the first time the
-project is opened, and that one has no test action — so `make test` fails on
-any machine that has never opened the project, which includes every CI runner.
+```sh
+make                 # list available commands
+make build           # compile without starting a simulator
+make test            # run tests on an installed iOS simulator
+make run             # build and launch on a simulator
+make open            # generate and open the Xcode project
+make archive TEAM_ID=ABCDE12345
+make install DEVICE=00008132-… TEAM_ID=ABCDE12345
+make web             # serve public-web/ on port 8000
+```
 
-The `.xcodeproj` is generated by `make project` and is not committed — it names
-your paths and your team id, and its diffs are unreadable. `project.yml` is the
-source of truth, and every target that needs a project depends on `project`, so
-you rarely call it directly.
+Use `make devices`, `make teams`, and `make destinations` to discover the
+values needed for device builds. The generated `.xcodeproj` and the local
+`build.number` counter are intentionally not committed; `project.yml` and
+`Config/*.xcconfig` are the sources of truth.
 
-`build` and `test` are deliberately different things. `build` uses a
-`generic/platform=` destination, which needs no installed simulator and starts
-nothing, so it is fast and safe to run before a push. `test` runs
-`xcodebuild test`, which installs a test host on a simulator and boots it.
+## Verification and publishing
 
-### Build settings and versions
-
-Build settings live in `Config/*.xcconfig` rather than in `project.yml`, so the
-Makefile can read `MARKETING_VERSION` out of a file instead of parsing the
-XcodeGen spec.
-
-`MARKETING_VERSION` names the release being worked on, not the last one
-shipped, and is bumped by hand. The build number is separate: `build.number` at
-the repository root holds a per-machine counter that `make build`, `make
-install` and `make archive` increment and pass in as
-`CURRENT_PROJECT_VERSION`. It is gitignored, because committing it would mean
-every build produced a diff and two people building the same commit would
-disagree about which build it was.
-
-`Config/iOS.xcconfig` hardcodes `CURRENT_PROJECT_VERSION = 1` as a deliberately
-implausible fallback for a build started from Xcode rather than from make. Use
-`make archive` for anything you intend to upload — archiving from Xcode's
-Product menu produces build 1 every time, and App Store Connect rejects the
-second one.
-
-Set `DEVELOPMENT_TEAM` in `project.yml` before installing on a device, or pass
-`TEAM_ID` on the command line as above.
-
-Deployment target is iOS 17.0.
-
-## Publishing
-
-The publishing scripts live in a separate private repository,
-`vaktpost-tools`, checked out beside this one. They are not here on purpose:
-they name internal infrastructure, and this repository is public.
+The private companion repository `vaktpost-tools` contains structural,
+transport, security-boundary, and disposable-firewall compatibility checks.
+It is expected beside this repository:
 
 ```sh
 cd ../vaktpost-tools
-./publish-all.sh --dry-run   # what would be committed
-./publish-all.sh             # GitLab, then GitHub
+./tests/run.sh --fast
+./publish-all.sh --dry-run
 ```
 
-Every push runs a gate first: nothing generated would be committed, the
-structural suites pass, no internal hostname appears in the tree, and the app
-compiles. The `write-boundary` suite audits the declared mutation surface:
-only named operations may mutate configuration, arguments cross into PHP as
-encoded data, and no snippet may reach a shell or arbitrary filesystem write
-primitive.
-The `write-coordinator` suite additionally prevents views from calling those
-mutations directly and checks the required preview, audit, execution and
-read-back order.
-The `lost-response` suite requires every administrative operation to use the
-single-attempt transport. `vaktpost-tools/bin/admin-matrix.py` provides the
-destructive end-to-end CE/Plus check for a disposable VM; it covers all eight
-writes, performs read-back, emits a JSON report, and refuses to connect without
-an exact lab-host confirmation and explicit state-loss acknowledgement. See
-[`docs/LAB_COMPATIBILITY_MATRIX.md`](docs/LAB_COMPATIBILITY_MATRIX.md).
+The destructive CE/Plus compatibility matrix is documented in
+[`docs/LAB_COMPATIBILITY_MATRIX.md`](docs/LAB_COMPATIBILITY_MATRIX.md). Run it
+only against a disposable firewall.
 
-## Firewall setup (XML-RPC)
+## Project layout
 
-1. **System → Advanced → Admin Access → Max Processes**: set to 5 or more.
-   XML-RPC polling competes with the webConfigurator for PHP workers.
-2. Create a dedicated user. LDAP and RADIUS accounts do authenticate over
-   XML-RPC — unlike the REST API, it uses the webConfigurator's normal auth
-   path — but a domain password replayed twice a minute from a phone is worth
-   avoiding. Use a local account you can disable on its own.
-3. Give it the **System - HA node sync** privilege. This is the only privilege
-   that makes XML-RPC work, and it is administrator-equivalent.
-4. In Vaktpost, enter the firewall address, that username and its password.
-5. Connect once, then **Pin last seen certificate** in the firewall's settings.
-6. Leave the profile in monitor-only mode unless you need administration. To
-   enable writes, edit that firewall, review the warning, enable administrative
-   actions, and save the profile.
-
-Administrative writes retain `Vaktpost:` in their description and attribute
-the pfSense Configuration History revision to the XML-RPC user, the source IP
-observed by pfSense, and the configured authentication provider. Vaktpost does
-not accept an audit username in its payload. It starts a short-lived,
-cookie-free PHP session from pfSense's already-authenticated XML-RPC identity
-for `write_config()`, then destroys that session before returning.
-
-Rule and NAT edits follow the pfSense WebUI workflow: Save writes `config.xml`
-and leaves the relevant subsystem pending. The live ruleset changes only when
-an administrator opens **Apply firewall changes** and confirms **Apply
-Changes**; that action applies every pending firewall change on the appliance,
-including changes made in the WebUI by another administrator.
-
-## What it runs
-
-Every call is `pfsense.exec_php` with one snippet from
-`Sources/Vaktpost/Net/PHPSnippets.swift`. That file is the whole surface: if a
-line of PHP is not in it, this app cannot send it.
-
-| Screen | Snippet |
-|---|---|
-| Overview | `telemetry`, `firmware`, `gateways`, `services` |
-| Clients | `dhcp_leases`, `arp_table`, `static_mappings` |
-| Network | `interfaces` |
-| Logs | `log_filter`, `log_system`, `log_auth`, `log_dhcpd`, `log_openvpn` |
-| VPN | `openvpn_servers`, `openvpn_clients`, `ipsec_sas`, `wireguard_tunnels` |
-| Firewall | `firewall_rules`, `firewall_aliases`, `port_forwards` |
-| System | `carp`, `certificates`, `notices`, `dyndns` (+ filesystems from `telemetry`) |
-
-### New in this transport
-
-Things the REST API could not reach at all:
-
-- **Dynamic DNS**, with the last address each entry pushed and when. An entry
-  whose cached address no longer matches its interface raises an alert — that
-  is the failure that otherwise goes unnoticed, since pfSense keeps no update
-  history.
-- **System notices** — the bell icon in the webConfigurator.
-- **Per-filesystem usage** instead of one aggregate figure. A full `/var` stops
-  logging while `/` still looks fine. Note that pfSense computes ZFS dataset
-  usage against the pool's free space, so on a large pool every dataset reads
-  0% — accurate, and not much use. UFS and tmpfs mounts report normally.
-- **Real mbuf counts**, which the REST endpoint returned as null.
-
-### Lost in this transport
-
-- Installed package inventory and update flags.
-- Configuration revision history.
-- pf table browsing, and with it the blocked-hosts list.
-
-Each needs either a shell or a PHP function that writes, so the snippet rules
-exclude them. They are still present as empty sections rather than removed.
-
-## Features
-
-**Overview.** Status, interfaces, system resources, gateways, services, firewall log, VPN, and client data — all configurable, reorderable, and show data freshness. CPU, memory, disk, and swap include sparklines showing recent history. Gateway latency and packet loss track over time with trend indicators.
-
-**VPN.** OpenVPN servers and clients, IPsec security associations, and WireGuard tunnels and peers — all with health status and connection details.
-
-**Clients.** pfSense exposes leases, ARP and static mappings as three unrelated tables. They are joined on MAC (falling back to IP) into one identity per device, which is how you actually think about "is the printer online". Tapping through shows all associated addresses and leases, exact endpoint matches from the filter log, and the manufacturer from a compact offline copy of the official IEEE assignment lists. MAC addresses never leave the phone for vendor lookup.
-
-**Incident timeline.** Filter, system, authentication, DHCP and OpenVPN logs are combined and ordered using the firewall's configured timezone. Severity, source and text filters narrow the view, and every event opens its original log entry.
-
-**Alerts.** pfSense has no alerts endpoint. Every item is derived on-device from state already fetched — gateways, stopped services, disk/memory/swap/mbuf pressure, state-table fill, certificate expiry, CARP maintenance mode, IPsec down, Dynamic DNS mismatch. Thresholds live in one file. Alerts support acknowledgment and per-category muting.
-
-**Throughput sparklines.** The XML-RPC service reports lifetime byte counters, not rates. Consecutive samples are differenced client-side to get bits/sec, kept in a 60-point ring buffer (~30 min at the default refresh). A negative delta means the counter reset — interface bounce or reboot — and starts a fresh baseline rather than charting a spike. History is per-firewall and cleared on switch.
-
-**Multiple firewalls.** Each has its own keychain item, TLS settings, refresh interval and log limit. Switch from the Overview chip row or More. A single-server config from an earlier build is migrated on first launch.
-
-**Diagnostics.** Built-in ping, traceroute, and DNS lookup tools for network troubleshooting. Connection status, data freshness, and throughput sampling information are all visible in one place.
-
-**Field-name tolerance.** Model fields may change between pfSense releases, and several status endpoints return values that are sometimes strings and sometimes numbers. Responses are decoded into `JSONValue` and read through accessors that accept a list of candidate keys and coerce types (`Core/JSONValue.swift`). If a value shows as `—` on a newer version, add the new key name to the relevant accessor call — no other change needed.
-
-**Theming.** All four Catppuccin flavours (Latte, Frappé, Macchiato, Mocha) plus Auto mode. Seven accent colors. Custom app icons.
-
-## What this transport cannot read safely
-
-Speed tests, DPI traffic inspection and IDS/IPS threat dashboards depend on package-specific commands or shell access that the audited XML-RPC snippet allowlist does not permit. The app does read Dynamic DNS configuration and cached update status through pfSense's built-in PHP functions. Diagnostics shows which optional read functions are available on the connected firewall.
-
-## Theming
-
-`Theme/Catppuccin.swift` carries all four themes (Latte, Frappé, Macchiato, Mocha) with all 26 named colours each, plus all 14 accents.
-
-Settings offers one list of five: Auto, plus the four themes. Auto is Latte in
-light appearance and Mocha in dark; anything else is pinned regardless of what
-iOS is doing.
-
-Views never reference a raw colour name. They go through semantic roles on `ThemeManager` (`bg`, `card`, `label`, `ok`, `warn`, `bad`, …), so adding a flavour or retuning a role touches one file.
-
-## Design
-
-The visual language is Vaktpost's own: flat slabs with a coloured rail down the leading edge carrying the semantic state, uppercase tracked section headings with an accent underline, thin capsule meters, and monospaced tabular readouts throughout. Status is never signalled by colour alone — the rail's presence and the pill text both carry it.
-
-The rails double as the name's motif — a row of stakes in a fence line — which is also what the five descending capsules in the onboarding header are.
-
-## Layout
-
-```
-project.yml                    XcodeGen spec
-Makefile                       every verb; `make` lists them
-Config/                        build settings and versions
-build.number                   per-machine build counter (ignored)
-Resources/Info.plist
-Sources/Vaktpost/
-  App/VaktpostApp.swift        entry point + tab shell
-  Theme/                       Catppuccin palettes, ThemeManager, components, sparkline
-  Core/                        JSONValue, ServerProfile + ServerRegistry, Keychain, HapticFeedback, MacVendorDatabase
-  Net/                         XMLRPCClient, PHPSnippets, TrustEvaluator (TLS pinning)
-  Models/                      status, clients, VPN, firewall objects, system, alerts, diagnostics
-  Store/                       DashboardStore, ThroughputTracker, MetricTracker, RefreshScheduler
-  Views/                       Overview, Clients, Network, Logs, More,
-                               Alerts, VPN, Firewall, System, Servers,
-                               Settings, Onboarding, Diagnostics
-Tests/VaktpostTests/           transport, decoder, binding, client, alert, and scheduler tests
-Resources/OUI/                 compact IEEE assignment index + source manifest
-Resources/Entitlements/        Entitlements (empty; nothing is required)
-public-web/                    project website (static, no build step)
+```text
+Config/                    build settings and release version
+Resources/                 app metadata, icons, entitlements, OUI database
+Sources/Vaktpost/App/      app entry point and navigation
+Sources/Vaktpost/Core/     profiles, validation, audit, write coordination
+Sources/Vaktpost/Models/   decoded pfSense state
+Sources/Vaktpost/Net/      XML-RPC transport and reviewed PHP snippets
+Sources/Vaktpost/Store/    dashboard state, refresh, history, alerts
+Sources/Vaktpost/Theme/    Catppuccin themes and shared components
+Sources/Vaktpost/Views/    SwiftUI screens
+Tests/VaktpostTests/       unit and transport tests
+public-web/                static public website
 ```
 
-## Notes
+## Design and accessibility
 
-- Passwords are stored in the Keychain, one item per firewall keyed by profile
-  UUID, with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. They cannot be
-  read while the device is locked, migrate to another device, or enter a
-  backup. Older Keychain items are copied and read back exactly before the
-  source is deleted. Revealing or replacing a saved password requires a fresh
-  Face ID or Touch ID check; Vaktpost provides no credential/profile export.
-- Auto-refresh runs only while the app is in the foreground and is cancelled on backgrounding.
-- Temperature is null on most hardware until a thermal sensor module is loaded
-  under **System → Advanced → Miscellaneous → Thermal Sensors**. On Intel
-  hardware that is the Core (coretemp) option; on AMD, amdtemp. Vaktpost reads
-  the field either way and says "no sensor loaded" when it is absent.
-- ATS is enforced by default; TLS trust is delegated to `TrustEvaluator`, which either validates against a pinned SHA-256 leaf fingerprint, accepts an untrusted certificate for the configured host (when `allowUntrustedTLS` is enabled), or performs standard validation. Firewalls fronted by ACME or HAProxy with a proper certificate work without any configuration.
+Vaktpost includes all four Catppuccin flavours, automatic light/dark mode,
+accent choices, and alternate app icons. Status is not communicated by colour
+alone, text follows Dynamic Type, and iPad uses a split-view layout where it
+improves navigation.
 
 ## Website
 
-`public-web/` holds the project site: plain HTML, CSS and one script, no build
-step and nothing loaded from a third party. Serve the directory, or point
-GitHub Pages at it. See `public-web/README.md` for the two placeholder links
-to replace before publishing.
+`public-web/` is a dependency-free static site. Serve it with `make web` or
+publish the directory directly. See [public-web/README.md](public-web/README.md).
 
-## Naming
+## License and trademarks
 
-The name was picked after checking GitHub: at the time of writing there were no repositories named `vaktpost`, against 317 for `palisade` (including projects at 78–112 stars) and 4,500+ for `bastion`. GitHub is only one register — the App Store and the trademark databases at EUIPO, PRV and USPTO are separate checks, and a clear result today is not a guarantee tomorrow.
-
-## Licensing
-
-Not affiliated with Netgate or with the Catppuccin project. pfSense is a trademark of Netgate. The Catppuccin palettes are reproduced under the project's MIT licence; the design, layout and code here are original.
+Vaktpost is not affiliated with Netgate or the Catppuccin project. pfSense is
+a trademark of Netgate. Catppuccin palettes are used under their MIT licence;
+the application code and design are original to this project.

@@ -53,7 +53,7 @@ document said so. That stopped being true when the editor arrived, and the
 sentence stayed — which is worse than either state, because the document people
 read before pointing this at a production box was describing a different app.
 
-The write surface is exactly nine operations, named in
+The write surface is exactly sixteen operations, named in
 `PHPSnippet.writeOperations`:
 
 | Operation | What it does |
@@ -67,22 +67,19 @@ The write surface is exactly nine operations, named in
 | `restart_service` | restarts one named service |
 | `flush_states` | drops the state table, or one interface's |
 | `reorder_filter_rules` | rearranges one interface's rules and separators |
+| `reorder_nat_rules` | rearranges the flat NAT table and its separators |
+| `save_filter_separator` | creates or edits a filter-rule separator |
+| `delete_filter_separator` | removes a filter-rule separator |
+| `save_nat_separator` | creates or edits a NAT separator |
+| `delete_nat_separator` | removes a NAT separator |
+| `save_alias` | creates or edits a host, network, or port alias |
+| `delete_alias` | removes an unused alias after reference checks |
 
-That list was six when it was first written. `readonly.sh` found two more that
-were already there, and a ninth — `reorder_filter_rules` — existed in this same
-file, fully written and fully tested against real PHP execution, for some time
-before anything called it. A write operation nothing can reach is not a
-smaller risk than one missing from this table; it is the same omission, the
-wrong way round. This table describes what the app can do, not what its
-snippet file happens to contain.
-
-There is no NAT equivalent of `reorder_filter_rules`, on purpose. pfSense
-assigns no tracker at all to a NAT rule saved through its own web interface —
-confirmed against `firewall_nat.php` and `firewall_nat_edit.php`, neither of
-which references one — so a reorder keyed on tracker would silently exclude,
-and therefore delete, every real NAT rule on a typical firewall. One was
-written, found to have exactly that flaw, and removed before it was wired to
-anything.
+This table describes what the app can do, not merely what its snippet file
+happens to contain. The structural checks run in both directions: an unlisted
+write fails, and a listed operation without a corresponding write also fails.
+NAT ordering uses the complete current flat table plus original positions for
+identity; filter rules use pfSense tracker IDs.
 
 Each operation is called only by `WriteCoordinator`, which serializes the
 transaction and binds it to the selected firewall. The coordinator validates
@@ -99,7 +96,7 @@ safe retry.
 
 Read-only calls may retry once after a transient transport failure.
 Administrative calls use a separate one-attempt transport and are never
-automatically resent. This distinction is enforced for all eleven operations by
+automatically resent. This distinction is enforced for all sixteen operations by
 `vaktpost-tools/tests/lost-response.sh`.
 
 Audit records are separated by firewall and encrypted with AES-GCM. The audit
@@ -215,12 +212,12 @@ this app could undo it.
 
 This build **is not read-only**, and the comparison has to start there rather
 than with how the difference is checked. It can delete a firewall rule. What it
-offers instead is an **enumerated** surface: eleven operations, named in one
+offers instead is an **enumerated** surface: sixteen operations, named in one
 file, each one a line somebody had to add on purpose, with a check that fails if
-a twelfth appears or if one of the eleven quietly stops being used.
+a seventeenth appears or if one of the sixteen quietly stops being used.
 
 Every newly added or migrated firewall nevertheless starts in **monitor-only
-mode**. The client rejects all eleven mutation methods before transport in that
+mode**. The client rejects all sixteen mutation methods before transport in that
 mode. Enabling administration is stored per firewall and requires an explicit
 risk acknowledgement, but no Face ID or Touch ID evaluation. Biometric checks
 remain in place for revealing or replacing a stored password and for the

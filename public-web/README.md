@@ -13,13 +13,13 @@ branch. Nothing else is needed.
 
 ## Before publishing
 
-- Replace the two `href="#"` placeholders in `index.html` with the real
-  repository URL (the header link and the "Source on GitHub" button).
-- Add an `og:image` if you want link previews; there is none yet because
-  there are no screenshots.
+- Add the canonical public repository URL when it has been chosen. The current
+  page contains no placeholder or dead source link.
+- Add an `og:image` when a public release image is available.
 - The device rendering in the hero is built from the same design tokens as
-  the app — it is a rendering, not a screenshot. Swap it for real captures
-  once the app has run on a device you can screenshot.
+  the app. It is a rendering, not a product screenshot.
+- Keep the version 0.1 feature and deferred-scope lists aligned with the root
+  `README.md` before publishing.
 
 ## Theming
 

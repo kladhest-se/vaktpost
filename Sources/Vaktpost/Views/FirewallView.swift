@@ -60,13 +60,13 @@ struct FirewallView: View {
                 // share one selection because only one can be showing, and
                 // the ids cannot collide: a rule's is its tracker.
                 if let rule = store.rules.first(where: { $0.id == id }) {
-                    RuleDetailView(rule: rule)
+                    RuleDetailView(rule: rule, selection: $selection)
                 } else if let separator = store.filterSeparators.first(where: { $0.id == id }) {
                     SeparatorDetailView(separator: separator, scope: .filter)
                 } else if let separator = store.natSeparators.first(where: { $0.id == id }) {
                     SeparatorDetailView(separator: separator, scope: .nat)
                 } else if let pf = store.portForwards.first(where: { $0.id == id }) {
-                    PortForwardDetailView(forward: pf)
+                    PortForwardDetailView(forward: pf, selection: $selection)
                 } else {
                     Notice(symbol: "questionmark.circle",
                            title: "That rule is no longer in the list")
@@ -1651,6 +1651,7 @@ struct RuleDetailView: View {
     @Environment(\.dashboardStore) private var store: DashboardStore
     @Environment(\.dismiss) private var dismiss
     let rule: FirewallRule
+    @Binding var selection: String?
 
     /// The form the sheet opens with — an edit of this rule, or a copy of it.
     @State private var editorForm: RuleEditForm?
@@ -1849,7 +1850,7 @@ struct RuleDetailView: View {
         // The interface comes from the form now. It was taken from the
         // rule, so moving a rule between interfaces in the editor
         // changed the screen and not the firewall.
-        _ = try await store.writeCoordinator.execute(
+        let outcome = try await store.writeCoordinator.execute(
             .saveRule(
                 rule: changes.toDict(tracker: rule.tracker, interface: changes.interface),
                 displayName: rule.descr.isEmpty ? rule.tracker : rule.descr
@@ -1860,6 +1861,10 @@ struct RuleDetailView: View {
         // The broad dashboard refresh can coalesce with an existing cycle and
         // leave this list stale for several seconds.
         await store.refreshFirewallObjectsAfterWrite()
+        // Keep the open detail attached to the identity returned by pfSense.
+        // A normal filter edit retains its tracker; a duplicate gets a new
+        // one and should continue into the newly created rule.
+        selection = outcome.objectID.flatMap { $0.isEmpty ? nil : $0 } ?? rule.id
     }
 
     /// A field, with the alias name kept above its contents.
@@ -1893,6 +1898,7 @@ struct PortForwardDetailView: View {
     @Environment(\.dashboardStore) private var store: DashboardStore
     @Environment(\.dismiss) private var dismiss
     let forward: PortForward
+    @Binding var selection: String?
 
     /// The form the sheet opens with — an edit of this forward, or a copy.
     @State private var editorForm: PortForwardEditForm?
@@ -2077,7 +2083,7 @@ struct PortForwardDetailView: View {
         dict["original_destination_port"] = .string(forward.destinationSide.port ?? "")
         dict["original_target"] = .string(forward.target)
 
-        _ = try await store.writeCoordinator.execute(
+        let outcome = try await store.writeCoordinator.execute(
             .saveNatRule(
                 rule: JSONDict(dict),
                 displayName: forward.descr.isEmpty ? forward.id : forward.descr
@@ -2085,6 +2091,11 @@ struct PortForwardDetailView: View {
         )
 
         await store.refreshFirewallObjectsAfterWrite()
+        // WebUI-created NAT rules have no tracker. Their first Vaktpost save
+        // assigns one, changing `PortForward.id`; without retargeting this
+        // selection the successful edit resolved its old id to “That rule is
+        // no longer in the list.”
+        selection = outcome.objectID.flatMap { $0.isEmpty ? nil : $0 } ?? forward.id
     }
 
     /// Every address or port behind a value, one per line. Same as the rule

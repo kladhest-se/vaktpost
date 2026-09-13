@@ -68,7 +68,8 @@ struct FirewallReloadView: View {
         switch action {
         case .addRule, .editRule, .deleteRule, .reorderRules,
              .addSeparator, .editSeparator, .deleteSeparator,
-             .addPortForward, .editPortForward, .deletePortForward, .quickBlock:
+             .addPortForward, .editPortForward, .deletePortForward,
+             .addAlias, .editAlias, .deleteAlias, .quickBlock:
             return true
         default:
             return false
@@ -94,7 +95,7 @@ struct FirewallReloadView: View {
                 if !store.firewallChangesPending {
                     pendingMessage(icon: "checkmark.circle.fill",
                                    title: "Everything is active",
-                                   detail: "pfSense reports no filter or NAT changes waiting.",
+                                   detail: "pfSense reports no filter, NAT, or alias changes waiting.",
                                    color: theme.ok)
                 } else if pendingVaktpostChanges.isEmpty {
                     pendingMessage(icon: "questionmark.circle",
@@ -166,9 +167,9 @@ struct FirewallReloadView: View {
 
     private func icon(for action: AuditAction) -> String {
         switch action {
-        case .addRule, .addPortForward, .quickBlock: return "plus"
-        case .editRule, .editPortForward: return "pencil"
-        case .deleteRule, .deletePortForward: return "trash"
+        case .addRule, .addPortForward, .addAlias, .quickBlock: return "plus"
+        case .editRule, .editPortForward, .editAlias: return "pencil"
+        case .deleteRule, .deletePortForward, .deleteAlias: return "trash"
         case .reorderRules: return "arrow.up.arrow.down"
         case .addSeparator, .editSeparator, .deleteSeparator: return "rectangle.split.1x2"
         default: return "circle"
