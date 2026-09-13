@@ -1,3 +1,9 @@
+<?php
+declare(strict_types=1);
+
+$releaseVersion = '0.1.0';
+$releaseStatus = 'preparing for its first public release';
+?>
 <!doctype html>
 <html lang="en" data-flavor="mocha" data-accent="sapphire">
 <head>
@@ -38,7 +44,7 @@
     <div>
       <h1>Your firewall,<br>on your phone.</h1>
       <p class="hero__sub">Vaktpost is an open-source iOS app for monitoring and carefully administering pfSense CE and pfSense Plus.</p>
-      <p class="needs">Version 0.1.0 is preparing for its first public release. Its feature set is frozen while compatibility, safety, accessibility, and release quality are finished.</p>
+      <p class="needs">Version <?= htmlspecialchars($releaseVersion, ENT_QUOTES, 'UTF-8') ?> is <?= htmlspecialchars($releaseStatus, ENT_QUOTES, 'UTF-8') ?>. Its feature set is frozen while compatibility, safety, accessibility, and release quality are finished.</p>
       <div class="actions">
         <a class="btn btn--solid" href="#setup">Set it up</a>
         <a class="btn btn--ghost" href="#features">See version 0.1</a>

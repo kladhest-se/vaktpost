@@ -243,10 +243,11 @@ destinations:
 
 # ── The website ──────────────────────────────────────────────────────────────
 
-# public-web/ is static with no build step, so serving it is the whole story.
+# public-web/ uses a small PHP entry point and has no build step.
 web:
 	@echo "  http://localhost:8000"
-	@python3 -m http.server 8000 --directory public-web
+	@command -v php >/dev/null || { echo "php is missing — install PHP to preview the website"; exit 1; }
+	@php -S 127.0.0.1:8000 -t public-web
 
 # ── Tidying ──────────────────────────────────────────────────────────────────
 

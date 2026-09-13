@@ -166,7 +166,7 @@ Sources/Vaktpost/Store/    dashboard state, refresh, history, alerts
 Sources/Vaktpost/Theme/    Catppuccin themes and shared components
 Sources/Vaktpost/Views/    SwiftUI screens
 Tests/VaktpostTests/       unit and transport tests
-public-web/                static public website
+public-web/                dependency-free PHP public website
 ```
 
 ## Design and accessibility
@@ -178,8 +178,9 @@ improves navigation.
 
 ## Website
 
-`public-web/` is a dependency-free static site. Serve it with `make web` or
-publish the directory directly. See [public-web/README.md](public-web/README.md).
+`public-web/` is a dependency-free PHP site. Serve it with `make web` or point
+a PHP-capable web server at the directory. See
+[public-web/README.md](public-web/README.md).
 
 ## License and trademarks
 

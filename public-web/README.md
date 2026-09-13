@@ -1,15 +1,15 @@
 # public-web
 
-The project site. Plain HTML, CSS and one small script — no build step, no
-dependencies, no fonts or analytics loaded from anywhere else. Serve the
-directory as-is.
+The project site. One small PHP entry point, CSS, and one browser script — no
+build step, framework, database, fonts, analytics, or third-party runtime
+assets.
 
 ```sh
-python3 -m http.server -d public-web 8000
+php -S 127.0.0.1:8000 -t public-web
 ```
 
-For GitHub Pages, point the Pages source at this directory on your default
-branch. Nothing else is needed.
+For production, point a PHP-capable web server's document root at
+`public-web/`. GitHub Pages cannot run the PHP entry point.
 
 ## Before publishing
 
