@@ -278,9 +278,11 @@ h3 { font: 600 1.02rem/1.3 var(--sans); margin: 0 0 .35rem; }
 
 .lede { font-size: 1.05rem; color: var(--subtext1); margin-bottom: 2.2rem; }
 
-.features { display: grid; gap: 1.6rem 2.5rem; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-.feature { padding-left: 1rem; border-left: var(--rail) solid var(--surface2); }
-.feature p { font-size: .93rem; color: var(--subtext0); margin: 0; max-width: 46ch; }
+.features { display: grid; gap: 2.6rem 2rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.feature { display: flex; flex-direction: column; }
+.feature .device { margin-bottom: 1.1rem; }
+.feature h3 { padding-left: 1rem; border-left: var(--rail) solid var(--surface2); }
+.feature p { font-size: .93rem; color: var(--subtext0); margin: 0; padding-left: 1rem; max-width: 46ch; }
 
 .steps { list-style: none; counter-reset: s; padding: 0; margin: 0; display: grid; gap: 1.1rem; }
 .steps li { counter-increment: s; display: grid; grid-template-columns: 1.9rem 1fr; gap: .85rem; align-items: start; }
@@ -323,50 +325,10 @@ footer p { max-width: 62ch; margin: 0 0 .6rem; }
 
 
 
-/* Nine short entries, two or three abreast depending on width. Deliberately
-   not a table: the old one listed endpoint paths, which told a reader nothing
-   about whether the app does what they need. */
-.screens {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 26px 32px;
-  margin-top: 28px;
-}
-
-.screens h3 {
-  margin: 0 0 6px;
-  font-size: 15px;
-  color: var(--text);
-}
-
-.screens p {
-  margin: 0;
-  color: var(--subtext0);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-
-/* Three more renderings, so the page shows what the app looks like rather than
-   only describing it. Every colour here is a theme token, so the picker at the
-   top recolours these the same way it recolours the hero. */
-.gallery {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 28px;
-  margin: 30px 0 44px;
-}
-
-.gallery__item { margin: 0; }
-
-.gallery__item figcaption {
-  margin-top: 12px;
-  color: var(--subtext0);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-/* The hero device is sized for one large rendering; these sit three abreast. */
+/* Three renderings sat here for the old "What each screen shows" gallery;
+   every feature card in #features now carries its own device rendering
+   instead, so this grid and its captions are gone. .device--small and the
+   component classes below are still used by those cards. */
 .device--small { max-width: none; }
 .device--small .screen { padding: 12px; }
 .device--small .screen__title { font-size: 15px; }
@@ -421,3 +383,97 @@ footer p { max-width: 62ch; margin: 0 0 .6rem; }
   vertical-align: -6px;
   margin-right: 8px;
 }
+
+/* ── Firewall reorder rendering ───────────────────────────────────────────
+   A rule or separator with its own drag handle in front, matching the
+   app's own leading-edge handle rather than a system trailing one. */
+.reorder-hint {
+  font-size: 10px;
+  color: var(--overlay1);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+.reorder-row {
+  display: flex;
+  align-items: stretch;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+.draghandle {
+  flex: none;
+  width: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--overlay1);
+  font-size: 13px;
+  letter-spacing: -1px;
+}
+.reorder-row .slab { flex: 1; margin-bottom: 0; }
+
+/* The flat, coloured grouping bar pfSense itself draws between rules — no
+   rail, no protocol line, just a label the way the real one reads. Higher
+   opacity than a slab tint needs: this has no rail of its own to carry the
+   colour, so the fill is what has to read as a separator at a glance. */
+.separator {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 8px;
+  font: 600 12px/1 var(--sans);
+  color: var(--text);
+}
+
+/* ── Pending-change rendering ──────────────────────────────────────────── */
+.pending {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--surface0);
+}
+.pending:last-of-type { border-bottom: none; }
+.pending__icon {
+  flex: none;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--yellow) 16%, transparent);
+  color: var(--yellow);
+  font-size: 10px;
+}
+.pending__name { font: 500 12px/1.35 var(--sans); color: var(--text); }
+.pending__meta { font: 400 10px/1 var(--mono); color: var(--subtext0); margin-top: 3px; }
+.pending__time { flex: none; font: 400 10px/1 var(--mono); color: var(--overlay1); }
+.applybar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 12px; padding: 9px 12px;
+  border-radius: 9px;
+  background: var(--accent); color: var(--crust);
+  font: 700 12px/1 var(--sans);
+}
+.applybar span:last-child { font-family: var(--mono); font-weight: 600; }
+
+/* ── Donut rendering (DNSBL) ───────────────────────────────────────────── */
+.donutrow { display: flex; align-items: center; gap: 14px; }
+.donut { flex: none; }
+.donut__center-value { font: 700 17px/1 var(--sans); fill: var(--text); }
+.donut__center-label { font: 500 8px/1 var(--sans); fill: var(--overlay1); }
+.donutlegend { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.donutlegend div { display: flex; align-items: center; gap: 6px; }
+.donutlegend b { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.donutlegend span {
+  font: 500 11px/1.2 var(--sans); color: var(--subtext0);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── Log line rendering ───────────────────────────────────────────────── */
+.logline { display: flex; gap: 8px; margin-bottom: 9px; }
+.logline:last-child { margin-bottom: 0; }
+.logline__rail { flex: none; width: 2px; border-radius: 2px; }
+.logline__head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.logline__iface { font: 600 10px/1 var(--mono); color: var(--overlay1); }
+.logline__time { margin-left: auto; font: 400 10px/1 var(--mono); color: var(--overlay1); }
+.logline__text { font: 400 11px/1.4 var(--mono); color: var(--subtext1); }

@@ -47,7 +47,7 @@ $releaseStatus = 'preparing for its first public release';
       <p class="needs">Version <?= htmlspecialchars($releaseVersion, ENT_QUOTES, 'UTF-8') ?> is <?= htmlspecialchars($releaseStatus, ENT_QUOTES, 'UTF-8') ?>. Its feature set is frozen while compatibility, safety, accessibility, and release quality are finished.</p>
       <div class="actions">
         <a class="btn btn--solid" href="#setup">Set it up</a>
-        <a class="btn btn--ghost" href="#features">See version 0.1</a>
+        <a class="btn btn--ghost" href="#features">See the features</a>
       </div>
       <p class="needs">Every firewall starts in monitor-only mode. Administration is enabled separately for each firewall. Nothing is installed on pfSense. Requires iOS 17 or later.</p>
     </div>
@@ -140,46 +140,282 @@ $releaseStatus = 'preparing for its first public release';
 
 <section class="section--sunken" id="features">
   <div class="wrap">
-    <h2>Version 0.1</h2>
+    <h2>Vaktpost Features</h2>
     <p class="lede">A focused first release: broad visibility, a deliberately small administration surface, and no unattended changes.</p>
 
     <div class="features">
       <div class="feature">
+        <div class="device device--small" role="img" aria-label="The DNSBL section of Overview: a donut chart of blocked domains by count, a legend of the busiest ones, and the busiest hour.">
+          <div class="screen">
+            <div class="screen__head"><span class="screen__title">Overview</span><span class="screen__time">14:02</span></div>
+            <div class="slab" style="margin-bottom:0">
+              <div class="slab__rail" style="background:var(--green)"></div>
+              <div class="slab__body">
+                <div class="slab__label">DNSBL <b>248</b></div>
+                <div class="donutrow">
+                  <svg class="donut" width="88" height="88" viewBox="0 0 120 120">
+                    <circle cx="60" cy="60" r="42" fill="none" stroke="var(--surface1)" stroke-width="14"/>
+                    <g transform="rotate(-90 60 60)">
+                      <circle cx="60" cy="60" r="42" fill="none" stroke="var(--red)" stroke-width="14" stroke-dasharray="110.8 263.9"/>
+                      <circle cx="60" cy="60" r="42" fill="none" stroke="var(--peach)" stroke-width="14" stroke-dasharray="71.3 263.9" stroke-dashoffset="-110.8"/>
+                      <circle cx="60" cy="60" r="42" fill="none" stroke="var(--yellow)" stroke-width="14" stroke-dasharray="47.5 263.9" stroke-dashoffset="-182.1"/>
+                      <circle cx="60" cy="60" r="42" fill="none" stroke="var(--mauve)" stroke-width="14" stroke-dasharray="34.3 263.9" stroke-dashoffset="-229.6"/>
+                    </g>
+                    <text x="60" y="57" text-anchor="middle" class="donut__center-value">248</text>
+                    <text x="60" y="70" text-anchor="middle" class="donut__center-label">BLOCKED</text>
+                  </svg>
+                  <div class="donutlegend">
+                    <div><b style="background:var(--red)"></b><span>ads.trk-serv.net</span></div>
+                    <div><b style="background:var(--peach)"></b><span>metrics.adnet.io</span></div>
+                    <div><b style="background:var(--yellow)"></b><span>telemetry.iotcloud.cn</span></div>
+                    <div><b style="background:var(--mauve)"></b><span>other</span></div>
+                  </div>
+                </div>
+                <div class="gw__stat" style="margin-top:8px">Busiest hour 21:00 with 64.</div>
+              </div>
+            </div>
+          </div>
+        </div>
         <h3>Health and traffic</h3>
         <p>A configurable overview, live and historical interface traffic, gateways, resources, services, freshness, and alerts derived on the phone.</p>
       </div>
 
       <div class="feature">
+        <div class="device device--small" role="img" aria-label="The Clients screen: a search field, a filter, and rows of devices with their names, addresses and interfaces.">
+          <div class="screen">
+            <div class="screen__head"><span class="screen__title">Clients</span><span class="screen__time">14:02</span></div>
+            <div class="fakefield">Name, IP or MAC</div>
+            <div class="segments"><span class="is-on">All</span><span>Seen</span><span>Static</span></div>
+            <div class="slab">
+              <div class="slab__rail" style="background:var(--green)"></div>
+              <div class="slab__body">
+                <div class="gw">
+                  <div>
+                    <div class="gw__name">nas001.example.se</div>
+                    <div class="gw__stat">172.16.1.31 &nbsp; 00:11:32:c1:73:88</div>
+                  </div>
+                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">IN ARP</span>
+                </div>
+              </div>
+            </div>
+            <div class="slab" style="margin-bottom:0">
+              <div class="slab__rail" style="background:var(--green)"></div>
+              <div class="slab__body">
+                <div class="gw">
+                  <div>
+                    <div class="gw__name">Living Room Soundbar</div>
+                    <div class="gw__stat">172.16.1.56 &nbsp; VLAN_100</div>
+                  </div>
+                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">STATIC</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
         <h3>Clients, in one list</h3>
         <p>DHCP leases, ARP, and static mappings joined into one searchable inventory with offline MAC-vendor names and related traffic.</p>
       </div>
 
       <div class="feature">
+        <div class="device device--small" role="img" aria-label="The Logs screen: source tabs for Filter, System, Auth, DHCP and VPN, with colour-coded, monospaced log lines.">
+          <div class="screen">
+            <div class="screen__head"><span class="screen__title">Logs</span><span class="screen__time">14:02</span></div>
+            <div class="segments"><span class="is-on">Filter</span><span>System</span><span>Auth</span><span>DHCP</span><span>VPN</span></div>
+            <div class="logline">
+              <span class="logline__rail" style="background:var(--red)"></span>
+              <div>
+                <div class="logline__head">
+                  <span class="pill" style="color:var(--red);background:color-mix(in srgb,var(--red) 18%,transparent)">BLOCK</span>
+                  <span class="logline__iface">WAN_1</span>
+                  <span class="logline__time">14:01:52</span>
+                </div>
+                <div class="logline__text">203.0.113.44:51422 → 172.16.1.1:22 tcp</div>
+              </div>
+            </div>
+            <div class="logline">
+              <span class="logline__rail" style="background:var(--green)"></span>
+              <div>
+                <div class="logline__head">
+                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">PASS</span>
+                  <span class="logline__iface">LAN</span>
+                  <span class="logline__time">14:01:47</span>
+                </div>
+                <div class="logline__text">172.16.1.31:60011 → 1.1.1.1:443 tcp</div>
+              </div>
+            </div>
+          </div>
+        </div>
         <h3>Logs and investigation</h3>
         <p>Filter, system, authentication, DHCP, and OpenVPN logs, plus a combined incident timeline and network diagnostics.</p>
       </div>
 
       <div class="feature">
+        <div class="device device--small" role="img" aria-label="The VPN screen: tabs for OpenVPN, WireGuard and IPsec, with each tunnel showing how many clients are connected.">
+          <div class="screen">
+            <div class="screen__head"><span class="screen__title">VPN</span><span class="screen__time">14:02</span></div>
+            <div class="segments"><span class="is-on">OpenVPN</span><span>WireGuard</span><span>IPsec</span></div>
+            <div class="slab">
+              <div class="slab__rail" style="background:var(--green)"></div>
+              <div class="slab__body">
+                <div class="gw">
+                  <div>
+                    <div class="gw__name">openvpn1 UDP4:1194</div>
+                    <div class="gw__stat">2 clients connected</div>
+                  </div>
+                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">2 CONNECTED</span>
+                </div>
+              </div>
+            </div>
+            <div class="slab" style="margin-bottom:0">
+              <div class="slab__rail" style="background:var(--green)"></div>
+              <div class="slab__body">
+                <div class="gw">
+                  <div>
+                    <div class="gw__name">wireguard1</div>
+                    <div class="gw__stat">1 of 1 connected &nbsp; 26s ago</div>
+                  </div>
+                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">UP</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
         <h3>VPN and services</h3>
         <p>OpenVPN, WireGuard and IPsec on their own tabs, with connected peers under each instance.</p>
       </div>
 
       <div class="feature">
+        <div class="device device--small" role="img" aria-label="The Firewall rules screen for one interface, showing a drag handle beside each rule, a coloured separator between two of them, and a caption explaining where the ordering comes from.">
+          <div class="screen">
+            <div class="screen__head"><span class="screen__title">Firewall</span><span class="screen__time">14:02</span></div>
+            <div class="segments"><span>All</span><span class="is-on">LAN</span><span>GUEST</span></div>
+            <p class="reorder-hint">Drag ≡ to reorder. Position here is pfSense's own.</p>
+            <div class="reorder-row">
+              <span class="draghandle">≡</span>
+              <div class="slab">
+                <div class="slab__rail" style="background:var(--green)"></div>
+                <div class="slab__body">
+                  <div class="gw">
+                    <div>
+                      <div class="gw__name">Allow NAS backup</div>
+                      <div class="gw__stat">to alias_host_nas002</div>
+                    </div>
+                    <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">PASS</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="reorder-row">
+              <span class="draghandle">≡</span>
+              <div class="separator" style="background:color-mix(in srgb,var(--teal) 38%,transparent)">Guest devices</div>
+            </div>
+            <div class="reorder-row" style="margin-bottom:0">
+              <span class="draghandle">≡</span>
+              <div class="slab" style="margin-bottom:0">
+                <div class="slab__rail" style="background:var(--red)"></div>
+                <div class="slab__body">
+                  <div class="gw">
+                    <div>
+                      <div class="gw__name">Block unapproved networks</div>
+                      <div class="gw__stat">from GUEST, any</div>
+                    </div>
+                    <span class="pill" style="color:var(--red);background:color-mix(in srgb,var(--red) 18%,transparent)">REJECT</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
         <h3>Firewall editing</h3>
         <p>Create, edit, duplicate, delete, and reorder filter rules and NAT port forwards, including coloured separators and host, network, and port aliases.</p>
       </div>
 
       <div class="feature">
+        <div class="device device--small" role="img" aria-label="The Apply Changes screen listing two pending edits made through the app, each with a summary, its target, and a timestamp, above an Apply Changes button.">
+          <div class="screen">
+            <div class="screen__head"><span class="screen__title">Apply Changes</span><span class="screen__time">14:02</span></div>
+            <div class="group"><span>CHANGES TO APPLY</span><i></i></div>
+            <div class="slab" style="display:block;background:var(--surface0);padding:2px 12px">
+              <div class="pending">
+                <span class="pending__icon">↕</span>
+                <div style="flex:1">
+                  <div class="pending__name">Reordered rules on LAN</div>
+                  <div class="pending__meta">3 rules, 1 separator</div>
+                </div>
+                <span class="pending__time">14:01</span>
+              </div>
+              <div class="pending">
+                <span class="pending__icon">+</span>
+                <div style="flex:1">
+                  <div class="pending__name">Added rule to GUEST</div>
+                  <div class="pending__meta">Block unapproved networks</div>
+                </div>
+                <span class="pending__time">13:58</span>
+              </div>
+            </div>
+            <div class="applybar"><span>Apply Changes</span><span>2</span></div>
+          </div>
+        </div>
         <h3>Staged changes</h3>
         <p>Edits stay inactive until Apply Changes. The review names identifiable Vaktpost edits and warns that pfSense may include other administrators' pending work.</p>
       </div>
 
       <div class="feature">
+        <div class="device device--small" role="img" aria-label="The audit trail: two verified entries, each with a summary, who made the change, and what it affected.">
+          <div class="screen">
+            <div class="screen__head"><span class="screen__title">Audit trail</span><span class="screen__time">14:02</span></div>
+            <div class="slab">
+              <div class="slab__rail" style="background:var(--green)"></div>
+              <div class="slab__body">
+                <div class="gw">
+                  <div>
+                    <div class="gw__name">Reordered rules on LAN</div>
+                    <div class="gw__stat">frossmant &nbsp; 3 rules, 1 separator</div>
+                  </div>
+                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">VERIFIED</span>
+                </div>
+              </div>
+            </div>
+            <div class="slab" style="margin-bottom:0">
+              <div class="slab__rail" style="background:var(--green)"></div>
+              <div class="slab__body">
+                <div class="gw">
+                  <div>
+                    <div class="gw__name">Added rule to GUEST</div>
+                    <div class="gw__stat">frossmant &nbsp; Block unapproved networks</div>
+                  </div>
+                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">VERIFIED</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
         <h3>Audited actions</h3>
         <p>Writes are sent once, read back, attributed to the authenticated pfSense user, and recorded in a protected per-firewall audit trail.</p>
       </div>
 
       <div class="feature">
+        <div class="device device--small" role="img" aria-label="The firewalls list: each profile with its name, address, and whether administration is enabled or it is monitor only.">
+          <div class="screen">
+            <div class="screen__head"><span class="screen__title">Firewalls</span><span class="screen__time">14:02</span></div>
+            <div class="slab">
+              <div class="slab__rail" style="background:var(--yellow)"></div>
+              <div class="slab__body">
+                <div class="gw__name">fw01 — Stockholm</div>
+                <div class="gw__stat">https://172.16.1.1:2443</div>
+                <div style="font:500 11px/1 var(--sans);color:var(--yellow);margin-top:5px">Administration enabled</div>
+              </div>
+            </div>
+            <div class="slab" style="margin-bottom:0">
+              <div class="slab__rail" style="background:var(--green)"></div>
+              <div class="slab__body">
+                <div class="gw__name">fw02 — Backup site</div>
+                <div class="gw__stat">https://10.20.0.1:2443</div>
+                <div style="font:500 11px/1 var(--sans);color:var(--green);margin-top:5px">Monitor only</div>
+              </div>
+            </div>
+          </div>
+        </div>
         <h3>More than one firewall</h3>
         <p>Each profile has its own Keychain credential, TLS settings, refresh interval, monitoring history, and administration switch.</p>
       </div>
@@ -209,187 +445,6 @@ $releaseStatus = 'preparing for its first public release';
       <li><p>Keep the profile in <strong>monitor-only mode</strong> unless you need administration. Firewall edits are staged and use pfSense's global Apply Changes workflow.</p></li>
     </ol>
 
-  </div>
-</section>
-
-<section id="endpoints">
-  <div class="wrap">
-    <h2>What each screen shows</h2>
-
-    <div class="gallery">
-
-      <figure class="gallery__item">
-        <div class="device device--small" role="img" aria-label="The Clients screen: a search field, a filter, and rows of devices with their names, addresses and interfaces.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">Clients</span><span class="screen__time">14:02</span></div>
-            <div class="fakefield">Name, IP or MAC</div>
-            <div class="segments"><span class="is-on">All</span><span>Seen</span><span>Static</span></div>
-            <div class="slab">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">nas001.example.se</div>
-                    <div class="gw__stat">172.16.1.31 &nbsp; 00:11:32:c1:73:88</div>
-                  </div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">IN ARP</span>
-                </div>
-              </div>
-            </div>
-            <div class="slab">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">Living Room Soundbar</div>
-                    <div class="gw__stat">172.16.1.56 &nbsp; VLAN_100</div>
-                  </div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">STATIC</span>
-                </div>
-              </div>
-            </div>
-            <div class="slab" style="margin-bottom:0">
-              <div class="slab__rail" style="background:var(--overlay0)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">192.168.202.98</div>
-                    <div class="gw__stat">3c:6a:9d:12:6e:44 &nbsp; VLAN_202</div>
-                  </div>
-                  <span class="pill" style="color:var(--overlay1);background:color-mix(in srgb,var(--overlay0) 22%,transparent)">LEASE</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <figcaption>Clients — leases, ARP and static mappings as one list</figcaption>
-      </figure>
-
-      <figure class="gallery__item">
-        <div class="device device--small" role="img" aria-label="The interface detail screen: a large throughput graph with current and peak rates.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">WAN_1</span><span class="screen__time">14:02</span></div>
-            <div class="slab">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="slab__label">WAN_1 <b>ix0</b></div>
-                <div class="gw__stat">203.0.113.9/27 &nbsp; 10Gbase-LR</div>
-              </div>
-            </div>
-            <div class="slab">
-              <div class="slab__rail" style="background:var(--sky)"></div>
-              <div class="slab__body">
-                <div class="slab__label">THROUGHPUT</div>
-                <svg class="spark spark--tall" viewBox="0 0 240 76" preserveAspectRatio="none" aria-hidden="true">
-                  <path d="M0 70 L0 44 L20 38 L40 52 L60 21 L80 33 L100 14 L120 30 L140 11 L160 26 L180 17 L200 36 L220 22 L240 29 L240 76 L0 76 Z"
-                        fill="var(--green)" fill-opacity=".16"/>
-                  <path d="M0 44 L20 38 L40 52 L60 21 L80 33 L100 14 L120 30 L140 11 L160 26 L180 17 L200 36 L220 22 L240 29"
-                        fill="none" stroke="var(--green)" stroke-width="1.6" stroke-linejoin="round"/>
-                  <path d="M0 66 L20 69 L40 62 L60 68 L80 58 L100 65 L120 55 L140 63 L160 54 L180 61 L200 52 L220 59 L240 56"
-                        fill="none" stroke="var(--sky)" stroke-width="1.6" stroke-linejoin="round"/>
-                </svg>
-              </div>
-            </div>
-            <div class="slab" style="margin-bottom:0">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="legend legend--wide">
-                  <div><b style="background:var(--green)"></b><span style="color:var(--text)">IN 42.0 Mbit/s</span></div>
-                  <div><b style="background:var(--sky)"></b><span style="color:var(--text)">OUT 316 Mbit/s</span></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <figcaption>Tap an interface for a live graph, sampled every two seconds</figcaption>
-      </figure>
-
-      <figure class="gallery__item">
-        <div class="device device--small" role="img" aria-label="The VPN screen: tabs for OpenVPN, WireGuard and IPsec, with each tunnel showing how many clients are connected.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">VPN</span><span class="screen__time">14:02</span></div>
-            <div class="segments"><span class="is-on">OpenVPN</span><span>WireGuard</span><span>IPsec</span></div>
-            <div class="slab">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">openvpn1 UDP4:1194</div>
-                    <div class="gw__stat">2 clients connected</div>
-                  </div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">2 CONNECTED</span>
-                </div>
-              </div>
-            </div>
-            <div class="slab">
-              <div class="slab__rail" style="background:var(--overlay0)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">openvpn2 UDP4:1195</div>
-                    <div class="gw__stat">no clients connected</div>
-                  </div>
-                  <span class="pill" style="color:var(--overlay1);background:color-mix(in srgb,var(--overlay0) 22%,transparent)">IDLE</span>
-                </div>
-              </div>
-            </div>
-            <div class="slab" style="margin-bottom:0">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">wireguard1</div>
-                    <div class="gw__stat">1 of 1 connected &nbsp; 26s ago</div>
-                  </div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">UP</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <figcaption>VPN — one tab per technology, peers a tap away</figcaption>
-      </figure>
-
-    </div>
-
-    <div class="screens">
-      <div>
-        <h3>Overview</h3>
-        <p>Health at a glance: CPU, memory, per-filesystem usage, load, temperature, uptime, the state table and every gateway. Pin the interfaces you care about and they sit at the top.</p>
-      </div>
-      <div>
-        <h3>Clients</h3>
-        <p>Every device the firewall knows about, from DHCP leases, ARP and static mappings, with the filter log for each one.</p>
-      </div>
-      <div>
-        <h3>Network</h3>
-        <p>Interfaces with addresses, media, errors and counters. Tap one for a live graph. The ARP table on a second tab.</p>
-      </div>
-      <div>
-        <h3>Logs</h3>
-        <p>Filter, system, authentication, DHCP and OpenVPN, searchable, with pass and block filtering on the filter log.</p>
-      </div>
-      <div>
-        <h3>VPN</h3>
-        <p>OpenVPN, WireGuard and IPsec, each on its own tab, with peers and their transfer under the instance they belong to.</p>
-      </div>
-      <div>
-        <h3>Firewall</h3>
-        <p>Filter rules, NAT port forwards, separators, and aliases. Create, edit, duplicate, delete, and drag into order, then review staged work before applying it.</p>
-      </div>
-      <div>
-        <h3>Certificates</h3>
-        <p>The store sorted by expiry, and ACME entries showing whether anything will actually renew them.</p>
-      </div>
-      <div>
-        <h3>Services</h3>
-        <p>HAProxy frontends and backends, and which backends would notice a dead server.</p>
-      </div>
-      <div>
-        <h3>System</h3>
-        <p>Notices, packages, firmware status, Dynamic DNS, CARP, certificates, ACME, HAProxy, and pfBlockerNG.</p>
-      </div>
-    </div>
   </div>
 </section>
 
