@@ -13,10 +13,18 @@ struct MoreView: View {
                 group("Firewall") {
                     link("Firewall Rules and NAT", "shield.lefthalf.filled", badge: 0) { FirewallView() }
                     link("Aliases", "tag", badge: 0) { AliasesView() }
-                    link("Apply Firewall Changes", "arrow.clockwise",
-                         badge: store.firewallChangesPending ? 1 : 0) { FirewallReloadView() }
-                    link("Quick Block", "shield.slash", badge: 0) { QuickBlockView() }
-                    link("Flush States", "trash", badge: 0) { FlushStatesView() }
+                    // Apply Changes, Quick Block, and Flush States are pure
+                    // action screens -- nothing left to look at once the one
+                    // control on each is disabled. Monitor-only sees why
+                    // instead of tapping through to find out.
+                    if store.canAdminister {
+                        link("Apply Firewall Changes", "arrow.clockwise",
+                             badge: store.firewallChangesPending ? 1 : 0) { FirewallReloadView() }
+                        link("Quick Block", "shield.slash", badge: 0) { QuickBlockView() }
+                        link("Flush States", "trash", badge: 0) { FlushStatesView() }
+                    } else {
+                        AdministrationModeNotice()
+                    }
                 }
 
                 group("Monitoring") {
