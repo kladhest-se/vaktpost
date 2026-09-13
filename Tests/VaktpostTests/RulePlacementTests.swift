@@ -107,13 +107,13 @@ final class RulePlacementTests: XCTestCase {
 
     func testDifferentAddressFamiliesDoNotShadow() {
         let v4 = rule(family: "inet")
-        let v6 = rule(family: "inet6", destination: "2001:db8::5")
+        let v6 = rule(destination: "2001:db8::5", family: "inet6")
         XCTAssertTrue(RulePlacement.analyse(v6, in: [v4, v6]).findings.isEmpty)
     }
 
     func testAnInet46RuleCoversBothFamilies() {
         let both = rule(family: "inet46")
-        let v6 = rule(family: "inet6", destination: "2001:db8::5")
+        let v6 = rule(destination: "2001:db8::5", family: "inet6")
         XCTAssertEqual(RulePlacement.analyse(v6, in: [both, v6]).findings.count, 1)
     }
 
@@ -122,7 +122,7 @@ final class RulePlacementTests: XCTestCase {
         // as an empty string. Treating those as different would hide a real
         // shadow behind a spelling.
         let broad = rule(proto: nil)
-        let narrow = rule(proto: "any", destination: "10.0.0.5")
+        let narrow = rule(destination: "10.0.0.5", proto: "any")
         XCTAssertEqual(RulePlacement.analyse(narrow, in: [broad, narrow]).findings.count, 1)
     }
 
@@ -136,6 +136,7 @@ final class RulePlacementTests: XCTestCase {
         let second = rule("lan", destination: "10.0.0.2")
         let placement = RulePlacement.analyse(second, in: [wan, first, second])
         XCTAssertEqual(placement.position, 2)
+        XCTAssertEqual(placement.proposedPosition, 2)
         XCTAssertEqual(placement.total, 2)
     }
 
@@ -144,6 +145,7 @@ final class RulePlacementTests: XCTestCase {
         let fresh = rule("lan", destination: "10.0.0.2")
         let placement = RulePlacement.analyse(fresh, in: [existing])
         XCTAssertTrue(placement.isNew)
+        XCTAssertEqual(placement.proposedPosition, 2)
         XCTAssertEqual(placement.total, 2, "it would land last")
     }
 
@@ -159,6 +161,43 @@ final class RulePlacementTests: XCTestCase {
         let placement = RulePlacement.analyse(only, in: [])
         XCTAssertTrue(placement.isNew)
         XCTAssertTrue(placement.findings.isEmpty)
+    }
+
+    func testANewRuleCanBePreviewedBeforeAStableAnchor() {
+        let first = rule("lan", destination: "10.0.0.1", tracker: "first")
+        let second = rule("lan", destination: "10.0.0.2", tracker: "second")
+        let fresh = rule("lan", destination: "10.0.0.3", tracker: "draft")
+        let placement = RulePlacement.analyse(
+            fresh, in: [first, second], target: .before(tracker: "second")
+        )
+
+        XCTAssertTrue(placement.isNew)
+        XCTAssertEqual(placement.proposedPosition, 2)
+        XCTAssertEqual(placement.total, 3)
+    }
+
+    func testMovingBeforeABroadRuleRemovesItsShadowWarning() {
+        let broad = rule("lan", tracker: "broad")
+        let specific = rule("lan", destination: "10.0.0.5", tracker: "specific")
+        let placement = RulePlacement.analyse(
+            specific, in: [broad, specific], target: .before(tracker: "broad")
+        )
+
+        XCTAssertEqual(placement.position, 2)
+        XCTAssertEqual(placement.proposedPosition, 1)
+        XCTAssertTrue(placement.findings.isEmpty)
+    }
+
+    func testMovingAnEarlierRuleLastPreviewsNewShadowing() {
+        let specific = rule("lan", destination: "10.0.0.5", tracker: "specific")
+        let broad = rule("lan", tracker: "broad")
+        let placement = RulePlacement.analyse(
+            specific, in: [specific, broad], target: .last
+        )
+
+        XCTAssertEqual(placement.position, 1)
+        XCTAssertEqual(placement.proposedPosition, 2)
+        XCTAssertEqual(placement.findings.first?.kind, .shadowed)
     }
 }
 
@@ -185,6 +224,7 @@ final class RuleCreationTests: XCTestCase {
         let dict = form.toDict(tracker: "whatever-the-caller-passed", interface: "lan")
         XCTAssertEqual(dict.string("tracker"), "")
         XCTAssertEqual(dict.bool("create"), true)
+        XCTAssertEqual(dict.string("placement"), "last")
     }
 
     func testAnEditKeepsItsTrackerAndDoesNotAskToCreate() {
@@ -192,6 +232,16 @@ final class RuleCreationTests: XCTestCase {
         let dict = form.toDict(tracker: "1700000000", interface: "lan")
         XCTAssertEqual(dict.string("tracker"), "1700000000")
         XCTAssertEqual(dict.bool("create"), false)
+        XCTAssertNil(dict.string("placement"))
+    }
+
+    func testARuleCanRequestPlacementBeforeAStableTracker() {
+        var form = RuleEditForm(from: existing())
+        form.placementTarget = .before(tracker: "anchor-2")
+        let dict = form.toDict(tracker: "1700000000", interface: "lan")
+
+        XCTAssertEqual(dict.string("placement"), "before")
+        XCTAssertEqual(dict.string("before_tracker"), "anchor-2")
     }
 
     func testADuplicateIsACreateRatherThanAnEdit() {
@@ -265,6 +315,7 @@ final class PortForwardCreationTests: XCTestCase {
         let dict = PortForwardEditForm.blank(interface: "wan").toDict(interface: "wan")
         XCTAssertEqual(dict.string("tracker"), "")
         XCTAssertEqual(dict.bool("create"), true)
+        XCTAssertEqual(dict.dict("destination")?.string("address"), "wanip")
     }
 
     func testAnEditKeepsItsTrackerAndDoesNotAskToCreate() {
@@ -300,7 +351,9 @@ final class PortForwardCreationTests: XCTestCase {
         // A forward with nowhere to send traffic must not be saveable, and the
         // validator already refuses an empty target.
         let form = PortForwardEditForm.blank(interface: "wan")
-        XCTAssertFalse(FieldValidator.problems(inForward: form, aliases: []).isEmpty)
+        let problems = FieldValidator.problems(inForward: form, aliases: [], interfaces: ["wan"])
+        XCTAssertTrue(problems.contains { $0.field == "Target address" })
+        XCTAssertFalse(problems.contains { $0.field == "Destination address" })
     }
 
     func testADraftIsIdentifiedSeparatelyFromAnEdit() {

@@ -127,6 +127,29 @@ final class FieldValidatorTests: XCTestCase {
         XCTAssertNotNil(problem("", .address))
     }
 
+    func testConfiguredInterfaceAddressesAndSubnetsAreNotMistakenForAliases() {
+        let interfaces: Set<String> = ["wan", "opt3"]
+        for value in ["wanip", "wan", "opt3ip", "opt3"] {
+            XCTAssertNil(FieldValidator.problem(in: value, kind: .address, field: "f",
+                                                aliases: aliases, interfaces: interfaces))
+        }
+    }
+
+    func testFixedPfSenseAddressSelectorsAreAccepted() {
+        for value in ["self", "pptp", "pppoe", "l2tp"] {
+            XCTAssertNil(FieldValidator.problem(in: value, kind: .address, field: "f",
+                                                aliases: aliases))
+        }
+    }
+
+    func testMisspelledInterfaceAddressIsStillRejected() {
+        XCTAssertEqual(
+            FieldValidator.problem(in: "wnaip", kind: .address, field: "f",
+                                   aliases: aliases, interfaces: ["wan"])?.message,
+            "No alias called \"wnaip\" on this firewall."
+        )
+    }
+
     // MARK: Aliases
 
     func testAnAliasThatExistsPasses() {
@@ -234,13 +257,14 @@ final class FieldValidatorTests: XCTestCase {
 
     // MARK: Port forwards
 
-    private func forward(target: String = "172.16.1.32", destinationPort: String = "443",
+    private func forward(target: String = "172.16.1.32", destination: String = "any",
+                         destinationPort: String = "443",
                          localPort: String = "", proto: String = "tcp") -> PortForwardEditForm {
         let raw: [String: JSONValue] = [
             "interface": .string("wan"), "protocol": .string(proto),
             "ipprotocol": .string("inet"),
             "source": .object(["address": .string("any")]),
-            "destination": .object(["address": .string("any")]),
+            "destination": .object(["address": .string(destination)]),
             "destination_port": .string(destinationPort),
             "target": .string(target),
             "local_port": .string(localPort),
@@ -251,6 +275,12 @@ final class FieldValidatorTests: XCTestCase {
 
     func testAValidForwardHasNoProblems() {
         XCTAssertTrue(FieldValidator.problems(inForward: forward(), aliases: aliases).isEmpty)
+    }
+
+    func testAForwardMayUseItsConfiguredInterfaceAddress() {
+        XCTAssertTrue(FieldValidator.problems(
+            inForward: forward(destination: "wanip"), aliases: aliases, interfaces: ["wan"]
+        ).isEmpty)
     }
 
     func testAForwardWithoutATargetIsRejected() {

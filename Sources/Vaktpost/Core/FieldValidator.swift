@@ -60,6 +60,23 @@ enum FieldValidator {
 
     static func isAddress(_ text: String) -> Bool { isIPv4(text) || isIPv6(text) }
 
+    /// A pfSense-owned address selector, not a user-defined alias.
+    ///
+    /// Filter rules store an interface subnet as its internal key (`wan`,
+    /// `opt3`) and its current address as that key plus `ip` (`wanip`,
+    /// `opt3ip`). The built-in client networks and `self` are stored the same
+    /// way: as names which deliberately do not appear in `$config["aliases"]`.
+    /// Accepting every alias-shaped word would hide typos, so only configured
+    /// interface keys and pfSense's fixed selectors pass here.
+    static func isSystemAddress(_ text: String, interfaces: Set<String>) -> Bool {
+        let value = text.lowercased()
+        if ["self", "pptp", "pppoe", "l2tp"].contains(value) { return true }
+        return interfaces.contains { interface in
+            let key = interface.lowercased()
+            return value == key || value == "\(key)ip"
+        }
+    }
+
     /// An address with a prefix length that fits its family.
     static func isCIDR(_ text: String) -> Bool {
         let parts = text.split(separator: "/")
@@ -93,7 +110,7 @@ enum FieldValidator {
     /// in it is rejected: it is the likeliest typo in the whole editor, it
     /// looks entirely correct, and the resulting rule silently matches nothing.
     static func problem(in raw: String, kind: Kind, field: String,
-                        aliases: Set<String>) -> Problem? {
+                        aliases: Set<String>, interfaces: Set<String> = []) -> Problem? {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
         switch kind {
@@ -103,6 +120,7 @@ enum FieldValidator {
             }
             if text.lowercased() == "any" { return nil }
             if isAddress(text) || isCIDR(text) { return nil }
+            if isSystemAddress(text, interfaces: interfaces) { return nil }
             if isAliasName(text) {
                 return aliases.contains(text) ? nil
                     : Problem(field: field, message: "No alias called \"\(text)\" on this firewall.")
@@ -142,12 +160,15 @@ enum FieldValidator {
 
     // MARK: Whole forms
 
-    static func problems(inRule form: RuleEditForm, aliases: Set<String>) -> [Problem] {
+    static func problems(inRule form: RuleEditForm, aliases: Set<String>,
+                         interfaces: Set<String> = []) -> [Problem] {
         var out: [Problem] = []
         out.append(contentsOf: [
-            problem(in: form.sourceAddress, kind: .address, field: "Source address", aliases: aliases),
+            problem(in: form.sourceAddress, kind: .address, field: "Source address",
+                    aliases: aliases, interfaces: interfaces),
             problem(in: form.sourcePort, kind: .port, field: "Source port", aliases: aliases),
-            problem(in: form.destinationAddress, kind: .address, field: "Destination address", aliases: aliases),
+            problem(in: form.destinationAddress, kind: .address, field: "Destination address",
+                    aliases: aliases, interfaces: interfaces),
             problem(in: form.destinationPort, kind: .port, field: "Destination port", aliases: aliases)
         ].compactMap { $0 })
 
@@ -161,11 +182,14 @@ enum FieldValidator {
         return out
     }
 
-    static func problems(inForward form: PortForwardEditForm, aliases: Set<String>) -> [Problem] {
+    static func problems(inForward form: PortForwardEditForm, aliases: Set<String>,
+                         interfaces: Set<String> = []) -> [Problem] {
         var out: [Problem] = []
         out.append(contentsOf: [
-            problem(in: form.sourceAddress, kind: .address, field: "Source address", aliases: aliases),
-            problem(in: form.destinationAddress, kind: .address, field: "Destination address", aliases: aliases),
+            problem(in: form.sourceAddress, kind: .address, field: "Source address",
+                    aliases: aliases, interfaces: interfaces),
+            problem(in: form.destinationAddress, kind: .address, field: "Destination address",
+                    aliases: aliases, interfaces: interfaces),
             problem(in: form.destinationPort, kind: .port, field: "Destination port", aliases: aliases),
             problem(in: form.targetAddress, kind: .target, field: "Target address", aliases: aliases),
             problem(in: form.localPort, kind: .port, field: "Local port", aliases: aliases)

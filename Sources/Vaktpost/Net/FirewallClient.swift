@@ -446,9 +446,18 @@ actor FirewallClient {
         }
         let snippet = PHPSnippet.saveRule(rule: rule)
         let dict = try await rpc.runObjectOnce(snippet)
-        return try Self.validatedSaveResponse(
+        let result = try Self.validatedSaveResponse(
             dict, operation: "Rule save", requestedTracker: tracker, isCreate: isCreate
         )
+        let placement = rule.string("placement") ?? (isCreate ? "last" : "keep")
+        guard result.string("placement") == placement else {
+            throw RPCError.fault(0, "Rule save returned a different placement result.")
+        }
+        if placement == "before",
+           result.string("before_tracker") != rule.string("before_tracker") {
+            throw RPCError.fault(0, "Rule save returned a different position anchor.")
+        }
+        return result
     }
 
     /// Saves (creates or updates) a NAT/port forward rule.

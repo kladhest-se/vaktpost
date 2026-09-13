@@ -2859,11 +2859,15 @@ struct PHPSnippet: Sendable {
 
         $tracker = strval($vaktpost_input["tracker"] ?? "");
         $vaktpost_create = ($vaktpost_input["create"] ?? false) ? true : false;
+        $vaktpost_interface = strval($vaktpost_input["interface"] ?? "");
+        $vaktpost_placement = strval($vaktpost_input["placement"] ?? ($vaktpost_create ? "last" : "keep"));
+        $vaktpost_before = strval($vaktpost_input["before_tracker"] ?? "");
         $section = $config["filter"];
         $rules = (is_array($section) && is_iterable($section["rule"])) ? $section["rule"] : [];
         $found = false;
         $vaktpost_index = null;
         $rule = [];
+        $vaktpost_position_valid = true;
 
         // Creating means never matching.
         //
@@ -2897,13 +2901,41 @@ struct PHPSnippet: Sendable {
           }
         }
 
+        if ($vaktpost_placement !== "keep" && $vaktpost_placement !== "last" && $vaktpost_placement !== "before") {
+          $vaktpost_position_valid = false;
+        }
+        if ($vaktpost_placement === "before") {
+          $vaktpost_position_valid = $vaktpost_before !== "" && $vaktpost_before !== $tracker;
+          if ($vaktpost_position_valid) {
+            $vaktpost_anchor_found = false;
+            foreach ($rules as $vaktpost_existing) {
+              if (is_array($vaktpost_existing)
+                  && strval($vaktpost_existing["tracker"] ?? "") === $vaktpost_before
+                  && strval($vaktpost_existing["interface"] ?? "") === $vaktpost_interface) {
+                $vaktpost_anchor_found = true;
+                break;
+              }
+            }
+            $vaktpost_position_valid = $vaktpost_anchor_found;
+          }
+        }
+        if ($found && $vaktpost_placement === "keep"
+            && strval($rule["interface"] ?? "") !== $vaktpost_interface) {
+          // "Keep" is an interface-local promise. Once the interface changes
+          // there is no current position there to preserve.
+          $vaktpost_position_valid = false;
+        }
+
         if (!$vaktpost_create && !$found) {
           // Never turn a stale edit into an append. The rule may have been
           // removed after the app's preflight read and before this write.
           $toreturn["status"] = "not_found";
           $toreturn["error"] = "The rule tracker no longer exists";
+        } elseif (!$vaktpost_position_valid) {
+          $toreturn["status"] = "position_not_found";
+          $toreturn["error"] = "The selected rule position is no longer available";
         } else {
-        $rule["interface"] = strval($vaktpost_input["interface"] ?? "");
+        $rule["interface"] = $vaktpost_interface;
         $rule["type"] = strval($vaktpost_input["type"] ?? "pass");
         $rule["protocol"] = strval($vaktpost_input["protocol"] ?? "any");
         $rule["ipprotocol"] = strval($vaktpost_input["ipprotocol"] ?? "inet");
@@ -2937,10 +2969,29 @@ struct PHPSnippet: Sendable {
           unset($rule["destination_port"]);
         }
 
-        if ($found) {
+        if ($found && $vaktpost_placement === "keep") {
           $rules[$vaktpost_index] = $rule;
         } else {
-          $rules[] = $rule;
+          if ($found) {
+            unset($rules[$vaktpost_index]);
+            $rules = array_values($rules);
+          }
+          if ($vaktpost_placement === "before") {
+            $vaktpost_ordered = [];
+            $vaktpost_inserted = false;
+            foreach ($rules as $vaktpost_existing) {
+              if (!$vaktpost_inserted && is_array($vaktpost_existing)
+                  && strval($vaktpost_existing["tracker"] ?? "") === $vaktpost_before
+                  && strval($vaktpost_existing["interface"] ?? "") === $vaktpost_interface) {
+                $vaktpost_ordered[] = $rule;
+                $vaktpost_inserted = true;
+              }
+              $vaktpost_ordered[] = $vaktpost_existing;
+            }
+            $rules = $vaktpost_ordered;
+          } else {
+            $rules[] = $rule;
+          }
         }
         $config["filter"]["rule"] = array_values($rules);
         write_config("Vaktpost: saved a rule");
@@ -2948,6 +2999,10 @@ struct PHPSnippet: Sendable {
         $toreturn["status"] = "ok";
         $toreturn["created"] = $vaktpost_create;
         $toreturn["tracker"] = $tracker;
+        $toreturn["placement"] = $vaktpost_placement;
+        if ($vaktpost_placement === "before") {
+          $toreturn["before_tracker"] = $vaktpost_before;
+        }
         }
         """)
     }

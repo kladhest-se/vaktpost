@@ -23,7 +23,9 @@ enum AdministrativeWrite: Sendable {
         case .quickBlock: return .quickBlock
         case .flushStates: return .flushStates
         case .deleteRule: return .deleteRule
-        case .saveRule(let rule, _): return Self.isCreate(rule) ? .addRule : .editRule
+        case .saveRule(let rule, _):
+            if Self.isCreate(rule) { return .addRule }
+            return Self.movesRule(rule) ? .reorderRules : .editRule
         case .deleteNatRule: return .deletePortForward
         case .saveNatRule(let rule, _): return Self.isCreate(rule) ? .addPortForward : .editPortForward
         }
@@ -56,7 +58,8 @@ enum AdministrativeWrite: Sendable {
         case .deleteRule(let tracker, let displayName):
             return "Delete rule \(displayName.isEmpty ? tracker : displayName)"
         case .saveRule(let rule, let displayName):
-            return "\(Self.isCreate(rule) ? "Add" : "Edit") rule \(displayName)"
+            if Self.isCreate(rule) { return "Add rule \(displayName)" }
+            return "\(Self.movesRule(rule) ? "Edit and move" : "Edit") rule \(displayName)"
         case .deleteNatRule(let tracker, let displayName):
             return "Delete port forward \(displayName.isEmpty ? tracker : displayName)"
         case .saveNatRule(let rule, let displayName):
@@ -83,7 +86,8 @@ enum AdministrativeWrite: Sendable {
             return "Permanently delete rule “\(displayName.isEmpty ? tracker : displayName)” (tracker \(tracker))."
         case .saveRule(let rule, let displayName):
             let verb = Self.isCreate(rule) ? "Add" : "Update"
-            return "\(verb) rule “\(displayName)” as \(Self.ruleDescription(rule))."
+            return "\(verb) rule “\(displayName)” as \(Self.ruleDescription(rule))"
+                + Self.rulePlacementDescription(rule) + "."
         case .deleteNatRule(let tracker, let displayName):
             return "Permanently delete port forward “\(displayName.isEmpty ? tracker : displayName)” (tracker \(tracker))."
         case .saveNatRule(let rule, let displayName):
@@ -109,6 +113,21 @@ enum AdministrativeWrite: Sendable {
 
     private static func isCreate(_ rule: JSONDict) -> Bool {
         rule.bool("create") ?? false
+    }
+
+    private static func movesRule(_ rule: JSONDict) -> Bool {
+        !isCreate(rule) && rule.string("placement").map { $0 != "keep" } == true
+    }
+
+    private static func rulePlacementDescription(_ rule: JSONDict) -> String {
+        switch rule.string("placement") {
+        case "last":
+            return ", placed last on its interface"
+        case "before":
+            return ", placed before tracker \(rule.string("before_tracker") ?? "unknown")"
+        default:
+            return ""
+        }
     }
 }
 
@@ -303,12 +322,27 @@ final class WriteCoordinator {
             }
         case .deleteRule(let tracker, _), .deleteNatRule(let tracker, _):
             guard !tracker.isEmpty else { throw WriteCoordinatorError.invalidOperation("a stable tracker ID is required") }
-        case .saveRule(let rule, _), .saveNatRule(let rule, _):
+        case .saveRule(let rule, _):
             // A create has no tracker yet — the firewall assigns one, because
             // it is the only place that can see the whole ruleset at the
             // moment of writing. An edit without one would silently append a
             // second copy instead of changing the rule, so the requirement
             // stays everywhere else.
+            let isCreate = rule.bool("create") ?? false
+            guard isCreate || !(rule.string("tracker") ?? "").isEmpty else {
+                throw WriteCoordinatorError.invalidOperation("a stable tracker ID is required for an edit")
+            }
+            let placement = rule.string("placement") ?? (isCreate ? "last" : "keep")
+            guard ["keep", "last", "before"].contains(placement) else {
+                throw WriteCoordinatorError.invalidOperation("the requested rule position is invalid")
+            }
+            if placement == "before" {
+                let anchor = rule.string("before_tracker") ?? ""
+                guard !anchor.isEmpty, anchor != rule.string("tracker") else {
+                    throw WriteCoordinatorError.invalidOperation("a different stable rule is required as the position anchor")
+                }
+            }
+        case .saveNatRule(let rule, _):
             let isCreate = rule.bool("create") ?? false
             guard isCreate || !(rule.string("tracker") ?? "").isEmpty else {
                 throw WriteCoordinatorError.invalidOperation("a stable tracker ID is required for an edit")
@@ -367,9 +401,7 @@ final class WriteCoordinator {
             return Self.serviceSnapshot(service)
         case .flushStates:
             return Self.stateSnapshot(try await client.stateTableSize())
-        case .saveRule(let rule, _) where rule.bool("create") == true:
-            return "rules=\((try await client.firewallRules()).count);new_tracker=unassigned"
-        case .deleteRule, .saveRule:
+        case .deleteRule:
             guard let tracker = operation.tracker else {
                 throw WriteCoordinatorError.invalidOperation("a stable rule tracker is required")
             }
@@ -377,6 +409,26 @@ final class WriteCoordinator {
                 throw WriteCoordinatorError.invalidOperation("the rule is no longer present")
             }
             return Self.ruleSnapshot(rule)
+        case .saveRule(let expected, _):
+            let rules = try await client.firewallRules()
+            try Self.requirePlacementAnchor(expected, in: rules)
+            if expected.bool("create") == true {
+                return "rules=\(rules.count);new_tracker=unassigned;"
+                    + Self.requestedPlacementSnapshot(expected)
+            }
+            guard let tracker = expected.string("tracker"),
+                  let rule = rules.first(where: { $0.tracker == tracker }) else {
+                throw WriteCoordinatorError.invalidOperation("the rule is no longer present")
+            }
+            let placement = expected.string("placement") ?? "keep"
+            if placement == "keep", rule.interfaceName != expected.string("interface") {
+                throw WriteCoordinatorError.invalidOperation(
+                    "a position on the new interface must be selected"
+                )
+            }
+            let position = Self.interfacePosition(of: tracker, interface: rule.interfaceName, in: rules) ?? -1
+            return Self.ruleSnapshot(rule) + ";position=\(position);"
+                + Self.requestedPlacementSnapshot(expected)
         case .saveNatRule(let rule, _) where rule.bool("create") == true:
             return "port_forwards=\((try await client.portForwards()).count);new_tracker=unassigned"
         case .deleteNatRule, .saveNatRule:
@@ -440,15 +492,20 @@ final class WriteCoordinator {
                                 snapshot: exists ? "tracker=\(tracker);present=true" : "tracker=\(tracker);present=false")
         case .saveRule(let expected, _):
             let isCreate = expected.bool("create") ?? false
+            let rules = try await client.firewallRules()
             guard let tracker = receipt.tracker, !tracker.isEmpty,
-                  let actual = try await client.firewallRules().first(where: { $0.tracker == tracker }) else {
+                  let actual = rules.first(where: { $0.tracker == tracker }) else {
                 return Verification(state: .mismatch,
                                     detail: "The \(isCreate ? "new" : "edited") rule was not found during read-back.", snapshot: nil)
             }
-            let matches = Self.rule(actual, matches: expected)
+            let valuesMatch = Self.rule(actual, matches: expected)
+            let placementMatches = Self.rulePlacement(tracker: tracker, matches: expected, in: rules)
+            let matches = valuesMatch && placementMatches
             let detail = matches
                 ? "The \(isCreate ? "new" : "edited") rule matches the requested values."
-                : "The rule returned different values after saving."
+                : (valuesMatch
+                   ? "The rule values match, but its position is different after saving."
+                   : "The rule returned different values after saving.")
             return Verification(state: matches ? .verified : .mismatch,
                                 detail: detail,
                                 snapshot: Self.ruleSnapshot(actual))
@@ -530,6 +587,53 @@ final class WriteCoordinator {
             && (actual.localPort ?? "") == (expected.string("local_port") ?? "")
             && actual.descr == (expected.string("descr") ?? "")
             && actual.disabled == (expected.bool("disabled") ?? false)
+    }
+
+    private static func requirePlacementAnchor(_ expected: JSONDict,
+                                               in rules: [FirewallRule]) throws {
+        guard expected.string("placement") == "before" else { return }
+        let anchor = expected.string("before_tracker") ?? ""
+        let interface = expected.string("interface") ?? ""
+        guard rules.contains(where: { $0.tracker == anchor && $0.interfaceName == interface }) else {
+            throw WriteCoordinatorError.invalidOperation(
+                "the selected position anchor is no longer present on this interface"
+            )
+        }
+    }
+
+    private static func requestedPlacementSnapshot(_ expected: JSONDict) -> String {
+        let placement = expected.string("placement") ?? "keep"
+        let anchor = expected.string("before_tracker") ?? ""
+        return "placement=\(placement);before_tracker=\(anchor)"
+    }
+
+    private static func interfacePosition(of tracker: String,
+                                          interface: String,
+                                          in rules: [FirewallRule]) -> Int? {
+        rules.filter { $0.interfaceName == interface }
+            .firstIndex { $0.tracker == tracker }
+            .map { $0 + 1 }
+    }
+
+    private static func rulePlacement(tracker: String,
+                                      matches expected: JSONDict,
+                                      in rules: [FirewallRule]) -> Bool {
+        let interfaceRules = rules.filter { $0.interfaceName == expected.string("interface") }
+        guard let index = interfaceRules.firstIndex(where: { $0.tracker == tracker }) else {
+            return false
+        }
+        switch expected.string("placement") {
+        case "before":
+            guard let anchor = expected.string("before_tracker"),
+                  let anchorIndex = interfaceRules.firstIndex(where: { $0.tracker == anchor }) else {
+                return false
+            }
+            return index + 1 == anchorIndex
+        case "last":
+            return index == interfaceRules.count - 1
+        default:
+            return true
+        }
     }
 }
 

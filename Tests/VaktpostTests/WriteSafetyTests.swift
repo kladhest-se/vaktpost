@@ -86,9 +86,13 @@ final class WriteSafetyTests: XCTestCase {
     func testCreationUsesAddAuditCategories() {
         let create = JSONDict(["create": .bool(true)])
         let edit = JSONDict(["create": .bool(false), "tracker": .string("1")])
+        let move = JSONDict([
+            "create": .bool(false), "tracker": .string("1"), "placement": .string("last")
+        ])
 
         XCTAssertEqual(AdministrativeWrite.saveRule(rule: create, displayName: "new").action, .addRule)
         XCTAssertEqual(AdministrativeWrite.saveRule(rule: edit, displayName: "old").action, .editRule)
+        XCTAssertEqual(AdministrativeWrite.saveRule(rule: move, displayName: "old").action, .reorderRules)
         XCTAssertEqual(AdministrativeWrite.saveNatRule(rule: create, displayName: "new").action, .addPortForward)
         XCTAssertEqual(AdministrativeWrite.saveNatRule(rule: edit, displayName: "old").action, .editPortForward)
     }
@@ -97,6 +101,15 @@ final class WriteSafetyTests: XCTestCase {
         let body = PHPSnippet.saveRule(rule: JSONDict([:])).body
         XCTAssertTrue(body.contains("$rules[$vaktpost_index] = $rule;"))
         XCTAssertFalse(body.contains("unset($rules[$idx]);"))
+    }
+
+    func testRulePlacementUsesStableTrackerAnchorsAndFailsClosed() {
+        let body = PHPSnippet.saveRule(rule: JSONDict([:])).body
+
+        XCTAssertTrue(body.contains("before_tracker"))
+        XCTAssertTrue(body.contains("position_not_found"))
+        XCTAssertTrue(body.contains("$toreturn[\"placement\"] = $vaktpost_placement;"))
+        XCTAssertTrue(body.contains("$toreturn[\"before_tracker\"] = $vaktpost_before;"))
     }
 
     func testQuickBlockWritesNativeFilterRuleShape() {

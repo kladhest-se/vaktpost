@@ -1,5 +1,32 @@
 # Changelog
 
+## pfSense interface addresses are no longer mistaken for missing aliases
+
+- Rule and port-forward validation now recognizes configured interface subnet
+  keys such as `wan` and interface-address keys such as `wanip` as pfSense
+  system selectors rather than user aliases.
+- The fixed `self`, `pptp`, `pppoe` and `l2tp` selectors are accepted as well,
+  while unknown alias-shaped values remain blocked so spelling errors are not
+  silently written to the firewall.
+- New port forwards now actually default their destination to the selected
+  interface address, matching both the editor's description and pfSense's own
+  default behavior.
+
+## Rule insertion and moves use stable anchors
+
+- New and duplicated filter rules can be placed before a selected rule or at
+  the end; existing rules can keep their position or be moved explicitly.
+- Position requests use the selected rule's stable tracker rather than a
+  numeric index. The coordinator rechecks that anchor immediately before the
+  write, and the firewall rejects the operation if the anchor disappeared or
+  moved to another interface.
+- The write response is correlated with the requested placement, and read-back
+  verifies the saved rule is immediately before its anchor or last as chosen.
+- The editor previews the proposed position and recalculates reachability
+  findings against the resulting order before confirmation.
+- Reorders have their own protected audit category. New and duplicated rules
+  remain disabled by default regardless of their selected position.
+
 ## Rule simulation now proves its log is usable
 
 - Opening simulation still fetches the filter log first, but it now checks the

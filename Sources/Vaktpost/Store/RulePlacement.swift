@@ -25,6 +25,15 @@ import Foundation
 /// that moment is not.
 enum RulePlacement {
 
+    /// A position expressed with stable identity rather than a numeric index.
+    /// If another administrator changes the ruleset before save, pfSense can
+    /// still find this anchor or reject the write without guessing.
+    enum Target: Hashable {
+        case keep
+        case last
+        case before(tracker: String)
+    }
+
     struct Finding: Identifiable {
         enum Kind {
             /// An earlier rule matches everything this one would, so this rule
@@ -65,9 +74,11 @@ enum RulePlacement {
     }
 
     struct Placement {
-        /// 1-based position among the rules on this rule's interface, or nil
-        /// when the rule is new and would be appended.
+        /// Current 1-based position among the rules on this rule's interface,
+        /// or nil when the rule is new or is moving from another interface.
         let position: Int?
+        /// Where the edited/new rule will be if the requested move succeeds.
+        let proposedPosition: Int
         /// How many rules that interface has, counting this one.
         let total: Int
         let findings: [Finding]
@@ -77,15 +88,32 @@ enum RulePlacement {
 
     /// Analyse one rule against the ruleset it lives in.
     ///
-    /// Only rules on the same interface, only those before it, only enabled
-    /// ones. pfSense generates filter rules as `quick`, so the first match
-    /// decides — which is what makes "what is above it" the whole question.
-    static func analyse(_ rule: FirewallRule, in all: [FirewallRule]) -> Placement {
+    /// Only rules on the same interface, only those before the proposed
+    /// position, only enabled ones. pfSense generates filter rules as `quick`,
+    /// so the first match decides — which makes "what is above it" the whole
+    /// question.
+    static func analyse(_ rule: FirewallRule,
+                        in all: [FirewallRule],
+                        target: Target = .keep) -> Placement {
         let onInterface = all.filter { $0.interfaceName == rule.interfaceName }
         let index = onInterface.firstIndex { $0.id == rule.id }
+        let withoutSubject = onInterface.filter { $0.id != rule.id }
 
-        // A new rule is appended, so everything already there precedes it.
-        let preceding = index.map { Array(onInterface[..<$0]) } ?? onInterface
+        let proposedIndex: Int
+        switch target {
+        case .keep:
+            proposedIndex = index ?? withoutSubject.count
+        case .last:
+            proposedIndex = withoutSubject.count
+        case .before(let tracker):
+            proposedIndex = withoutSubject.firstIndex { $0.tracker == tracker }
+                ?? withoutSubject.count
+        }
+
+        // Findings describe the final proposed order, not the stale order from
+        // the last fetch. Moving above a broad rule should remove its warning;
+        // moving below it should add one before confirmation.
+        let preceding = Array(withoutSubject.prefix(proposedIndex))
 
         var findings: [Finding] = []
         for (offset, earlier) in preceding.enumerated() {
@@ -105,7 +133,8 @@ enum RulePlacement {
         }
 
         return Placement(position: index.map { $0 + 1 },
-                         total: index == nil ? onInterface.count + 1 : onInterface.count,
+                         proposedPosition: proposedIndex + 1,
+                         total: withoutSubject.count + 1,
                          findings: findings)
     }
 

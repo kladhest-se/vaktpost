@@ -1014,6 +1014,9 @@ struct RuleEditForm: Equatable, Identifiable {
     var destinationPort: String
     var disabled: Bool
     var logged: Bool
+    /// Stable placement request. Existing rules keep their position unless the
+    /// person chooses a move; new rules default to the end as disabled drafts.
+    var placementTarget: RulePlacement.Target = .keep
     /// True when this will add a rule rather than change one.
     ///
     /// Carried in the payload so the firewall knows not to match, and so it
@@ -1050,6 +1053,7 @@ struct RuleEditForm: Equatable, Identifiable {
             "destination": .object(["address": .string("any")])
         ])))
         form.isCreating = true
+        form.placementTarget = .last
         return form
     }
 
@@ -1061,6 +1065,7 @@ struct RuleEditForm: Equatable, Identifiable {
     static func duplicating(_ rule: FirewallRule) -> RuleEditForm {
         var form = RuleEditForm(from: rule)
         form.isCreating = true
+        form.placementTarget = .last
         form.descr = rule.descr.isEmpty ? "Copy" : "\(rule.descr) (copy)"
         // A copy starts disabled for the same reason a new rule does.
         form.disabled = true
@@ -1079,6 +1084,7 @@ struct RuleEditForm: Equatable, Identifiable {
         destinationPort = rule.destinationSide.port ?? ""
         disabled = rule.disabled
         logged = rule.logged
+        placementTarget = .keep
     }
 
     func apply(to rule: FirewallRule) -> FirewallRule {
@@ -1118,6 +1124,15 @@ struct RuleEditForm: Equatable, Identifiable {
         }
         if !destinationPort.isEmpty {
             dict["destination_port"] = .string(destinationPort)
+        }
+        switch placementTarget {
+        case .keep:
+            break
+        case .last:
+            dict["placement"] = .string("last")
+        case .before(let tracker):
+            dict["placement"] = .string("before")
+            dict["before_tracker"] = .string(tracker)
         }
         // Always sent. Omitting it does not mean "unchanged" to pfSense.
         dict["ipprotocol"] = .string(addressFamily)
@@ -1171,7 +1186,8 @@ struct RuleEditSheet: View {
     }
 
     private var problems: [FieldValidator.Problem] {
-        FieldValidator.problems(inRule: edited, aliases: aliases)
+        FieldValidator.problems(inRule: edited, aliases: aliases,
+                                interfaces: Set(interfaces))
     }
 
     /// Where this rule sits, computed against the rule as edited.
@@ -1181,7 +1197,37 @@ struct RuleEditSheet: View {
     /// and a placement describing where it *used* to sit would be worse than
     /// none.
     private var placement: RulePlacement.Placement {
-        RulePlacement.analyse(edited.apply(to: subject), in: ruleset)
+        RulePlacement.analyse(
+            edited.apply(to: subject), in: ruleset, target: edited.placementTarget
+        )
+    }
+
+    private var placementTargets: [RulePlacement.Target] {
+        var targets: [RulePlacement.Target] = edited.isCreating ? [] : [.keep]
+        targets += ruleset
+            .filter {
+                $0.interfaceName == edited.interface
+                    && $0.id != subject.id
+                    && !$0.tracker.isEmpty
+            }
+            .map { .before(tracker: $0.tracker) }
+        targets.append(.last)
+        return targets
+    }
+
+    private func placementLabel(_ target: RulePlacement.Target) -> String {
+        switch target {
+        case .keep:
+            return "Keep current position"
+        case .last:
+            return "Last on \(edited.interface)"
+        case .before(let tracker):
+            guard let anchor = ruleset.first(where: { $0.tracker == tracker }) else {
+                return "Unavailable rule"
+            }
+            let name = anchor.descr.isEmpty ? "tracker \(tracker)" : anchor.descr
+            return "Before \(name)"
+        }
     }
 
     /// What the rule looked like when the sheet opened.
@@ -1242,6 +1288,24 @@ struct RuleEditSheet: View {
                         }
                     }
 
+                    Slab(rail: .info, title: "Position",
+                         trailing: "\(placement.proposedPosition) of \(placement.total)") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Picker("", selection: $edited.placementTarget) {
+                                ForEach(placementTargets, id: \.self) { target in
+                                    Text(placementLabel(target)).tag(target)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .tint(theme.accentColor)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Text("The selected rule is used as a stable anchor and rechecked on the firewall before saving.")
+                                .scaledFont(10)
+                                .foregroundStyle(theme.labelFaint)
+                        }
+                    }
+
                     PlacementCard(placement: placement, action: edited.type)
                     ProblemList(problems: problems)
                 }
@@ -1276,6 +1340,12 @@ struct RuleEditSheet: View {
                 }
             }
             .interactiveDismissDisabled(isSaving)
+            .onChange(of: edited.interface) {
+                // A tracker from the previous interface is not a meaningful
+                // anchor on the new one. Moving interfaces therefore lands at
+                // the safe disabled-draft default until another place is chosen.
+                edited.placementTarget = .last
+            }
             .confirmationSheet(
                 isPresented: $showSaveConfirmation,
                 title: edited.isCreating ? "Review new rule" : "Review rule changes",
@@ -1301,7 +1371,7 @@ struct RuleEditSheet: View {
             if !edited.destinationPort.isEmpty { text += " port \(edited.destinationPort)" }
             text += "\n• \(edited.disabled ? "Disabled" : "Enabled") on creation"
             let place = placement
-            text += "\n\nAppended as rule \(place.total) of \(place.total)."
+            text += "\n\nInserted as rule \(place.proposedPosition) of \(place.total)."
             for finding in place.findings {
                 text += "\n\n\(finding.headline): \(finding.detail(action: edited.type))"
             }
@@ -1329,9 +1399,15 @@ struct RuleEditSheet: View {
         // a firewall changes.
         let place = placement
         if let position = place.position {
-            text += "\n\nPosition \(position) of \(place.total) on \(edited.interface)."
+            if place.proposedPosition == position {
+                text += "\n\nPosition \(position) of \(place.total) on \(edited.interface)."
+            } else {
+                text += "\n\nMoved from rule \(position) to rule \(place.proposedPosition)"
+                    + " of \(place.total) on \(edited.interface)."
+            }
         } else {
-            text += "\n\nAppended as rule \(place.total) of \(place.total) on \(edited.interface)."
+            text += "\n\nPlaced as rule \(place.proposedPosition) of \(place.total)"
+                + " on \(edited.interface)."
         }
         for finding in place.findings {
             text += "\n\n\(finding.headline): \(finding.detail(action: edited.type))"
@@ -1395,7 +1471,7 @@ struct PortForwardEditForm: Equatable, Identifiable {
             "disabled": .bool(true),
             "descr": .string(""),
             "source": .object(["address": .string("any")]),
-            "destination": .object(["address": .string("")]),
+            "destination": .object(["address": .string("\(interface)ip")]),
             "target": .string("")
         ])))
         form.isCreating = true
@@ -1475,7 +1551,7 @@ struct PlacementCard: View {
              trailing: positionText) {
             VStack(alignment: .leading, spacing: 8) {
                 if placement.isNew {
-                    Text("This will be appended to the end of the interface's rules, which is where new rules land and rarely where they are wanted.")
+                    Text("This disabled draft will be inserted at the selected position. Review every rule above it before enabling it.")
                         .scaledFont(12)
                         .foregroundStyle(theme.labelMuted)
                 }
@@ -1513,7 +1589,7 @@ struct PlacementCard: View {
     }
 
     private var positionText: String {
-        placement.isNew ? "new" : "\(placement.position ?? 0) of \(placement.total)"
+        "\(placement.proposedPosition) of \(placement.total)"
     }
 }
 
@@ -1580,7 +1656,8 @@ struct PortForwardEditSheet: View {
     }
 
     private var problems: [FieldValidator.Problem] {
-        FieldValidator.problems(inForward: edited, aliases: aliases)
+        FieldValidator.problems(inForward: edited, aliases: aliases,
+                                interfaces: Set(interfaces))
     }
 
     var body: some View {
