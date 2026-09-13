@@ -131,6 +131,12 @@ there:
 - `unset` is allowed, because removing an element from a local array is how a
   rule is dropped from a copy before the copy is assigned back. Pointed at
   `$config` it is checked separately and refused.
+- Before `write_config()`, write snippets copy pfSense's already-authenticated
+  `PHP_AUTH_USER` into the request-local revision context so Configuration
+  History records the person instead of `(system)`. The source address remains
+  pfSense's observed peer and the provider label comes from pfSense's own auth
+  configuration; none of these values comes from an app payload, and Vaktpost
+  does not start or persist a webConfigurator session.
 
 ### Values never become code
 

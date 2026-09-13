@@ -173,6 +173,7 @@ struct PHPSnippet: Sendable {
         "array_slice", "array_values", "array_keys", "array_reverse", "file",
         "file_exists", "file_get_contents", "filemtime", "glob", "basename",
         "sort", "usort", "strval", "substr", "function_exists", "config_get_path", "strpos", "strlen", "filesize",
+        "strtoupper",
         "array_key_exists", "intval",
         // Pure, built-in string conversion — no side effects, no file or
         // system access. Used once, to show a submitted interface value as
@@ -251,6 +252,7 @@ struct PHPSnippet: Sendable {
         // Listed once. They were here twice, from two separate edits, which is
         // how an allowlist stops being something anybody reads.
         "write_config", "filter_configure_sync", "pfctl_clear_states", "pfctl_clear_states_by_if",
+        "auth_get_authserver",
         "restart_service",
     ]
 
@@ -2792,8 +2794,15 @@ struct PHPSnippet: Sendable {
     static let reloadFirewall = PHPSnippet("reload_firewall", """
     ini_set('display_errors', 0);
     require_once '/etc/inc/filter.inc';
-    filter_configure_sync();
-    $toreturn = ["status" => "ok"];
+    $vaktpost_reload_result = filter_configure_sync();
+    if ($vaktpost_reload_result === 0) {
+      $toreturn = ["status" => "ok"];
+    } else {
+      $toreturn = [
+        "status" => "reload_failed",
+        "error" => "pfSense did not complete the filter reload. Check Status > Filter Reload."
+      ];
+    }
     """)
 
     /// Restarts a pfSense service by name.
@@ -2884,10 +2893,34 @@ struct PHPSnippet: Sendable {
           ];
           $vaktpost_rules[] = $block_rule;
           $config['filter']['rule'] = array_values($vaktpost_rules);
+          // XML-RPC authenticates PHP_AUTH_USER but does not populate the
+          // webConfigurator session fields read by write_config(). Use only
+          // pfSense's already-authenticated request identity and configured
+          // provider; do not create or persist a GUI login session.
+          $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+          if ($vaktpost_authenticated_user !== "") {
+            $_SESSION["Username"] = $vaktpost_authenticated_user;
+            $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+            if (is_array($vaktpost_authcfg)) {
+              $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+              $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+              if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                $_SESSION["authsource"] = "Local Database";
+              } else {
+                $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                  . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+              }
+            }
+          }
           write_config("Vaktpost: quick-block rule added");
-          filter_configure_sync();
-          $toreturn["status"] = "ok";
-          $toreturn["rule"] = $block_rule;
+          $vaktpost_reload_result = filter_configure_sync();
+          if ($vaktpost_reload_result === 0) {
+            $toreturn["status"] = "ok";
+            $toreturn["rule"] = $block_rule;
+          } else {
+            $toreturn["status"] = "reload_failed";
+            $toreturn["error"] = "The rule was saved, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+          }
         }
         """)
     }
@@ -2948,9 +2981,29 @@ struct PHPSnippet: Sendable {
           // the caller and went straight into a PHP string literal, which is
           // the same hole as everywhere else; the audit trail records which
           // rule went, which is where that belongs.
+          $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+          if ($vaktpost_authenticated_user !== "") {
+            $_SESSION["Username"] = $vaktpost_authenticated_user;
+            $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+            if (is_array($vaktpost_authcfg)) {
+              $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+              $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+              if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                $_SESSION["authsource"] = "Local Database";
+              } else {
+                $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                  . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+              }
+            }
+          }
           write_config("Vaktpost: deleted a rule");
-          filter_configure_sync();
-          $toreturn["status"] = "ok";
+          $vaktpost_reload_result = filter_configure_sync();
+          if ($vaktpost_reload_result === 0) {
+            $toreturn["status"] = "ok";
+          } else {
+            $toreturn["status"] = "reload_failed";
+            $toreturn["error"] = "The rule was deleted from the saved configuration, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+          }
         } else {
           $toreturn["status"] = "not_found";
         }
@@ -3290,10 +3343,30 @@ struct PHPSnippet: Sendable {
             // interpolation of the caller's `interface` argument — the whole
             // point of the payload is that no runtime string reaches PHP
             // source directly.
+            $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+            if ($vaktpost_authenticated_user !== "") {
+              $_SESSION["Username"] = $vaktpost_authenticated_user;
+              $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+              if (is_array($vaktpost_authcfg)) {
+                $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+                $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+                if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                  $_SESSION["authsource"] = "Local Database";
+                } else {
+                  $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                    . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+                }
+              }
+            }
             write_config("Vaktpost: reordered rules on " . $vaktpost_interface);
-            filter_configure_sync();
-            $toreturn["status"] = "ok";
-            $toreturn["order"] = $vaktpost_submitted_rule_trackers;
+            $vaktpost_reload_result = filter_configure_sync();
+            if ($vaktpost_reload_result === 0) {
+              $toreturn["status"] = "ok";
+              $toreturn["order"] = $vaktpost_submitted_rule_trackers;
+            } else {
+              $toreturn["status"] = "reload_failed";
+              $toreturn["error"] = "The new order was saved, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+            }
           }
         }
         """)
@@ -3328,9 +3401,29 @@ struct PHPSnippet: Sendable {
           // the caller and went straight into a PHP string literal, which is
           // the same hole as everywhere else; the audit trail records which
           // rule went, which is where that belongs.
+          $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+          if ($vaktpost_authenticated_user !== "") {
+            $_SESSION["Username"] = $vaktpost_authenticated_user;
+            $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+            if (is_array($vaktpost_authcfg)) {
+              $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+              $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+              if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                $_SESSION["authsource"] = "Local Database";
+              } else {
+                $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                  . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+              }
+            }
+          }
           write_config("Vaktpost: deleted a nat rule");
-          filter_configure_sync();
-          $toreturn["status"] = "ok";
+          $vaktpost_reload_result = filter_configure_sync();
+          if ($vaktpost_reload_result === 0) {
+            $toreturn["status"] = "ok";
+          } else {
+            $toreturn["status"] = "reload_failed";
+            $toreturn["error"] = "The port forward was deleted from the saved configuration, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+          }
         } else {
           $toreturn["status"] = "not_found";
         }
@@ -3614,14 +3707,34 @@ struct PHPSnippet: Sendable {
           }
         }
         $config["filter"]["rule"] = array_values($rules);
+        $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+        if ($vaktpost_authenticated_user !== "") {
+          $_SESSION["Username"] = $vaktpost_authenticated_user;
+          $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+          if (is_array($vaktpost_authcfg)) {
+            $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+            $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+            if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+              $_SESSION["authsource"] = "Local Database";
+            } else {
+              $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+            }
+          }
+        }
         write_config("Vaktpost: saved a rule");
-        filter_configure_sync();
-        $toreturn["status"] = "ok";
-        $toreturn["created"] = $vaktpost_create;
-        $toreturn["tracker"] = $tracker;
-        $toreturn["placement"] = $vaktpost_placement;
-        if ($vaktpost_placement === "before") {
-          $toreturn["before_tracker"] = $vaktpost_before;
+        $vaktpost_reload_result = filter_configure_sync();
+        if ($vaktpost_reload_result === 0) {
+          $toreturn["status"] = "ok";
+          $toreturn["created"] = $vaktpost_create;
+          $toreturn["tracker"] = $tracker;
+          $toreturn["placement"] = $vaktpost_placement;
+          if ($vaktpost_placement === "before") {
+            $toreturn["before_tracker"] = $vaktpost_before;
+          }
+        } else {
+          $toreturn["status"] = "reload_failed";
+          $toreturn["error"] = "The rule was saved, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
         }
         }
         """)
@@ -3935,11 +4048,31 @@ struct PHPSnippet: Sendable {
           $rules[] = $rule;
         }
         $config["nat"]["rule"] = array_values($rules);
+        $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+        if ($vaktpost_authenticated_user !== "") {
+          $_SESSION["Username"] = $vaktpost_authenticated_user;
+          $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+          if (is_array($vaktpost_authcfg)) {
+            $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+            $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+            if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+              $_SESSION["authsource"] = "Local Database";
+            } else {
+              $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+            }
+          }
+        }
         write_config("Vaktpost: saved a nat rule");
-        filter_configure_sync();
-        $toreturn["status"] = "ok";
-        $toreturn["created"] = $vaktpost_create;
-        $toreturn["tracker"] = $tracker;
+        $vaktpost_reload_result = filter_configure_sync();
+        if ($vaktpost_reload_result === 0) {
+          $toreturn["status"] = "ok";
+          $toreturn["created"] = $vaktpost_create;
+          $toreturn["tracker"] = $tracker;
+        } else {
+          $toreturn["status"] = "reload_failed";
+          $toreturn["error"] = "The port forward was saved, but pfSense did not complete the filter reload. Check Status > Filter Reload.";
+        }
         }
         """)
     }

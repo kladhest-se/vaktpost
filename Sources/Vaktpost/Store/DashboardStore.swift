@@ -1471,6 +1471,23 @@ final class DashboardStore: Observable {
         }
     }
 
+    /// Guarantees one firewall-object read which starts after a write.
+    ///
+    /// `loadFirewallObjects(force: true)` still declines to start while an
+    /// earlier load is in flight. That is right for ordinary refresh callers,
+    /// but wrong after a mutation: the in-flight read may have started before
+    /// the write and can legitimately contain the old order. Wait for it to
+    /// finish, then begin the forced read while still on the main actor, so no
+    /// other loader can enter between the check and `loadFirewallObjects`.
+    func refreshFirewallObjectsAfterWrite() async {
+        let binding = bindingID
+        while isCurrent(binding), isLoadingFirewallObjects {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        guard isCurrent(binding) else { return }
+        await loadFirewallObjects(force: true)
+    }
+
     /// Filter-rule separators, by interface. Position is inferred — see
     /// `RuleSeparator.afterRuleIndex` — and shown as a best effort rather than
     /// asserted as exact.

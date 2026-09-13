@@ -494,8 +494,11 @@ struct FirewallView: View {
                 items: items.map(\.reorderItem),
                 displayName: store.interfaceLabel(for: interface) ?? interface
             ))
+            // Re-read only what changed, before dropping the optimistic drag
+            // order. A full dashboard refresh may be skipped when an automatic
+            // cycle is already running, and is needlessly slow for this screen.
+            await store.refreshFirewallObjectsAfterWrite()
             rulePendingOrder = nil
-            await store.refresh()
         } catch {
             // A refresh here, not only on success. A "mismatch" means the
             // rules this order was built from are not what the firewall
@@ -509,7 +512,7 @@ struct FirewallView: View {
             rulePendingOrder = nil
             reorderError = WriteError.from(error, operation: .other)
             showReorderErrorAlert = true
-            await store.refresh()
+            await store.refreshFirewallObjectsAfterWrite()
         }
         isSavingOrder = false
     }

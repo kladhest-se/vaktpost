@@ -1,5 +1,56 @@
 # Changelog
 
+## pfSense configuration history names the authenticated Vaktpost user
+
+Configuration writes made through `pfsense.exec_php` appeared in pfSense as
+`(system)@address: Vaktpost: ...`, even though XML-RPC had authenticated a real
+user before executing the snippet. pfSense's XML-RPC handler reads
+`PHP_AUTH_USER`, while its configuration-revision formatter reads the separate
+webConfigurator session fields; the handler does not connect those two paths.
+
+Every Vaktpost operation which calls `write_config()` now supplies that missing
+request-local audit context first. The username comes from pfSense's
+already-authenticated `PHP_AUTH_USER`, the address remains pfSense's observed
+remote address, and the authentication-source label comes from the firewall's
+configured provider. No username or provider is accepted from an app payload,
+and no webConfigurator session is started or persisted. An LDAP write now reads
+like `user@address (LDAP/provider): Vaktpost: reordered rules on opt5` in
+Configuration History. Quick Block, rule and port-forward save/delete, and rule
+reorder all use the same attribution.
+
+## Rule reorders refresh immediately and reload failures stay visible
+
+After a verified reorder, the Rules screen called the full dashboard refresh.
+That path is deliberately conditional and returns immediately when an
+automatic refresh is already running; even when it runs, several unrelated
+status calls happen before the rules are replaced. The screen then discarded
+its optimistic drag order first, so the rows could visibly snap back and remain
+stale until a later cycle.
+
+Reorder now force-loads rules, port forwards and separators directly, and only
+then discards the pending drag order. The failure path performs the same
+targeted read so a partially completed or conflicting write cannot leave the
+screen showing the order it started with. If an older object load is already
+in flight, the post-write path waits for it and then starts its own forced
+read; `force: true` alone still returns early while another load is active and
+would leave precisely the race this change is meant to remove.
+
+Every ruleset-changing snippet now checks `filter_configure_sync()`'s return
+value. pfSense returns `0` only after the synchronous filter configuration
+reaches its successful end; an early reload failure returns without that
+value. Such a request now reports `reload_failed` and explains that the saved
+configuration may already have changed, instead of returning `ok` merely
+because `write_config()` completed. The local PHP contract covers both return
+paths.
+
+This does not adopt pfSense's dirty-flag workflow. Its Apply button is an
+activation boundary, not a transaction boundary: edits have already been
+written to `config.xml`, and Apply reloads the combined current configuration.
+Using that global flag from the app could also activate a different
+administrator's pending WebUI changes. A future batch mode should therefore
+queue an app-owned, per-firewall change set, review it as one diff, revalidate
+it against fresh configuration, and perform one write plus one reload.
+
 ## Ruleset reloads now call pfSense's actual filter API
 
 The live `probes/7-write-filter-existence.php` result settled the second

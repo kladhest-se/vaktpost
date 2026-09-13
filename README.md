@@ -134,6 +134,11 @@ an exact lab-host confirmation and explicit state-loss acknowledgement. See
    enable writes, edit that firewall, review the warning, enable administrative
    actions, and save the profile.
 
+Administrative writes retain `Vaktpost:` in their description and attribute
+the pfSense Configuration History revision to the XML-RPC user, the source IP
+observed by pfSense, and the configured authentication provider. Vaktpost does
+not submit an audit username of its own or create a webConfigurator session.
+
 ## What it runs
 
 Every call is `pfsense.exec_php` with one snippet from
