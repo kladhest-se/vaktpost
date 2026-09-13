@@ -1519,7 +1519,6 @@ struct RuleDetailView: View {
     /// true, the spinner never appeared, and Save stayed tappable through the
     /// whole write. It returns a result now, and the sheet closes itself on
     /// success rather than the detail view dismissing out from under it.
-    @discardableResult
     /// Rethrows rather than swallowing into a `Bool`.
     ///
     /// This view is still covered by the edit sheet when a save fails — the
@@ -1737,7 +1736,6 @@ struct PortForwardDetailView: View {
         }
     }
 
-    @discardableResult
     /// Rethrows rather than swallowing into a `Bool`, for the same reason as
     /// the rule detail's `save(changes:)`.
     private func save(changes: PortForwardEditForm) async throws {

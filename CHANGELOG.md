@@ -1,5 +1,13 @@
 # Changelog
 
+## Clean build and test output
+
+Removed two obsolete `@discardableResult` annotations from async editor saves.
+The iPad plist now declares all four supported orientations, preserving iPad
+multitasking without the build warning. Alias-expansion tests now exercise the
+current `resolveAlias` and `expandedAlias` APIs instead of the removed
+`resolvedValue` helper, so `make test` compiles again.
+
 ## Filter separators can be added, edited, moved, and deleted
 
 The Firewall screen's plus action is now a menu with Rule and Separator.

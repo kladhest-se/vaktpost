@@ -441,9 +441,10 @@ final class AliasExpansionTests: XCTestCase {
 extension AliasExpansionTests {
 
     func testAnAddressBecomesItsMembers() {
-        // What the Firewall screen shows in place of the name.
+        // The resolver returns the concrete member while the Firewall list
+        // deliberately keeps pfSense's alias name visible.
         let s = store([alias("alias_host_pms001", "172.16.1.43")])
-        XCTAssertEqual(s.resolvedValue("alias_host_pms001"), "172.16.1.43")
+        XCTAssertEqual(s.resolveAlias("alias_host_pms001"), ["172.16.1.43"])
     }
 
     func testAPortAliasResolvesSeparately() {
@@ -451,16 +452,16 @@ extension AliasExpansionTests {
         // `host:port` never has to be split — which is what made IPv6
         // impossible to handle.
         let s = store([alias("alias_port_plex", "32400")])
-        XCTAssertEqual(s.resolvedValue("alias_port_plex"), "32400")
+        XCTAssertEqual(s.resolveAlias("alias_port_plex"), ["32400"])
     }
 
     func testALiteralValueIsLeftAlone() {
         let s = store([alias("a", "10.0.0.1")])
-        XCTAssertEqual(s.resolvedValue("any"), "any")
-        XCTAssertEqual(s.resolvedValue("wanip"), "wanip")
+        XCTAssertNil(s.resolveAlias("any"))
+        XCTAssertNil(s.resolveAlias("wanip"))
         // An IPv6 address survives intact, which it did not when fields were
         // split on ":" to separate a port.
-        XCTAssertEqual(s.resolvedValue("fe80::1"), "fe80::1")
+        XCTAssertNil(s.resolveAlias("fe80::1"))
     }
 
     func testALongListIsCappedInARuleRow() {
@@ -468,8 +469,8 @@ extension AliasExpansionTests {
         // the place for them.
         let members = (1...22).map { "10.\($0).0.0/16" }.joined(separator: " ")
         let s = store([alias("alias_url_cloudflare", members)])
-        let text = s.resolvedValue("alias_url_cloudflare")
-        XCTAssertTrue(text.hasSuffix("+19"))
+        let text = s.expandedAlias("alias_url_cloudflare", limit: 3) ?? ""
+        XCTAssertTrue(text.hasSuffix("+19 more"))
         XCTAssertEqual(text.components(separatedBy: ", ").count, 3)
     }
 
@@ -479,7 +480,7 @@ extension AliasExpansionTests {
             alias("a", "10.0.0.1"),
             alias("b", "10.0.0.2"),
         ])
-        XCTAssertEqual(s.resolvedValue("group"), "10.0.0.1, 10.0.0.2")
+        XCTAssertEqual(s.resolveAlias("group"), ["10.0.0.1", "10.0.0.2"])
     }
 }
 
