@@ -298,7 +298,13 @@ final class WriteCoordinator {
         case .deleteRule(let tracker, _), .deleteNatRule(let tracker, _):
             guard !tracker.isEmpty else { throw WriteCoordinatorError.invalidOperation("a stable tracker ID is required") }
         case .saveRule(let rule, _), .saveNatRule(let rule, _):
-            guard !(rule.string("tracker") ?? "").isEmpty else {
+            // A create has no tracker yet — the firewall assigns one, because
+            // it is the only place that can see the whole ruleset at the
+            // moment of writing. An edit without one would silently append a
+            // second copy instead of changing the rule, so the requirement
+            // stays everywhere else.
+            let isCreate = rule.bool("create") ?? false
+            guard isCreate || !(rule.string("tracker") ?? "").isEmpty else {
                 throw WriteCoordinatorError.invalidOperation("a stable tracker ID is required for an edit")
             }
         case .reloadFirewall, .flushStates:

@@ -16,6 +16,8 @@ struct FirewallView: View {
     @State private var cachedInterfaceOptions: [String] = []
 
     @State private var selection: String?
+    /// A new rule being drafted, if any. Nil closes the sheet.
+    @State private var newRule: RuleEditForm?
 
     var body: some View {
         MasterDetail(
@@ -130,6 +132,56 @@ struct FirewallView: View {
         // most people never open. Nothing called this, so the tab was empty.
         .task { await store.loadFirewallObjects() }
         .navigationTitle("Firewall")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                // Only on the rules pane, and only once an interface is
+                // chosen. A new rule has to land somewhere, and asking which
+                // interface inside the editor would be a question with fifteen
+                // answers in a sheet that is already long.
+                if pane == .rules, let interface = interfaceFilter {
+                    Button {
+                        newRule = RuleEditForm.blank(interface: interface)
+                    } label: {
+                        Label("New rule", systemImage: "plus")
+                    }
+                }
+            }
+        }
+        // `item:` rather than `isPresented:` — the form is the reason the
+        // sheet is open, so they cannot disagree about which rule is being
+        // drafted.
+        .sheet(item: $newRule) { form in
+            RuleEditSheet(form: form,
+                          interfaces: store.interfaces.map(\.internalName).compactMap { $0 },
+                          aliases: Set(store.aliases.map(\.name)),
+                          ruleset: store.rules,
+                          subject: form.apply(to: FirewallRule(JSONDict([
+                              "tracker": .string(""),
+                              "interface": .string(form.interface)
+                          ]))),
+                          onSave: { saved in await createRule(saved) })
+        }
+    }
+
+    /// Write a new rule and refresh.
+    ///
+    /// Goes through the same coordinator as an edit — rate limit, audit,
+    /// read-back — because a create is a write like any other. The only
+    /// difference is that the firewall assigns the tracker.
+    private func createRule(_ form: RuleEditForm) async -> Bool {
+        let dict = form.toDict(tracker: "", interface: form.interface)
+        do {
+            _ = try await store.writeCoordinator.execute(
+                .saveRule(
+                    rule: dict,
+                    displayName: form.descr.isEmpty ? "new rule on \(form.interface)" : form.descr
+                )
+            )
+            await store.refreshManually()
+            return true
+        } catch {
+            return false
+        }
     }
 
     // MARK: Rules
@@ -436,6 +488,8 @@ struct RuleDetailView: View {
 
     @State private var showDeleteConfirm = false
     @State private var showEditSheet = false
+    /// The form the sheet opens with — an edit of this rule, or a copy of it.
+    @State private var editorForm: RuleEditForm?
     @State private var isSaving = false
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
@@ -504,6 +558,7 @@ struct RuleDetailView: View {
                 if !isSaving {
                     VStack(spacing: 8) {
                         Button {
+                            editorForm = RuleEditForm(from: rule)
                             showEditSheet = true
                         } label: {
                             Label("Edit Rule", systemImage: "pencil")
@@ -539,6 +594,18 @@ struct RuleDetailView: View {
         .navigationTitle(rule.descr.isEmpty ? "Rule" : rule.descr)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                // Duplicate rather than "new rule like this": the copy opens
+                // in the editor and is not written until it is reviewed, so
+                // this is a starting point rather than an action.
+                Button {
+                    editorForm = RuleEditForm.duplicating(rule)
+                    showEditSheet = true
+                } label: {
+                    Label("Duplicate", systemImage: "plus.square.on.square")
+                }
+                .disabled(isSaving)
+            }
             ToolbarItem(placement: .confirmationAction) {
                 if isSaving {
                     ProgressView()
@@ -565,9 +632,11 @@ struct RuleDetailView: View {
         // already held. There was never anything to load; the spinner was the
         // whole delay, and on a fast tap it was what you got.
         .sheet(isPresented: $showEditSheet) {
-            RuleEditSheet(form: RuleEditForm(from: rule),
+            RuleEditSheet(form: editorForm ?? RuleEditForm(from: rule),
                           interfaces: store.interfaces.map(\.internalName).compactMap { $0 },
                           aliases: Set(store.aliases.map(\.name)),
+                          ruleset: store.rules,
+                          subject: rule,
                           onSave: { saved in await save(changes: saved) })
         }
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
@@ -852,7 +921,12 @@ struct PortForwardDetailView: View {
 }
 
 /// Editable representation of a firewall rule.
-struct RuleEditForm: Equatable {
+struct RuleEditForm: Equatable, Identifiable {
+    /// Identity for `sheet(item:)`. A draft is one thing at a time, and the
+    /// interface it is being written for is what distinguishes one draft from
+    /// the next.
+    var id: String { "\(isCreating ? "new" : "edit")-\(interface)-\(descr)" }
+
     var descr: String
     var type: String
     var proto: String
@@ -863,6 +937,14 @@ struct RuleEditForm: Equatable {
     var destinationPort: String
     var disabled: Bool
     var logged: Bool
+    /// True when this will add a rule rather than change one.
+    ///
+    /// Carried in the payload so the firewall knows not to match, and so it
+    /// assigns the tracker itself. The app cannot pick one safely: it would be
+    /// choosing against a ruleset fetched some seconds ago, and a collision
+    /// does not append — it replaces whatever already had that tracker.
+    var isCreating = false
+
     /// inet / inet6 / inet46, carried through rather than derived.
     ///
     /// `toDict` used to compute this from `proto`, comparing a transport
@@ -871,6 +953,42 @@ struct RuleEditForm: Equatable {
     /// an IPv6 rule silently dropped its address family. The value is the
     /// rule's own and is kept as one.
     var addressFamily: String
+
+    /// A new rule on an interface, with the defaults somebody would type.
+    ///
+    /// Disabled to start with. A rule that appears at the bottom of a ruleset
+    /// the moment it is saved, already active, is not what anybody wants from
+    /// a first draft on a phone — and the one thing that cannot be undone from
+    /// here is traffic that got through while it was being written.
+    static func blank(interface: String) -> RuleEditForm {
+        var form = RuleEditForm(from: FirewallRule(JSONDict([
+            "tracker": .string(""),
+            "interface": .string(interface),
+            "type": .string("pass"),
+            "ipprotocol": .string("inet"),
+            "protocol": .string("any"),
+            "disabled": .bool(true),
+            "descr": .string(""),
+            "source": .object(["address": .string("any")]),
+            "destination": .object(["address": .string("any")])
+        ])))
+        form.isCreating = true
+        return form
+    }
+
+    /// A copy of an existing rule, ready to be saved as another one.
+    ///
+    /// The description is marked rather than left identical. Two rules with
+    /// the same description in a list of ninety-eight is how somebody edits
+    /// the wrong one later.
+    static func duplicating(_ rule: FirewallRule) -> RuleEditForm {
+        var form = RuleEditForm(from: rule)
+        form.isCreating = true
+        form.descr = rule.descr.isEmpty ? "Copy" : "\(rule.descr) (copy)"
+        // A copy starts disabled for the same reason a new rule does.
+        form.disabled = true
+        return form
+    }
 
     init(from rule: FirewallRule) {
         descr = rule.descr
@@ -905,7 +1023,10 @@ struct RuleEditForm: Equatable {
 
     func toDict(tracker: String, interface: String) -> JSONDict {
         var dict: [String: JSONValue] = [
-            "tracker": .string(tracker),
+            // Empty when creating: the firewall assigns it, and sending a
+            // stale one would match an existing rule and replace it.
+            "tracker": .string(isCreating ? "" : tracker),
+            "create": .bool(isCreating),
             "interface": .string(interface),
             "type": .string(type),
             "protocol": .string(proto.isEmpty ? "any" : proto),
@@ -948,6 +1069,12 @@ struct RuleEditSheet: View {
     /// Alias names this firewall has, so a field naming one that does not
     /// exist is caught here rather than by pfSense refusing to load the rule.
     let aliases: Set<String>
+    /// The ruleset this rule lives in, for working out where it sits and what
+    /// above it already catches the same traffic.
+    let ruleset: [FirewallRule]
+    /// The rule as the firewall currently has it, which is what gets placed —
+    /// the edited copy is not in the ruleset yet.
+    let subject: FirewallRule
     let onSave: (RuleEditForm) async -> Bool
 
     @State private var edited: RuleEditForm
@@ -955,9 +1082,12 @@ struct RuleEditSheet: View {
     @State private var showSaveConfirmation = false
 
     init(form: RuleEditForm, interfaces: [String], aliases: Set<String>,
+         ruleset: [FirewallRule], subject: FirewallRule,
          onSave: @escaping (RuleEditForm) async -> Bool) {
         self.interfaces = interfaces
         self.aliases = aliases
+        self.ruleset = ruleset
+        self.subject = subject
         self.onSave = onSave
         self.original = form
         _edited = State(initialValue: form)
@@ -965,6 +1095,16 @@ struct RuleEditSheet: View {
 
     private var problems: [FieldValidator.Problem] {
         FieldValidator.problems(inRule: edited, aliases: aliases)
+    }
+
+    /// Where this rule sits, computed against the rule as edited.
+    ///
+    /// Against the edited form rather than the stored rule: changing the
+    /// interface or widening the source moves it and changes what precedes it,
+    /// and a placement describing where it *used* to sit would be worse than
+    /// none.
+    private var placement: RulePlacement.Placement {
+        RulePlacement.analyse(edited.apply(to: subject), in: ruleset)
     }
 
     /// What the rule looked like when the sheet opened.
@@ -1025,13 +1165,14 @@ struct RuleEditSheet: View {
                         }
                     }
 
+                    PlacementCard(placement: placement, action: edited.type)
                     ProblemList(problems: problems)
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 28)
             }
             .background(theme.bg.ignoresSafeArea())
-            .navigationTitle("Edit rule")
+            .navigationTitle(edited.isCreating ? "New rule" : "Edit rule")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1060,7 +1201,7 @@ struct RuleEditSheet: View {
             .interactiveDismissDisabled(isSaving)
             .confirmationSheet(
                 isPresented: $showSaveConfirmation,
-                title: "Review rule changes",
+                title: edited.isCreating ? "Review new rule" : "Review rule changes",
                 message: changePreview,
                 destructive: false,
                 destructiveLabel: "Save rule",
@@ -1072,6 +1213,24 @@ struct RuleEditSheet: View {
     }
 
     private var changePreview: String {
+        if edited.isCreating {
+            // No diff. Every field is "new", and listing them all as changes
+            // would bury the two things that matter: where it lands and what
+            // above it already catches the traffic.
+            var text = "A new rule will be added to \(edited.interface):\n\n"
+            text += "• \(edited.type) \(edited.proto.isEmpty ? "any" : edited.proto)"
+            text += " from \(edited.sourceAddress.isEmpty ? "any" : edited.sourceAddress)"
+            text += " to \(edited.destinationAddress.isEmpty ? "any" : edited.destinationAddress)"
+            if !edited.destinationPort.isEmpty { text += " port \(edited.destinationPort)" }
+            text += "\n• \(edited.disabled ? "Disabled" : "Enabled") on creation"
+            let place = placement
+            text += "\n\nAppended as rule \(place.total) of \(place.total)."
+            for finding in place.findings {
+                text += "\n\n\(finding.headline): \(finding.detail(action: edited.type))"
+            }
+            return text
+        }
+
         var changes: [String] = []
         Self.describe("Action", original.type, edited.type, into: &changes)
         Self.describe("Interface", original.interface, edited.interface, into: &changes)
@@ -1084,7 +1243,23 @@ struct RuleEditSheet: View {
         Self.describe("Description", original.descr, edited.descr, into: &changes)
         if original.disabled != edited.disabled { changes.append("Disabled: \(original.disabled ? "yes" : "no") → \(edited.disabled ? "yes" : "no")") }
         if original.logged != edited.logged { changes.append("Logging: \(original.logged ? "on" : "off") → \(edited.logged ? "on" : "off")") }
-        return "The coordinator will apply and read back:\n\n" + changes.map { "• \($0)" }.joined(separator: "\n")
+
+        var text = "The coordinator will apply and read back:\n\n"
+            + changes.map { "• \($0)" }.joined(separator: "\n")
+
+        // Position belongs here as much as in the editor. A rule is only as
+        // good as where it sits, and this sheet is the last thing read before
+        // a firewall changes.
+        let place = placement
+        if let position = place.position {
+            text += "\n\nPosition \(position) of \(place.total) on \(edited.interface)."
+        } else {
+            text += "\n\nAppended as rule \(place.total) of \(place.total) on \(edited.interface)."
+        }
+        for finding in place.findings {
+            text += "\n\n\(finding.headline): \(finding.detail(action: edited.type))"
+        }
+        return text
     }
 
     private static func describe(_ label: String, _ before: String, _ after: String,
@@ -1148,6 +1323,65 @@ struct PortForwardEditForm: Equatable {
             dict["local_port"] = .string(localPort)
         }
         return JSONDict(dict)
+    }
+}
+
+/// Where this rule sits, and what above it already catches its traffic.
+///
+/// Shown in the editor rather than only in the confirmation, because position
+/// changes what somebody writes — a rule that will never be reached is one to
+/// reconsider, not one to review at the last moment and save anyway.
+struct PlacementCard: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+
+    let placement: RulePlacement.Placement
+    let action: String
+
+    var body: some View {
+        Slab(rail: placement.findings.isEmpty ? .info : .warn,
+             title: "Placement",
+             trailing: positionText) {
+            VStack(alignment: .leading, spacing: 8) {
+                if placement.isNew {
+                    Text("This will be appended to the end of the interface's rules, which is where new rules land and rarely where they are wanted.")
+                        .scaledFont(12)
+                        .foregroundStyle(theme.labelMuted)
+                }
+
+                if placement.findings.isEmpty {
+                    Text("Nothing above it on this interface matches the same traffic.")
+                        .scaledFont(12)
+                        .foregroundStyle(theme.labelFaint)
+                } else {
+                    ForEach(placement.findings) { finding in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(finding.headline)
+                                .scaledFont(12, weight: .semibold)
+                                .foregroundStyle(theme.warn)
+                            Text(finding.detail(action: action))
+                                .scaledFont(11)
+                                .foregroundStyle(theme.labelMuted)
+                            if !finding.other.descr.isEmpty {
+                                Text(finding.other.descr)
+                                    .scaledFont(10, design: .monospaced)
+                                    .foregroundStyle(theme.labelFaint)
+                            }
+                        }
+                    }
+
+                    // The limit, said where the claim is made. This compares
+                    // literal values; it does no subnet arithmetic and does not
+                    // resolve aliases, so silence here is not proof.
+                    Text("Only exact matches and \"any\" are compared. A wider network or an alias above this rule may still catch it.")
+                        .scaledFont(10)
+                        .foregroundStyle(theme.labelFaint)
+                }
+            }
+        }
+    }
+
+    private var positionText: String {
+        placement.isNew ? "new" : "\(placement.position ?? 0) of \(placement.total)"
     }
 }
 

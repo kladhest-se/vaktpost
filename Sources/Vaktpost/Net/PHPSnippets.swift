@@ -2858,12 +2858,35 @@ struct PHPSnippet: Sendable {
         \(decodePayload)
 
         $tracker = strval($vaktpost_input["tracker"] ?? "");
+        $vaktpost_create = ($vaktpost_input["create"] ?? false) ? true : false;
         $section = $config["filter"];
         $rules = (is_array($section) && is_iterable($section["rule"])) ? $section["rule"] : [];
         $found = false;
         $vaktpost_index = null;
         $rule = [];
-        if ($tracker !== "") {
+
+        // Creating means never matching.
+        //
+        // The tracker is generated here rather than by the app, for the same
+        // reason quick-block generates its own: the firewall is the only place
+        // that can see the whole ruleset at the moment of writing. A tracker
+        // picked on the phone against a list fetched thirty seconds ago can
+        // collide with one added since — and a collision here does not append,
+        // it silently replaces the rule that already had that tracker.
+        if ($vaktpost_create) {
+          $tracker = strval(time());
+          $vaktpost_collision = true;
+          while ($vaktpost_collision) {
+            $vaktpost_collision = false;
+            foreach ($rules as $vaktpost_existing) {
+              if (is_array($vaktpost_existing) && strval($vaktpost_existing["tracker"] ?? "") === $tracker) {
+                $tracker = strval(intval($tracker) + 1);
+                $vaktpost_collision = true;
+                break;
+              }
+            }
+          }
+        } elseif ($tracker !== "") {
           foreach ($rules as $idx => $r) {
             if (is_array($r) && ($r["tracker"] ?? "") === $tracker) {
               $rule = $r;
@@ -2882,9 +2905,9 @@ struct PHPSnippet: Sendable {
         $rule["disabled"] = ($vaktpost_input["disabled"] ?? false) ? true : false;
         $rule["log"] = ($vaktpost_input["log"] ?? false) ? true : false;
         if (!$found) {
-          // A caller outside the editor may deliberately create a fixture.
-          // Keep the supplied stable identity so it can be read back and
-          // removed; an untracked append cannot be cleaned up safely.
+          // An append keeps a stable identity so it can be read back, edited
+          // and removed. An untracked rule cannot be found again by any of the
+          // operations that work by tracker.
           $rule["tracker"] = $tracker;
         }
 
@@ -2918,6 +2941,7 @@ struct PHPSnippet: Sendable {
         write_filter();
         $toreturn["status"] = "ok";
         $toreturn["created"] = !$found;
+        $toreturn["tracker"] = $tracker;
         """)
     }
 
@@ -2967,9 +2991,14 @@ struct PHPSnippet: Sendable {
         // this had dropped it.
         $vaktpost_dstport = strval($vaktpost_input["destination_port"] ?? "");
 
+        $vaktpost_create = ($vaktpost_input["create"] ?? false) ? true : false;
         $found = false;
         $rule = [];
-        foreach ($rules as $idx => $r) {
+        // Creating means never matching. A duplicate of an existing forward is
+        // identical to it in every field the fallback compares — interface,
+        // destination, port and target — so without this a "duplicate" would
+        // match its own original and replace it.
+        foreach (($vaktpost_create ? [] : $rules) as $idx => $r) {
           if (!is_array($r)) { continue; }
           $vaktpost_match = false;
           if ($tracker !== "" && ($r["tracker"] ?? "") === $tracker) {

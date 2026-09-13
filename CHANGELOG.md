@@ -1,5 +1,89 @@
 # Changelog
 
+## Creating and duplicating rules
+
+- **New rule** on the Firewall screen, once an interface is selected. It has to
+  land somewhere, and asking which interface inside the editor would be a
+  question with fifteen answers in a sheet that is already long.
+- **Duplicate** on a rule's detail, which opens a copy in the editor rather
+  than writing one. It is a starting point, not an action.
+- **The firewall assigns the tracker, not the app.** A tracker chosen on the
+  phone is chosen against a ruleset fetched some seconds ago, and a collision
+  does not append — the save matches it and replaces whatever already held it.
+  The snippet generates one with the same collision loop quick-block already
+  used, and returns it so the app knows what was made.
+- A create sends `create: true` and an empty tracker. For port forwards that
+  flag also skips matching entirely: a duplicate is identical to its original
+  in every field the NAT fallback compares — interface, destination, port,
+  target — so without it, "duplicate" would have matched its own original and
+  replaced it. Which is to say: duplicate would have deleted what it copied.
+- `WriteCoordinator` still requires a tracker for every save that is not a
+  create. An edit without one appends a second copy instead of changing the
+  rule, so the requirement stays everywhere else.
+- **New and duplicated rules start disabled.** The one thing that cannot be
+  undone from a phone is traffic that got through while a rule was being
+  written.
+- A duplicate's description is marked `(copy)`. Two identical descriptions in a
+  list of ninety-eight is how somebody edits the wrong one later.
+- The confirmation for a create describes the rule and where it lands rather
+  than listing every field as a change, since against nothing every field is
+  one.
+- Creates go through the same coordinator as edits: rate limit, audit,
+  read-back. A create is a write like any other.
+
+### A gate that checked the wrong thing
+
+`write-coordinator` asserted the editors showed a preview by counting the
+literal `title: "Review ` twice. That passes for a sheet titled "Review" that
+shows nothing, and fails the moment a title becomes conditional — which is what
+distinguishing a create from an edit needs. It now counts
+`message: changePreview`, which is the preview itself.
+
+## Rule placement, and the conflict detector it replaces
+
+The editor could tell you what a rule would say and not where it would sit.
+Rules are order-dependent and pfSense evaluates filter rules `quick`, so the
+first match decides — which makes "what is above it" the whole question.
+
+The editor now shows the rule's position among its own interface's rules, and
+what precedes it that would catch the same traffic first. The confirmation
+sheet repeats it, because that is the last thing read before a firewall
+changes.
+
+### `RuleConflictDetector` is gone
+
+It was referenced by nothing, and could not have been trusted if it had been.
+
+- It asked `isShadowedBy(rules[i], rules[j])` with `i < j` — whether the
+  *earlier* rule was shadowed by the *later* one. Shadowing runs the other way,
+  so every finding it produced named the wrong rule.
+- It never compared interfaces. On a firewall with fifteen of them, every pair
+  of `any → any` rules on unrelated interfaces reads as contradictory.
+- It ignored `disabled`. A rule that is not evaluated cannot shadow anything.
+
+`RulePlacement` answers one question about one rule instead: what precedes it
+on its own interface that would match the same traffic. It reports three
+things — never reached, already handled the other way, and identical to an
+earlier rule — and nothing else.
+
+### It refuses to guess, on purpose
+
+It compares literal values and `any`. It does no subnet arithmetic and does not
+resolve aliases, so a `/24` above a host inside it is **not** reported, and the
+card says so rather than letting silence read as proof.
+
+A warning shown immediately before a write is read by somebody about to change
+a firewall, and one false alarm there teaches them to dismiss the next one.
+Silence costs a missed hint; a wrong warning costs the warning system.
+
+Position is counted within the interface, not the whole ruleset — "rule 40 of
+98" across fifteen interfaces is a number about nothing. A rule not yet in the
+ruleset reads as new and appended, which is where new rules land and rarely
+where they are wanted.
+
+Sixteen tests, most of them asserting that nothing is reported. The three
+faults above are the first three.
+
 ## Lost-response safety and disposable compatibility matrix
 
 - Fixed a critical transport regression: all eight administrative operations
