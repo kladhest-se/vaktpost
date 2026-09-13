@@ -1,5 +1,57 @@
 # Changelog
 
+## Found it: pfSense stores some rules' interface as an array, not a string
+
+The error read: currently on opt5, nothing. That single line settled it. The
+firewall itself confirmed zero rules and zero separators exist on opt5 at
+all — so the two rules shown as OPENVPN1 in this app genuinely do not have
+`interface === "opt5"` as a plain string, on the live config, full stop.
+
+`FirewallRule.interfaceName` already knew this could happen — its very first
+line tries reading `interface` as a list before falling back to a plain
+string, specifically because some rules store it as an array. For a rule on
+exactly one interface, that array has one element, and joining a one-element
+array with commas produces that element back with no comma at all — so the
+app's own display, and `isFloating`'s comma-count check, could never tell
+the difference between a genuine single-interface rule and this array-backed
+one. Only the *display* path knew about it.
+
+Five PHP comparison sites across two snippets never did. Each did a bare
+`strval($rule["interface"] ?? "")` — and PHP's `strval()` on an array
+produces the literal string `"Array"`, silently, with the warning suppressed
+by this project's own `display_errors` setting. `"Array"` never equals
+`"opt5"`. Every one of those five comparisons is now fixed to do what
+`FirewallRule.interfaceName` already does: check for an array first, join it
+the same way, then compare.
+
+- **`reorderFilterRules`**, three sites: which rules belong to the interface
+  at all (this is the one that was actually failing), the diagnostic lookup
+  that reports where a rule really is, and — most important of the three —
+  the reassembly step that decides which array slots to overwrite. That last
+  one mattered even for a rule that *would* have passed a fixed validation:
+  without fixing the reassembly too, a correctly-recognised rule could still
+  have been silently skipped when the new order was actually written.
+- **`saveRule`**, two sites, found by pattern rather than by a new report:
+  the "before" placement anchor check, and the "keep is interface-local"
+  check run on every ordinary edit. The second one means an entirely
+  unrelated, everyday edit — descriptionchange, disable toggle, anything — of
+  a rule whose interface happens to be array-backed would have been rejected
+  outright with "the selected rule position is no longer available," with
+  no connection visible between that message and its real cause.
+
+Both fixes are covered by new `write-contract` cases run against the real
+PHP interpreter, not only traced by hand: a reorder that includes a
+one-element-array-interface rule now completes and repositions it correctly,
+and an ordinary edit of such a rule with "keep" placement now succeeds
+instead of being rejected.
+
+A `save_nat_rule` legacy-identity comparison has the identical shape and was
+not touched this round — NAT rules are far less likely to carry this
+representation, given they lack the floating-rule multi-interface concept
+that seems to be why pfSense reaches for an array at all, and fixing it
+without a live case pointing at it risks changing behaviour nobody has
+actually hit. Worth the same fix if a report ever does trace back to it.
+
 ## The mismatch error now shows both sides of the disagreement
 
 The alert fix worked — the real error finally surfaced, and it is genuinely

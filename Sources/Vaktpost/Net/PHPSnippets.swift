@@ -3007,14 +3007,33 @@ struct PHPSnippet: Sendable {
           $vaktpost_rules = (is_array($vaktpost_section) && is_iterable($vaktpost_section["rule"])) ? $vaktpost_section["rule"] : [];
 
           // The reorderable subset: this interface's own rules, never a
-          // floating rule. A floating rule's interface field is a
-          // comma-joined list, so an exact-match comparison already excludes
-          // it without a special case.
+          // floating rule. A genuinely floating rule's interface normalises
+          // to a comma-joined list of two or more names, which a single
+          // interface name can never exactly equal — still true after the
+          // normalisation just below, so no separate exclusion is needed for
+          // it. What that normalisation is actually for is different: a rule
+          // scoped to exactly one interface can still have its `interface`
+          // field stored as a one-element array rather than a bare string —
+          // confirmed on a live firewall, not assumed — and joining a single
+          // element produces that same element back with no comma at all,
+          // so it reads identically to a bare string once normalised and was
+          // silently excluded from every match before this did.
           $vaktpost_by_tracker = [];
           $vaktpost_original_trackers = [];
           foreach ($vaktpost_rules as $vaktpost_r) {
             if (!is_array($vaktpost_r)) { continue; }
-            if (strval($vaktpost_r["interface"] ?? "") !== $vaktpost_interface) { continue; }
+            // pfSense stores a rule's interface as a plain string for most
+            // rules, but as an array for some — confirmed against a live
+            // firewall, not assumed: two genuinely single-interface rules
+            // read back with `interface` as a one-element array. Read
+            // correctly here, `FirewallRule.interfaceName` on the Swift side
+            // already joins an array the same way, which is why the display
+            // and this comparison now agree instead of one silently seeing
+            // "opt5" and the other silently seeing the literal string "Array"
+            // that PHP produces when a plain strval() meets an array.
+            $vaktpost_r_iface = $vaktpost_r["interface"] ?? "";
+            $vaktpost_r_iface = is_array($vaktpost_r_iface) ? implode(",", $vaktpost_r_iface) : strval($vaktpost_r_iface);
+            if ($vaktpost_r_iface !== $vaktpost_interface) { continue; }
             $vaktpost_t = strval($vaktpost_r["tracker"] ?? "");
             if ($vaktpost_t === "") { continue; }
             $vaktpost_by_tracker[$vaktpost_t] = $vaktpost_r;
@@ -3092,7 +3111,9 @@ struct PHPSnippet: Sendable {
                   foreach ($vaktpost_rules as $vaktpost_any_rule) {
                     if (is_array($vaktpost_any_rule)
                         && strval($vaktpost_any_rule["tracker"] ?? "") === $vaktpost_extra_tracker) {
-                      $vaktpost_found_elsewhere = strval($vaktpost_any_rule["interface"] ?? "(no interface field)");
+                      $vaktpost_any_iface = $vaktpost_any_rule["interface"] ?? "(no interface field)";
+                      $vaktpost_found_elsewhere = is_array($vaktpost_any_iface)
+                        ? implode(",", $vaktpost_any_iface) : strval($vaktpost_any_iface);
                       break;
                     }
                   }
@@ -3171,7 +3192,10 @@ struct PHPSnippet: Sendable {
             $vaktpost_cursor = 0;
             $vaktpost_reassembled = [];
             foreach ($vaktpost_rules as $vaktpost_r) {
-              if (is_array($vaktpost_r) && strval($vaktpost_r["interface"] ?? "") === $vaktpost_interface) {
+              $vaktpost_reassemble_iface = $vaktpost_r["interface"] ?? "";
+              $vaktpost_reassemble_iface = is_array($vaktpost_reassemble_iface)
+                ? implode(",", $vaktpost_reassemble_iface) : strval($vaktpost_reassemble_iface);
+              if (is_array($vaktpost_r) && $vaktpost_reassemble_iface === $vaktpost_interface) {
                 $vaktpost_reassembled[] = $vaktpost_new_subset[$vaktpost_cursor];
                 $vaktpost_cursor = $vaktpost_cursor + 1;
               } else {
@@ -3306,9 +3330,19 @@ struct PHPSnippet: Sendable {
           if ($vaktpost_position_valid) {
             $vaktpost_anchor_found = false;
             foreach ($rules as $vaktpost_existing) {
-              if (is_array($vaktpost_existing)
-                  && strval($vaktpost_existing["tracker"] ?? "") === $vaktpost_before
-                  && strval($vaktpost_existing["interface"] ?? "") === $vaktpost_interface) {
+              if (!is_array($vaktpost_existing)
+                  || strval($vaktpost_existing["tracker"] ?? "") !== $vaktpost_before) { continue; }
+              // Same normalisation as the reorder snippet, and for the same
+              // confirmed reason: pfSense stores some rules' `interface` as a
+              // one-element array rather than a bare string, and a plain
+              // strval() on an array silently produces the literal string
+              // "Array" — which then never matches a real interface name, so
+              // a perfectly valid anchor on such a rule was rejected as if it
+              // belonged to a different interface entirely.
+              $vaktpost_anchor_iface = $vaktpost_existing["interface"] ?? "";
+              $vaktpost_anchor_iface = is_array($vaktpost_anchor_iface)
+                ? implode(",", $vaktpost_anchor_iface) : strval($vaktpost_anchor_iface);
+              if ($vaktpost_anchor_iface === $vaktpost_interface) {
                 $vaktpost_anchor_found = true;
                 break;
               }
@@ -3316,11 +3350,18 @@ struct PHPSnippet: Sendable {
             $vaktpost_position_valid = $vaktpost_anchor_found;
           }
         }
-        if ($found && $vaktpost_placement === "keep"
-            && strval($rule["interface"] ?? "") !== $vaktpost_interface) {
+        if ($found && $vaktpost_placement === "keep") {
           // "Keep" is an interface-local promise. Once the interface changes
-          // there is no current position there to preserve.
-          $vaktpost_position_valid = false;
+          // there is no current position there to preserve. Normalised the
+          // same way as the anchor check just above, for the identical
+          // reason: the rule being edited may itself be one whose interface
+          // is stored as a one-element array.
+          $vaktpost_keep_iface = $rule["interface"] ?? "";
+          $vaktpost_keep_iface = is_array($vaktpost_keep_iface)
+            ? implode(",", $vaktpost_keep_iface) : strval($vaktpost_keep_iface);
+          if ($vaktpost_keep_iface !== $vaktpost_interface) {
+            $vaktpost_position_valid = false;
+          }
         }
 
         // Rebuild each side from one explicit native shape. `any`, a pfSense
