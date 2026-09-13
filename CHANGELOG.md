@@ -1,5 +1,35 @@
 # Changelog
 
+## Ruleset reloads now call pfSense's actual filter API
+
+The live `probes/7-write-filter-existence.php` result settled the second
+failure exposed by the `$config` scope fix: `/etc/inc/filter.inc` loaded
+successfully, but `write_filter()` did not exist. This was not caused by the
+length of the reorder snippet or by loading `util.inc` first. The app was
+calling the wrong function.
+
+All seven call sites now use `filter_configure_sync()`: the standalone reload,
+Quick Block, rule delete, rule reorder, port-forward delete, rule save and
+port-forward save paths. That is the function declared by pfSense's
+`filter.inc`, and it is the same synchronous reload used by pfSense's bundled
+`enableallowallwan` PHP shell playback immediately after `write_config()`.
+Keeping the reload synchronous is intentional: an administrative operation
+must not report success merely because a reload event was queued.
+
+The snippet function allowlist, write-boundary audit and executable PHP
+contract fixture now name the real function too. This matters beyond making
+the tests pass: the old fixture supplied its own fake `write_filter()` to every
+write snippet, so it accidentally hid the exact production incompatibility it
+was supposed to catch.
+
+The same follow-up audit found that Quick Block still lacked `global $config;`.
+It was not among the five rule and NAT writes fixed by the live A/B test, but it
+reads and updates the same global configuration and therefore shared the same
+failure condition. It now declares the global too. The write-boundary suite
+also requires that declaration in every snippet which references `$config`, so
+the local test harness no longer has to reproduce pfSense's unexplained eval
+scope behaviour to catch this class of mistake.
+
 ## The actual cause, found by a live A/B test rather than reasoning about scope
 
 `reorderFilterRules` never declared `global $config;` anywhere in its body.

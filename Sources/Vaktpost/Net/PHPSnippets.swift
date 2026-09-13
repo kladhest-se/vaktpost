@@ -13,7 +13,8 @@ import Foundation
 ///      value at runtime — a snippet assembled from input is not a snippet
 ///      anybody reviewed.
 ///   2. A snippet may write **only** if its name appears in `writeOperations`
-///      below, and then only through `write_config` and `write_filter`.
+///      below, and then only through `write_config` and
+///      `filter_configure_sync`.
 ///      Everything else that can change a box — `mwexec`, `exec(`,
 ///      `shell_exec`, `system(`, `passthru`, `popen`, `proc_open`, `unlink`,
 ///      `file_put_contents`, `rename`, `mkdir`, `rmdir`, `chmod`, `chown`,
@@ -53,7 +54,7 @@ struct PHPSnippet: Sendable {
     /// Adding an entry is the moment to ask whether the operation belongs in
     /// an app that people point at production firewalls from a phone.
     static let writeOperations: Set<String> = [
-        "reload_firewall",      // write_filter() — reloads the ruleset in place
+        "reload_firewall",      // filter_configure_sync() — reloads the ruleset in place
         "quick_block",          // adds a block rule for one address
         "delete_rule",          // removes one filter rule by tracker
         "delete_nat_rule",      // removes one NAT rule by tracker
@@ -249,7 +250,7 @@ struct PHPSnippet: Sendable {
         //
         // Listed once. They were here twice, from two separate edits, which is
         // how an allowlist stops being something anybody reads.
-        "write_config", "write_filter", "pfctl_clear_states", "pfctl_clear_states_by_if",
+        "write_config", "filter_configure_sync", "pfctl_clear_states", "pfctl_clear_states_by_if",
         "restart_service",
     ]
 
@@ -2787,11 +2788,11 @@ struct PHPSnippet: Sendable {
 
     /// Reloads the firewall ruleset without restarting services.
     ///
-    /// Calls `write_filter()` which reloads the pf ruleset in place.
+    /// Calls `filter_configure_sync()` which reloads the pf ruleset in place.
     static let reloadFirewall = PHPSnippet("reload_firewall", """
     ini_set('display_errors', 0);
     require_once '/etc/inc/filter.inc';
-    write_filter();
+    filter_configure_sync();
     $toreturn = ["status" => "ok"];
     """)
 
@@ -2832,6 +2833,7 @@ struct PHPSnippet: Sendable {
         ini_set('display_errors', 0);
         require_once '/etc/inc/util.inc';
         require_once '/etc/inc/filter.inc';
+        global $config;
         $toreturn = [];
         $vaktpost_payload = "\(encoded)";
         \(decodePayload)
@@ -2883,7 +2885,7 @@ struct PHPSnippet: Sendable {
           $vaktpost_rules[] = $block_rule;
           $config['filter']['rule'] = array_values($vaktpost_rules);
           write_config("Vaktpost: quick-block rule added");
-          write_filter();
+          filter_configure_sync();
           $toreturn["status"] = "ok";
           $toreturn["rule"] = $block_rule;
         }
@@ -2947,7 +2949,7 @@ struct PHPSnippet: Sendable {
           // the same hole as everywhere else; the audit trail records which
           // rule went, which is where that belongs.
           write_config("Vaktpost: deleted a rule");
-          write_filter();
+          filter_configure_sync();
           $toreturn["status"] = "ok";
         } else {
           $toreturn["status"] = "not_found";
@@ -3011,8 +3013,9 @@ struct PHPSnippet: Sendable {
         // still failed live, identically to every prior attempt, while an
         // otherwise near-identical probe that explicitly declared this
         // succeeded at the same moment against the same $config. Every other
-        // working snippet in this file declares it; this one, and the other
-        // four administrative writes, silently did not.
+        // working snippet in this file declares it; this one and the four
+        // rule/NAT save or delete writes silently did not. A later audit found
+        // that Quick Block shared the same omission as well.
         global $config;
         $toreturn = [];
         $vaktpost_payload = "\(encoded)";
@@ -3288,7 +3291,7 @@ struct PHPSnippet: Sendable {
             // point of the payload is that no runtime string reaches PHP
             // source directly.
             write_config("Vaktpost: reordered rules on " . $vaktpost_interface);
-            write_filter();
+            filter_configure_sync();
             $toreturn["status"] = "ok";
             $toreturn["order"] = $vaktpost_submitted_rule_trackers;
           }
@@ -3326,7 +3329,7 @@ struct PHPSnippet: Sendable {
           // the same hole as everywhere else; the audit trail records which
           // rule went, which is where that belongs.
           write_config("Vaktpost: deleted a nat rule");
-          write_filter();
+          filter_configure_sync();
           $toreturn["status"] = "ok";
         } else {
           $toreturn["status"] = "not_found";
@@ -3612,7 +3615,7 @@ struct PHPSnippet: Sendable {
         }
         $config["filter"]["rule"] = array_values($rules);
         write_config("Vaktpost: saved a rule");
-        write_filter();
+        filter_configure_sync();
         $toreturn["status"] = "ok";
         $toreturn["created"] = $vaktpost_create;
         $toreturn["tracker"] = $tracker;
@@ -3933,7 +3936,7 @@ struct PHPSnippet: Sendable {
         }
         $config["nat"]["rule"] = array_values($rules);
         write_config("Vaktpost: saved a nat rule");
-        write_filter();
+        filter_configure_sync();
         $toreturn["status"] = "ok";
         $toreturn["created"] = $vaktpost_create;
         $toreturn["tracker"] = $tracker;

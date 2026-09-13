@@ -58,7 +58,7 @@ The write surface is exactly nine operations, named in
 
 | Operation | What it does |
 |---|---|
-| `reload_firewall` | `write_filter()` — reloads the ruleset in place |
+| `reload_firewall` | `filter_configure_sync()` — reloads the ruleset in place |
 | `quick_block` | adds a block rule for one address |
 | `delete_rule` | removes one filter rule by tracker |
 | `delete_nat_rule` | removes one NAT rule by tracker |
@@ -119,7 +119,7 @@ there:
   closed enum, a clamped integer, or a base64 payload, so every line of PHP
   that can reach a firewall is in the repository and has been reviewed.
 - A snippet may write **only** if its name is in `writeOperations`, and then
-  only through `write_config`, `write_filter`, `pfctl_clear_states`,
+  only through `write_config`, `filter_configure_sync`, `pfctl_clear_states`,
   `pfctl_clear_states_by_if` and `restart_service`. The check runs in both
   directions: a snippet that writes without being named fails, and a name whose
   snippet no longer writes fails too, so the list can neither grow quietly nor
