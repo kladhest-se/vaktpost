@@ -3827,6 +3827,13 @@ struct PHPSnippet: Sendable {
               $vaktpost_destination_kind = in_array($vaktpost_destination_address, ["any", "ANY"], true)
                 ? "any" : "address";
             }
+            // pfSense stores a NAT destination port inside the destination
+            // object (`destination/port`). Older Vaktpost builds wrote the
+            // filter-rule-style flat `destination_port` key, so retain that
+            // only as a migration fallback when identifying a row.
+            $vaktpost_destination_port = is_array($vaktpost_destination)
+              ? strval($vaktpost_destination["port"] ?? ($vaktpost_rule["destination_port"] ?? ""))
+              : strval($vaktpost_rule["destination_port"] ?? "");
 
             $vaktpost_matches = strval($vaktpost_item["tracker"] ?? "")
                 === strval($vaktpost_rule["tracker"] ?? "")
@@ -3834,7 +3841,7 @@ struct PHPSnippet: Sendable {
               && strval($vaktpost_item["destination_kind"] ?? "") === $vaktpost_destination_kind
               && strval($vaktpost_item["destination_address"] ?? "") === $vaktpost_destination_address
               && strval($vaktpost_item["destination_port"] ?? "")
-                === strval($vaktpost_rule["destination_port"] ?? "")
+                === $vaktpost_destination_port
               && strval($vaktpost_item["target"] ?? "")
                 === strval($vaktpost_rule["target"] ?? "")
               && strval($vaktpost_item["local_port"] ?? "")
@@ -4417,7 +4424,12 @@ struct PHPSnippet: Sendable {
                 $vaktpost_rdstaddr = strval($vaktpost_rdst["address"]);
               }
             }
-            $vaktpost_rdstport = strval($r["destination_port"] ?? "");
+            // Native pfSense NAT rules keep the public port in
+            // `destination/port`. Accept the old flat spelling only so an
+            // affected Vaktpost rule can be opened once and migrated.
+            $vaktpost_rdstport = is_array($vaktpost_rdst)
+              ? strval($vaktpost_rdst["port"] ?? ($r["destination_port"] ?? ""))
+              : strval($r["destination_port"] ?? "");
             if (strval($r["interface"] ?? "") === $vaktpost_orig_if
                 && $vaktpost_rdstaddr === $vaktpost_orig_dstaddr
                 && $vaktpost_rdstport === $vaktpost_orig_dstport
@@ -4579,10 +4591,14 @@ struct PHPSnippet: Sendable {
 
         $vaktpost_dport = trim(strval($vaktpost_input["destination_port"] ?? ""));
         if ($vaktpost_dport !== "") {
-          $rule["destination_port"] = $vaktpost_dport;
+          // Port forwards use pfSense's native nested destination port,
+          // unlike filter rules which use a flat destination_port field.
+          $rule["destination"]["port"] = $vaktpost_dport;
         } else {
-          unset($rule["destination_port"]);
+          unset($rule["destination"]["port"]);
         }
+        // Remove the non-native spelling written by earlier Vaktpost builds.
+        unset($rule["destination_port"]);
         $vaktpost_lport = trim(strval($vaktpost_input["local_port"] ?? ""));
         if ($vaktpost_lport !== "") {
           // `local-port` is pfSense's native Redirect target port key.

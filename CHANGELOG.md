@@ -1,5 +1,17 @@
 # Changelog
 
+## NAT reorder identity and separator colour edits are unblocked
+
+NAT drag validation now reads the public destination port from pfSense's
+native nested `destination/port` field instead of looking only for a flat
+filter-rule field. This removes the false “NAT rule changed” rejection for
+ordinary WebUI-created forwards. NAT forward saves now write that native shape
+and migrate the earlier Vaktpost spelling.
+
+Existing NAT separators no longer fail filter-only interface validation, so
+choosing a different colour enables Save. Filter separators continue to
+require their concrete interface.
+
 ## Separator editors preview their colours
 
 Filter and NAT separator editors now show four selectable colour squares

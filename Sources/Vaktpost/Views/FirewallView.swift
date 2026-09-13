@@ -1391,6 +1391,9 @@ struct SeparatorEditSheet: View {
     let positionLabels: [String]
     let firstPositionLabel: String
     let onSave: (SeparatorEditForm) async throws -> Void
+    /// Filter separators belong to one interface; NAT separators belong to
+    /// the global NAT table and legitimately have no interface value.
+    let requiresInterface: Bool
 
     @State private var edited: SeparatorEditForm
     @State private var isSaving = false
@@ -1402,6 +1405,7 @@ struct SeparatorEditSheet: View {
 
     init(form: SeparatorEditForm, rules: [FirewallRule],
          onSave: @escaping (SeparatorEditForm) async throws -> Void) {
+        requiresInterface = true
         firstPositionLabel = "Before the first rule"
         positionLabels = rules.enumerated().map { index, rule in
             let name = rule.descr.isEmpty ? "rule \(index + 1)" : rule.descr
@@ -1416,6 +1420,7 @@ struct SeparatorEditSheet: View {
 
     init(form: SeparatorEditForm, forwards: [PortForward],
          onSave: @escaping (SeparatorEditForm) async throws -> Void) {
+        requiresInterface = false
         firstPositionLabel = "Before the first port forward"
         positionLabels = forwards.enumerated().map { index, forward in
             let name = forward.descr.isEmpty ? "port forward \(index + 1)" : forward.descr
@@ -1431,7 +1436,7 @@ struct SeparatorEditSheet: View {
     private var isDirty: Bool { edited.isCreating || edited != original }
 
     private var isValid: Bool {
-        !edited.interface.isEmpty
+        (!requiresInterface || !edited.interface.isEmpty)
             && !edited.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && colors.map(\.rawValue).contains(edited.color)
             && (0...positionLabels.count).contains(edited.position)
