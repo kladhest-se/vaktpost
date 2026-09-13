@@ -95,6 +95,126 @@ struct EditChoice: View {
     }
 }
 
+/// A pfSense address selector which preserves how the value is represented in
+/// `config.xml`. System selectors are closed choices; only literal addresses,
+/// networks and user aliases use free text.
+struct EditAddress: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+
+    let label: String
+    @Binding var text: String
+    @Binding var storageKind: FilterAddress.StorageKind
+    let interfaces: [InterfaceStat]
+
+    private enum Choice: Hashable {
+        case any
+        case address
+        case network
+        case system(String)
+    }
+
+    private var interfaceKeys: [String] {
+        interfaces.compactMap(\.internalName)
+    }
+
+    private var knownSystemValues: Set<String> {
+        var values: Set<String> = ["self", "pptp", "pppoe", "l2tp"]
+        for key in interfaceKeys {
+            values.insert(key.lowercased())
+            values.insert("\(key.lowercased())ip")
+        }
+        return values
+    }
+
+    private var selectedChoice: Choice {
+        switch storageKind {
+        case .any:
+            return .any
+        case .network:
+            return .system(text)
+        case .address:
+            return text.contains("/") ? .network : .address
+        }
+    }
+
+    private var choice: Binding<Choice> {
+        Binding(
+            get: { selectedChoice },
+            set: { selected in
+                switch selected {
+                case .any:
+                    text = "any"
+                    storageKind = .any
+                case .address, .network:
+                    if selectedChoice != selected { text = "" }
+                    // Literal networks are stored as address/mask by pfSense;
+                    // `network` is reserved for its system selectors.
+                    storageKind = .address
+                case .system(let value):
+                    text = value
+                    storageKind = .network
+                }
+            }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.uppercased())
+                .scaledFont(9, weight: .semibold)
+                .foregroundStyle(theme.labelFaint)
+
+            Picker("", selection: choice) {
+                Text("Any").tag(Choice.any)
+                Text("Address or Alias").tag(Choice.address)
+                Text("Network").tag(Choice.network)
+                Text("This Firewall (self)").tag(Choice.system("self"))
+                Text("PPTP clients").tag(Choice.system("pptp"))
+                Text("PPPoE clients").tag(Choice.system("pppoe"))
+                Text("L2TP clients").tag(Choice.system("l2tp"))
+                ForEach(interfaces) { interface in
+                    if let key = interface.internalName {
+                        Text("\(interface.name) address").tag(Choice.system("\(key)ip"))
+                        Text("\(interface.name) subnets").tag(Choice.system(key))
+                    }
+                }
+                if storageKind == .network && !knownSystemValues.contains(text.lowercased()) {
+                    Text("Existing system selector: \(text)").tag(Choice.system(text))
+                }
+            }
+            .pickerStyle(.menu)
+            .tint(theme.accentColor)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 2)
+            .padding(.horizontal, 6)
+            .background(theme.cardRaised)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(theme.hairline, lineWidth: 1)
+            )
+
+            if selectedChoice == .address || selectedChoice == .network {
+                TextField(selectedChoice == .network ? "192.0.2.0/24" : "Address or alias",
+                          text: $text)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .scaledFont(14, design: .monospaced)
+                    .foregroundStyle(theme.label)
+                    .padding(.vertical, 9)
+                    .padding(.horizontal, 10)
+                    .background(theme.cardRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(theme.hairline, lineWidth: 1)
+                    )
+            }
+        }
+    }
+}
+
 /// A labelled switch in the app's own type and colour.
 struct EditToggle: View {
     @Environment(\.themeManager) private var theme: ThemeManager

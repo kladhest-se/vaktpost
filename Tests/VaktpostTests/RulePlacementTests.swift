@@ -225,6 +225,8 @@ final class RuleCreationTests: XCTestCase {
         XCTAssertEqual(dict.string("tracker"), "")
         XCTAssertEqual(dict.bool("create"), true)
         XCTAssertEqual(dict.string("placement"), "last")
+        XCTAssertEqual(dict.dict("source")?.bool("any"), true)
+        XCTAssertEqual(dict.dict("destination")?.bool("any"), true)
     }
 
     func testAnEditKeepsItsTrackerAndDoesNotAskToCreate() {
@@ -242,6 +244,20 @@ final class RuleCreationTests: XCTestCase {
 
         XCTAssertEqual(dict.string("placement"), "before")
         XCTAssertEqual(dict.string("before_tracker"), "anchor-2")
+    }
+
+    func testAnExistingSystemSelectorKeepsItsNativeNetworkShape() {
+        let raw = JSONDict([
+            "tracker": .string("2"), "interface": .string("wan"),
+            "type": .string("pass"), "protocol": .string("tcp"),
+            "source": .object(["any": .bool(true)]),
+            "destination": .object(["network": .string("wanip")])
+        ])
+        let dict = RuleEditForm(from: FirewallRule(raw)).toDict(tracker: "2", interface: "wan")
+
+        XCTAssertEqual(dict.dict("source")?.bool("any"), true)
+        XCTAssertEqual(dict.dict("destination")?.string("network"), "wanip")
+        XCTAssertNil(dict.dict("destination")?.string("address"))
     }
 
     func testADuplicateIsACreateRatherThanAnEdit() {
@@ -315,7 +331,8 @@ final class PortForwardCreationTests: XCTestCase {
         let dict = PortForwardEditForm.blank(interface: "wan").toDict(interface: "wan")
         XCTAssertEqual(dict.string("tracker"), "")
         XCTAssertEqual(dict.bool("create"), true)
-        XCTAssertEqual(dict.dict("destination")?.string("address"), "wanip")
+        XCTAssertEqual(dict.dict("source")?.bool("any"), true)
+        XCTAssertEqual(dict.dict("destination")?.string("network"), "wanip")
     }
 
     func testAnEditKeepsItsTrackerAndDoesNotAskToCreate() {

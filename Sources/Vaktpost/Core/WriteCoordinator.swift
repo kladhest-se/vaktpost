@@ -561,28 +561,36 @@ final class WriteCoordinator {
     }
 
     private static func rule(_ actual: FirewallRule, matches expected: JSONDict) -> Bool {
-        let source = expected.dict("source")?.string("address") ?? "any"
-        let destination = expected.dict("destination")?.string("address") ?? "any"
+        let source = FilterAddress(expected.value("source"), port: expected.value("source_port"))
+        let destination = FilterAddress(expected.value("destination"),
+                                        port: expected.value("destination_port"))
         return actual.interfaceName == expected.string("interface")
             && actual.type == (expected.string("type") ?? "").lowercased()
             && (actual.ipProtocol ?? "inet") == (expected.string("ipprotocol") ?? "inet")
             && (actual.proto ?? "any") == (expected.string("protocol") ?? "any")
-            && actual.sourceSide.address == source
-            && (actual.sourceSide.port ?? "") == (expected.string("source_port") ?? "")
-            && actual.destinationSide.address == destination
-            && (actual.destinationSide.port ?? "") == (expected.string("destination_port") ?? "")
+            && actual.sourceSide.address == source.address
+            && actual.sourceSide.storageKind == source.storageKind
+            && (actual.sourceSide.port ?? "") == (source.port ?? "")
+            && actual.destinationSide.address == destination.address
+            && actual.destinationSide.storageKind == destination.storageKind
+            && (actual.destinationSide.port ?? "") == (destination.port ?? "")
             && actual.descr == (expected.string("descr") ?? "")
             && actual.disabled == (expected.bool("disabled") ?? false)
             && actual.logged == (expected.bool("log") ?? false)
     }
 
     private static func nat(_ actual: PortForward, matches expected: JSONDict) -> Bool {
+        let source = FilterAddress(expected.value("source"), port: expected.value("source_port"))
+        let destination = FilterAddress(expected.value("destination"),
+                                        port: expected.value("destination_port"))
         return actual.interfaceName == expected.string("interface")
             && (actual.ipProtocol ?? "inet") == (expected.string("ipprotocol") ?? "inet")
             && (actual.proto ?? "any") == (expected.string("protocol") ?? "any")
-            && actual.sourceSide.address == (expected.dict("source")?.string("address") ?? "any")
-            && actual.destinationSide.address == (expected.dict("destination")?.string("address") ?? "any")
-            && (actual.destinationSide.port ?? "") == (expected.string("destination_port") ?? "")
+            && actual.sourceSide.address == source.address
+            && actual.sourceSide.storageKind == source.storageKind
+            && actual.destinationSide.address == destination.address
+            && actual.destinationSide.storageKind == destination.storageKind
+            && (actual.destinationSide.port ?? "") == (destination.port ?? "")
             && actual.target == (expected.string("target") ?? "")
             && (actual.localPort ?? "") == (expected.string("local_port") ?? "")
             && actual.descr == (expected.string("descr") ?? "")

@@ -511,6 +511,7 @@ final class FilterAddressTests: XCTestCase {
     func testAnyWithNoPort() {
         let side = FilterAddress(value(["any": true]))
         XCTAssertEqual(side.address, "any")
+        XCTAssertEqual(side.storageKind, .any)
         XCTAssertNil(side.port)
         XCTAssertEqual(side.text, "any")
     }
@@ -518,6 +519,21 @@ final class FilterAddressTests: XCTestCase {
     func testANetworkIsUsedWhenPresent() {
         let side = FilterAddress(value(["network": "lan"]))
         XCTAssertEqual(side.address, "lan")
+        XCTAssertEqual(side.storageKind, .network)
+    }
+
+    func testNativeAddressShapesRoundTripWithoutFlattening() {
+        let any = FilterAddress.encoded("any", as: .any).objectValue
+        XCTAssertEqual(any?["any"]?.boolValue, true)
+        XCTAssertEqual(any?.count, 1)
+
+        let system = FilterAddress.encoded("wanip", as: .network).objectValue
+        XCTAssertEqual(system?["network"]?.stringValue, "wanip")
+        XCTAssertEqual(system?.count, 1)
+
+        let alias = FilterAddress.encoded("SERVERS", as: .address).objectValue
+        XCTAssertEqual(alias?["address"]?.stringValue, "SERVERS")
+        XCTAssertEqual(alias?.count, 1)
     }
 
     func testAPortInsideTheObjectIsFound() {

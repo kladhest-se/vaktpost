@@ -231,6 +231,30 @@ final class FieldValidatorTests: XCTestCase {
                                               aliases: aliases).isEmpty)
     }
 
+    func testARecognizedSystemValueMustUseTheNativeNetworkShape() {
+        var malformed = rule(destination: "wanip")
+        malformed.destinationStorageKind = .address
+        XCTAssertTrue(FieldValidator.problems(inRule: malformed, aliases: aliases,
+                                              interfaces: ["wan"]).contains {
+            $0.field == "Destination address" && $0.message.contains("system address list")
+        })
+
+        malformed.destinationStorageKind = .network
+        XCTAssertTrue(FieldValidator.problems(inRule: malformed, aliases: aliases,
+                                              interfaces: ["wan"]).isEmpty)
+    }
+
+    func testLiteralAddressMustMatchTheSelectedIPVersion() {
+        var ipv6 = rule(source: "2001:db8::1")
+        ipv6.addressFamily = "inet"
+        XCTAssertTrue(FieldValidator.problems(inRule: ipv6, aliases: aliases).contains {
+            $0.field == "Source address" && $0.message.contains("IPv6")
+        })
+
+        ipv6.addressFamily = "inet6"
+        XCTAssertTrue(FieldValidator.problems(inRule: ipv6, aliases: aliases).isEmpty)
+    }
+
     func testPortsNeedAProtocolThatHasThem() {
         // pfSense will not load a rule with a port on ICMP, and the editor
         // offered both without comment.
@@ -278,9 +302,10 @@ final class FieldValidatorTests: XCTestCase {
     }
 
     func testAForwardMayUseItsConfiguredInterfaceAddress() {
-        XCTAssertTrue(FieldValidator.problems(
-            inForward: forward(destination: "wanip"), aliases: aliases, interfaces: ["wan"]
-        ).isEmpty)
+        var form = forward(destination: "wanip")
+        form.destinationStorageKind = .network
+        XCTAssertTrue(FieldValidator.problems(inForward: form, aliases: aliases,
+                                              interfaces: ["wan"]).isEmpty)
     }
 
     func testAForwardWithoutATargetIsRejected() {

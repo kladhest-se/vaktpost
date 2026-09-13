@@ -102,6 +102,36 @@ enum FieldValidator {
         return low <= high
     }
 
+    private static func literalAddress(_ text: String) -> String {
+        guard let first = text.split(separator: "/", maxSplits: 1).first else { return "" }
+        return String(first)
+    }
+
+    private static func familyProblem(_ text: String, family: String,
+                                      field: String) -> Problem? {
+        let literal = literalAddress(text)
+        if isIPv4(literal), family != "inet" {
+            return Problem(field: field, message: "An IPv4 address requires the IPv4 rule version.")
+        }
+        if isIPv6(literal), family != "inet6" {
+            return Problem(field: field, message: "An IPv6 address requires the IPv6 rule version.")
+        }
+        return nil
+    }
+
+    private static func storageProblem(_ text: String, storage: FilterAddress.StorageKind,
+                                       field: String, interfaces: Set<String>) -> Problem? {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.lowercased() == "any", storage != .any {
+            return Problem(field: field, message: "Choose Any so pfSense stores the wildcard correctly.")
+        }
+        if isSystemAddress(value, interfaces: interfaces), storage != .network {
+            return Problem(field: field,
+                           message: "Choose this value from the system address list so pfSense stores it correctly.")
+        }
+        return nil
+    }
+
     // MARK: Fields
 
     /// The problem with one field, or nil if there is none.
@@ -171,6 +201,15 @@ enum FieldValidator {
                     aliases: aliases, interfaces: interfaces),
             problem(in: form.destinationPort, kind: .port, field: "Destination port", aliases: aliases)
         ].compactMap { $0 })
+        out.append(contentsOf: [
+            storageProblem(form.sourceAddress, storage: form.sourceStorageKind,
+                           field: "Source address", interfaces: interfaces),
+            storageProblem(form.destinationAddress, storage: form.destinationStorageKind,
+                           field: "Destination address", interfaces: interfaces),
+            familyProblem(form.sourceAddress, family: form.addressFamily, field: "Source address"),
+            familyProblem(form.destinationAddress, family: form.addressFamily,
+                          field: "Destination address")
+        ].compactMap { $0 })
 
         // A port without a protocol that has ports is a rule pfSense will not
         // load. Catching it here beats catching it in the system log.
@@ -193,6 +232,16 @@ enum FieldValidator {
             problem(in: form.destinationPort, kind: .port, field: "Destination port", aliases: aliases),
             problem(in: form.targetAddress, kind: .target, field: "Target address", aliases: aliases),
             problem(in: form.localPort, kind: .port, field: "Local port", aliases: aliases)
+        ].compactMap { $0 })
+        out.append(contentsOf: [
+            storageProblem(form.sourceAddress, storage: form.sourceStorageKind,
+                           field: "Source address", interfaces: interfaces),
+            storageProblem(form.destinationAddress, storage: form.destinationStorageKind,
+                           field: "Destination address", interfaces: interfaces),
+            familyProblem(form.sourceAddress, family: form.addressFamily, field: "Source address"),
+            familyProblem(form.destinationAddress, family: form.addressFamily,
+                          field: "Destination address"),
+            familyProblem(form.targetAddress, family: form.addressFamily, field: "Target address")
         ].compactMap { $0 })
 
         let hasPorts = ["tcp", "udp", "tcp/udp"].contains(form.proto.lowercased())

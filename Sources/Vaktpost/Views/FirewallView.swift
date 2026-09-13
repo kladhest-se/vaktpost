@@ -168,7 +168,7 @@ struct FirewallView: View {
         // drafted.
         .sheet(item: $newRule) { form in
             RuleEditSheet(form: form,
-                          interfaces: store.interfaces.map(\.internalName).compactMap { $0 },
+                          interfaces: store.interfaces,
                           aliases: Set(store.aliases.map(\.name)),
                           ruleset: store.rules,
                           subject: form.apply(to: FirewallRule(JSONDict([
@@ -179,7 +179,7 @@ struct FirewallView: View {
         }
         .sheet(item: $newForward) { form in
             PortForwardEditSheet(form: form,
-                                 interfaces: store.interfaces.map(\.internalName).compactMap { $0 },
+                                 interfaces: store.interfaces,
                                  aliases: Set(store.aliases.map(\.name)),
                                  onSave: { saved in await createForward(saved) })
         }
@@ -691,7 +691,7 @@ struct RuleDetailView: View {
         // whole delay, and on a fast tap it was what you got.
         .sheet(isPresented: $showEditSheet) {
             RuleEditSheet(form: editorForm ?? RuleEditForm(from: rule),
-                          interfaces: store.interfaces.map(\.internalName).compactMap { $0 },
+                          interfaces: store.interfaces,
                           aliases: Set(store.aliases.map(\.name)),
                           ruleset: store.rules,
                           subject: rule,
@@ -921,7 +921,7 @@ struct PortForwardDetailView: View {
         // nothing to fetch and the spinner was the entire delay.
         .sheet(isPresented: $showEditSheet) {
             PortForwardEditSheet(form: editorForm ?? PortForwardEditForm(from: forward),
-                                 interfaces: store.interfaces.map(\.internalName).compactMap { $0 },
+                                 interfaces: store.interfaces,
                                  aliases: Set(store.aliases.map(\.name)),
                                  onSave: { saved in await save(changes: saved) })
         }
@@ -1009,8 +1009,10 @@ struct RuleEditForm: Equatable, Identifiable {
     var proto: String
     var interface: String
     var sourceAddress: String
+    var sourceStorageKind: FilterAddress.StorageKind
     var sourcePort: String
     var destinationAddress: String
+    var destinationStorageKind: FilterAddress.StorageKind
     var destinationPort: String
     var disabled: Bool
     var logged: Bool
@@ -1049,8 +1051,8 @@ struct RuleEditForm: Equatable, Identifiable {
             "protocol": .string("any"),
             "disabled": .bool(true),
             "descr": .string(""),
-            "source": .object(["address": .string("any")]),
-            "destination": .object(["address": .string("any")])
+            "source": .object(["any": .bool(true)]),
+            "destination": .object(["any": .bool(true)])
         ])))
         form.isCreating = true
         form.placementTarget = .last
@@ -1079,8 +1081,10 @@ struct RuleEditForm: Equatable, Identifiable {
         interface = rule.interfaceName
         addressFamily = rule.ipProtocol ?? "inet"
         sourceAddress = rule.sourceSide.address
+        sourceStorageKind = rule.sourceSide.storageKind
         sourcePort = rule.sourceSide.port ?? ""
         destinationAddress = rule.destinationSide.address
+        destinationStorageKind = rule.destinationSide.storageKind
         destinationPort = rule.destinationSide.port ?? ""
         disabled = rule.disabled
         logged = rule.logged
@@ -1094,9 +1098,9 @@ struct RuleEditForm: Equatable, Identifiable {
             "type": .string(type),
             "ipprotocol": .string(addressFamily),
             "protocol": proto.isEmpty ? .string("any") : .string(proto),
-            "source": .object(["address": .string(sourceAddress)]),
+            "source": FilterAddress.encoded(sourceAddress, as: sourceStorageKind),
             "source_port": sourcePort.isEmpty ? .null : .string(sourcePort),
-            "destination": .object(["address": .string(destinationAddress)]),
+            "destination": FilterAddress.encoded(destinationAddress, as: destinationStorageKind),
             "destination_port": destinationPort.isEmpty ? .null : .string(destinationPort),
             "descr": .string(descr),
             "disabled": .bool(disabled),
@@ -1113,17 +1117,17 @@ struct RuleEditForm: Equatable, Identifiable {
             "interface": .string(interface),
             "type": .string(type),
             "protocol": .string(proto.isEmpty ? "any" : proto),
-            "source": .object(["address": .string(sourceAddress)]),
-            "destination": .object(["address": .string(destinationAddress)]),
+            "source": FilterAddress.encoded(sourceAddress, as: sourceStorageKind),
+            "destination": FilterAddress.encoded(destinationAddress, as: destinationStorageKind),
             "descr": .string(descr),
             "disabled": .bool(disabled),
             "log": .bool(logged)
         ]
         if !sourcePort.isEmpty {
-            dict["source_port"] = .string(sourcePort)
+            dict["source_port"] = .string(sourcePort.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         if !destinationPort.isEmpty {
-            dict["destination_port"] = .string(destinationPort)
+            dict["destination_port"] = .string(destinationPort.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         switch placementTarget {
         case .keep:
@@ -1157,7 +1161,7 @@ struct RuleEditSheet: View {
 
     /// Interface handles this firewall actually has, so the field cannot name
     /// one that does not exist.
-    let interfaces: [String]
+    let interfaces: [InterfaceStat]
     /// Alias names this firewall has, so a field naming one that does not
     /// exist is caught here rather than by pfSense refusing to load the rule.
     let aliases: Set<String>
@@ -1173,7 +1177,7 @@ struct RuleEditSheet: View {
     @State private var isSaving = false
     @State private var showSaveConfirmation = false
 
-    init(form: RuleEditForm, interfaces: [String], aliases: Set<String>,
+    init(form: RuleEditForm, interfaces: [InterfaceStat], aliases: Set<String>,
          ruleset: [FirewallRule], subject: FirewallRule,
          onSave: @escaping (RuleEditForm) async -> Bool) {
         self.interfaces = interfaces
@@ -1187,7 +1191,11 @@ struct RuleEditSheet: View {
 
     private var problems: [FieldValidator.Problem] {
         FieldValidator.problems(inRule: edited, aliases: aliases,
-                                interfaces: Set(interfaces))
+                                interfaces: Set(interfaceKeys))
+    }
+
+    private var interfaceKeys: [String] {
+        interfaces.compactMap(\.internalName)
     }
 
     /// Where this rule sits, computed against the rule as edited.
@@ -1249,7 +1257,7 @@ struct RuleEditSheet: View {
                                       prompt: "What this rule is for", mono: false)
                             EditChoice(label: "Action", options: FirewallVocabulary.ruleTypes,
                                        selection: $edited.type)
-                            EditChoice(label: "Interface", options: interfaces,
+                            EditChoice(label: "Interface", options: interfaceKeys,
                                        selection: $edited.interface)
                             EditChoice(label: "Protocol", options: FirewallVocabulary.protocols,
                                        selection: $edited.proto)
@@ -1261,8 +1269,9 @@ struct RuleEditSheet: View {
 
                     Slab(rail: .info, title: "Source") {
                         VStack(alignment: .leading, spacing: 12) {
-                            EditField(label: "Address", text: $edited.sourceAddress,
-                                      prompt: "any, an address, or an alias")
+                            EditAddress(label: "Address", text: $edited.sourceAddress,
+                                        storageKind: $edited.sourceStorageKind,
+                                        interfaces: interfaces)
                             EditField(label: "Port", text: $edited.sourcePort,
                                       prompt: "blank for any")
                         }
@@ -1270,8 +1279,9 @@ struct RuleEditSheet: View {
 
                     Slab(rail: .info, title: "Destination") {
                         VStack(alignment: .leading, spacing: 12) {
-                            EditField(label: "Address", text: $edited.destinationAddress,
-                                      prompt: "any, an address, or an alias")
+                            EditAddress(label: "Address", text: $edited.destinationAddress,
+                                        storageKind: $edited.destinationStorageKind,
+                                        interfaces: interfaces)
                             EditField(label: "Port", text: $edited.destinationPort,
                                       prompt: "blank for any")
                         }
@@ -1384,8 +1394,12 @@ struct RuleEditSheet: View {
         Self.describe("Protocol", original.proto, edited.proto, into: &changes)
         Self.describe("IP version", original.addressFamily, edited.addressFamily, into: &changes)
         Self.describe("Source", original.sourceAddress, edited.sourceAddress, into: &changes)
+        Self.describeAddressType("Source type", original.sourceStorageKind,
+                                 edited.sourceStorageKind, into: &changes)
         Self.describe("Source port", original.sourcePort, edited.sourcePort, into: &changes)
         Self.describe("Destination", original.destinationAddress, edited.destinationAddress, into: &changes)
+        Self.describeAddressType("Destination type", original.destinationStorageKind,
+                                 edited.destinationStorageKind, into: &changes)
         Self.describe("Destination port", original.destinationPort, edited.destinationPort, into: &changes)
         Self.describe("Description", original.descr, edited.descr, into: &changes)
         if original.disabled != edited.disabled { changes.append("Disabled: \(original.disabled ? "yes" : "no") → \(edited.disabled ? "yes" : "no")") }
@@ -1421,6 +1435,22 @@ struct RuleEditSheet: View {
         changes.append("\(label): \(before.isEmpty ? "any" : before) → \(after.isEmpty ? "any" : after)")
     }
 
+    private static func describeAddressType(_ label: String,
+                                            _ before: FilterAddress.StorageKind,
+                                            _ after: FilterAddress.StorageKind,
+                                            into changes: inout [String]) {
+        guard before != after else { return }
+        changes.append("\(label): \(addressTypeLabel(before)) → \(addressTypeLabel(after))")
+    }
+
+    private static func addressTypeLabel(_ kind: FilterAddress.StorageKind) -> String {
+        switch kind {
+        case .any: return "Any"
+        case .network: return "System selector"
+        case .address: return "Address, network or alias"
+        }
+    }
+
     private func saveConfirmed() async {
         isSaving = true
         let saved = await onSave(edited)
@@ -1447,7 +1477,9 @@ struct PortForwardEditForm: Equatable, Identifiable {
     var proto: String
     var interface: String
     var sourceAddress: String
+    var sourceStorageKind: FilterAddress.StorageKind
     var destinationAddress: String
+    var destinationStorageKind: FilterAddress.StorageKind
     var destinationPort: String
     var targetAddress: String
     var localPort: String
@@ -1470,8 +1502,8 @@ struct PortForwardEditForm: Equatable, Identifiable {
             "ipprotocol": .string("inet"),
             "disabled": .bool(true),
             "descr": .string(""),
-            "source": .object(["address": .string("any")]),
-            "destination": .object(["address": .string("\(interface)ip")]),
+            "source": .object(["any": .bool(true)]),
+            "destination": .object(["network": .string("\(interface)ip")]),
             "target": .string("")
         ])))
         form.isCreating = true
@@ -1500,7 +1532,9 @@ struct PortForwardEditForm: Equatable, Identifiable {
         proto = forward.proto ?? ""
         interface = forward.interfaceName
         sourceAddress = forward.sourceSide.address
+        sourceStorageKind = forward.sourceSide.storageKind
         destinationAddress = forward.destinationSide.address
+        destinationStorageKind = forward.destinationSide.storageKind
         destinationPort = forward.destinationSide.port ?? ""
         targetAddress = forward.target
         localPort = forward.localPort ?? ""
@@ -1518,17 +1552,17 @@ struct PortForwardEditForm: Equatable, Identifiable {
             "interface": .string(interface),
             "protocol": .string(proto.isEmpty ? "any" : proto),
             "ipprotocol": .string(addressFamily),
-            "source": .object(["address": .string(sourceAddress)]),
-            "destination": .object(["address": .string(destinationAddress)]),
-            "target": .string(targetAddress),
+            "source": FilterAddress.encoded(sourceAddress, as: sourceStorageKind),
+            "destination": FilterAddress.encoded(destinationAddress, as: destinationStorageKind),
+            "target": .string(targetAddress.trimmingCharacters(in: .whitespacesAndNewlines)),
             "descr": .string(descr),
             "disabled": .bool(disabled)
         ]
         if !destinationPort.isEmpty {
-            dict["destination_port"] = .string(destinationPort)
+            dict["destination_port"] = .string(destinationPort.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         if !localPort.isEmpty {
-            dict["local_port"] = .string(localPort)
+            dict["local_port"] = .string(localPort.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return JSONDict(dict)
     }
@@ -1634,7 +1668,7 @@ struct PortForwardEditSheet: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dismiss) private var dismiss
 
-    let interfaces: [String]
+    let interfaces: [InterfaceStat]
     let aliases: Set<String>
     let onSave: (PortForwardEditForm) async -> Bool
 
@@ -1646,7 +1680,7 @@ struct PortForwardEditSheet: View {
 
     private var isDirty: Bool { edited != original }
 
-    init(form: PortForwardEditForm, interfaces: [String], aliases: Set<String>,
+    init(form: PortForwardEditForm, interfaces: [InterfaceStat], aliases: Set<String>,
          onSave: @escaping (PortForwardEditForm) async -> Bool) {
         self.interfaces = interfaces
         self.aliases = aliases
@@ -1657,7 +1691,11 @@ struct PortForwardEditSheet: View {
 
     private var problems: [FieldValidator.Problem] {
         FieldValidator.problems(inForward: edited, aliases: aliases,
-                                interfaces: Set(interfaces))
+                                interfaces: Set(interfaceKeys))
+    }
+
+    private var interfaceKeys: [String] {
+        interfaces.compactMap(\.internalName)
     }
 
     var body: some View {
@@ -1668,7 +1706,7 @@ struct PortForwardEditSheet: View {
                         VStack(alignment: .leading, spacing: 12) {
                             EditField(label: "Description", text: $edited.descr,
                                       prompt: "What this forward is for", mono: false)
-                            EditChoice(label: "Interface", options: interfaces,
+                            EditChoice(label: "Interface", options: interfaceKeys,
                                        selection: $edited.interface)
                             EditChoice(label: "Protocol", options: FirewallVocabulary.protocols,
                                        selection: $edited.proto)
@@ -1680,11 +1718,13 @@ struct PortForwardEditSheet: View {
 
                     Slab(rail: .info, title: "Matched traffic") {
                         VStack(alignment: .leading, spacing: 12) {
-                            EditField(label: "Source address", text: $edited.sourceAddress,
-                                      prompt: "any, an address, or an alias")
-                            EditField(label: "Destination address",
-                                      text: $edited.destinationAddress,
-                                      prompt: "usually this interface's address")
+                            EditAddress(label: "Source address", text: $edited.sourceAddress,
+                                        storageKind: $edited.sourceStorageKind,
+                                        interfaces: interfaces)
+                            EditAddress(label: "Destination address",
+                                        text: $edited.destinationAddress,
+                                        storageKind: $edited.destinationStorageKind,
+                                        interfaces: interfaces)
                             EditField(label: "Destination port",
                                       text: $edited.destinationPort,
                                       prompt: "the port on the outside")
@@ -1768,7 +1808,11 @@ struct PortForwardEditSheet: View {
         Self.describe("Protocol", original.proto, edited.proto, into: &changes)
         Self.describe("IP version", original.addressFamily, edited.addressFamily, into: &changes)
         Self.describe("Source", original.sourceAddress, edited.sourceAddress, into: &changes)
+        Self.describeAddressType("Source type", original.sourceStorageKind,
+                                 edited.sourceStorageKind, into: &changes)
         Self.describe("Destination", original.destinationAddress, edited.destinationAddress, into: &changes)
+        Self.describeAddressType("Destination type", original.destinationStorageKind,
+                                 edited.destinationStorageKind, into: &changes)
         Self.describe("Destination port", original.destinationPort, edited.destinationPort, into: &changes)
         Self.describe("Target", original.targetAddress, edited.targetAddress, into: &changes)
         Self.describe("Local port", original.localPort, edited.localPort, into: &changes)
@@ -1781,6 +1825,22 @@ struct PortForwardEditSheet: View {
                                  into changes: inout [String]) {
         guard before != after else { return }
         changes.append("\(label): \(before.isEmpty ? "any" : before) → \(after.isEmpty ? "any" : after)")
+    }
+
+    private static func describeAddressType(_ label: String,
+                                            _ before: FilterAddress.StorageKind,
+                                            _ after: FilterAddress.StorageKind,
+                                            into changes: inout [String]) {
+        guard before != after else { return }
+        changes.append("\(label): \(addressTypeLabel(before)) → \(addressTypeLabel(after))")
+    }
+
+    private static func addressTypeLabel(_ kind: FilterAddress.StorageKind) -> String {
+        switch kind {
+        case .any: return "Any"
+        case .network: return "System selector"
+        case .address: return "Address, network or alias"
+        }
     }
 
     private func saveConfirmed() async {

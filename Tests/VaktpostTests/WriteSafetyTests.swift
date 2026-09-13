@@ -112,6 +112,19 @@ final class WriteSafetyTests: XCTestCase {
         XCTAssertTrue(body.contains("$toreturn[\"before_tracker\"] = $vaktpost_before;"))
     }
 
+    func testSaveSnippetsUseNativeAddressShapesAndFirewallValidation() {
+        for body in [PHPSnippet.saveRule(rule: JSONDict([:])).body,
+                     PHPSnippet.saveNatRule(rule: JSONDict([:])).body] {
+            XCTAssertTrue(body.contains("get_specialnet("))
+            XCTAssertTrue(body.contains("is_ipaddroralias("))
+            XCTAssertTrue(body.contains("is_port_or_alias("))
+            XCTAssertTrue(body.contains("validation_failed"))
+            XCTAssertTrue(body.contains("$vaktpost_sides[$vaktpost_side_name] = [\"any\" => true];"))
+            XCTAssertTrue(body.contains("[\"network\" => $vaktpost_value]"))
+            XCTAssertTrue(body.contains("[\"address\" => $vaktpost_value]"))
+        }
+    }
+
     func testQuickBlockWritesNativeFilterRuleShape() {
         let body = PHPSnippet.quickBlock(interface: "wan", address: "192.0.2.7", description: "test").body
         XCTAssertTrue(body.contains("$config['filter']['rule']"))

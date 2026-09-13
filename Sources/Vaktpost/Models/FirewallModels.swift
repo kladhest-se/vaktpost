@@ -10,23 +10,38 @@ import Foundation
 /// again correctly, and the attempt produced nonsense on any rule with a v6
 /// address in it.
 struct FilterAddress {
+    /// The key pfSense used in `config.xml` for this value. It is not cosmetic:
+    /// `any`, a special network such as `wanip`, and a literal/alias are three
+    /// different rule representations.
+    enum StorageKind: String, Hashable {
+        case any
+        case network
+        case address
+    }
+
     var address: String
     var port: String?
+    var storageKind: StorageKind
 
     init(_ value: JSONValue?, port explicitPort: JSONValue? = nil) {
         var base = "any"
         var found: String?
+        var storage: StorageKind = .any
 
         if let value {
             if let s = value.stringValue, !s.isEmpty {
                 base = s
+                storage = s.lowercased() == "any" ? .any : .address
             } else if let d = JSONDict(value) {
                 if d.bool("any") == true {
                     base = "any"
+                    storage = .any
                 } else if let n = d.string("network") {
                     base = n
+                    storage = .network
                 } else if let a = d.string("address") {
                     base = a
+                    storage = a.lowercased() == "any" ? .any : .address
                 }
                 if let p = d.string("port"), !p.isEmpty { found = p }
             }
@@ -35,6 +50,20 @@ struct FilterAddress {
 
         address = base
         port = found
+        storageKind = storage
+    }
+
+    /// Encode the value without erasing the rule type pfSense supplied.
+    static func encoded(_ address: String, as kind: StorageKind) -> JSONValue {
+        let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch kind {
+        case .any:
+            return .object(["any": .bool(true)])
+        case .network:
+            return .object(["network": .string(value)])
+        case .address:
+            return .object(["address": .string(value)])
+        }
     }
 
     /// What sort of thing this side is.

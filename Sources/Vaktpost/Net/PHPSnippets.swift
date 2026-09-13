@@ -176,6 +176,10 @@ struct PHPSnippet: Sendable {
         // Resolving an interface to its device, and asking whether that device
         // is there. Both are lookups; neither brings an interface up or down.
         "get_real_interface", "does_interface_exist",
+        // Native pfSense validators used by the two administrative rule-save
+        // snippets before they touch `$config`.
+        "get_specialnet", "is_ipaddroralias", "is_ipaddrv4", "is_ipaddrv6",
+        "is_port_or_alias",
         "return_gateways_status", "return_gateways_array",
         "get_services", "get_service_status",
         "get_carp_status", "get_carp_interface_status",
@@ -2926,6 +2930,106 @@ struct PHPSnippet: Sendable {
           $vaktpost_position_valid = false;
         }
 
+        // Rebuild each side from one explicit native shape. `any`, a pfSense
+        // system selector and a literal/alias are not interchangeable keys in
+        // config.xml. Validate the exact shape with pfSense itself before the
+        // copy of `$config` is changed.
+        $vaktpost_payload_valid = true;
+        $vaktpost_validation_error = "";
+        $vaktpost_sides = [];
+        foreach (["source", "destination"] as $vaktpost_side_name) {
+          $vaktpost_side = $vaktpost_input[$vaktpost_side_name] ?? [];
+          if (!is_array($vaktpost_side)) {
+            $vaktpost_payload_valid = false;
+            $vaktpost_validation_error = "The " . $vaktpost_side_name . " address has no valid type";
+            break;
+          }
+          $vaktpost_type_count = (($vaktpost_side["any"] ?? false) === true ? 1 : 0)
+            + (array_key_exists("network", $vaktpost_side) ? 1 : 0)
+            + (array_key_exists("address", $vaktpost_side) ? 1 : 0);
+          if ($vaktpost_type_count !== 1) {
+            $vaktpost_payload_valid = false;
+            $vaktpost_validation_error = "The " . $vaktpost_side_name . " address must have one type";
+            break;
+          }
+          if (($vaktpost_side["any"] ?? false) === true) {
+            $vaktpost_sides[$vaktpost_side_name] = ["any" => true];
+          } elseif (array_key_exists("network", $vaktpost_side)) {
+            $vaktpost_value = trim(strval($vaktpost_side["network"] ?? ""));
+            $vaktpost_special = get_specialnet($vaktpost_value, [
+              SPECIALNET_SELF, SPECIALNET_CLIENTS, SPECIALNET_IFADDR,
+              SPECIALNET_IFNET, SPECIALNET_GROUP
+            ]);
+            if ($vaktpost_value === "" || !$vaktpost_special) {
+              $vaktpost_payload_valid = false;
+              $vaktpost_validation_error = "The " . $vaktpost_side_name . " system selector is unavailable";
+              break;
+            }
+            $vaktpost_sides[$vaktpost_side_name] = ["network" => $vaktpost_value];
+          } elseif (array_key_exists("address", $vaktpost_side)) {
+            $vaktpost_value = trim(strval($vaktpost_side["address"] ?? ""));
+            $vaktpost_address_valid = $vaktpost_value !== "" && is_ipaddroralias($vaktpost_value);
+            if (!$vaktpost_address_valid && strpos($vaktpost_value, "/") !== false) {
+              $vaktpost_cidr = explode("/", $vaktpost_value, 2);
+              $vaktpost_bits = strval($vaktpost_cidr[1] ?? "");
+              $vaktpost_address_valid = count($vaktpost_cidr) === 2 && is_numeric($vaktpost_bits)
+                && ((is_ipaddrv4($vaktpost_cidr[0]) && intval($vaktpost_bits) >= 0 && intval($vaktpost_bits) <= 32)
+                  || (is_ipaddrv6($vaktpost_cidr[0]) && intval($vaktpost_bits) >= 0 && intval($vaktpost_bits) <= 128));
+            }
+            if (!$vaktpost_address_valid) {
+              $vaktpost_payload_valid = false;
+              $vaktpost_validation_error = "The " . $vaktpost_side_name . " address or alias is invalid";
+              break;
+            }
+            $vaktpost_sides[$vaktpost_side_name] = ["address" => $vaktpost_value];
+          } else {
+            $vaktpost_payload_valid = false;
+            $vaktpost_validation_error = "The " . $vaktpost_side_name . " address has no valid type";
+            break;
+          }
+        }
+        foreach (["source_port", "destination_port"] as $vaktpost_port_name) {
+          $vaktpost_port_value = trim(strval($vaktpost_input[$vaktpost_port_name] ?? ""));
+          $vaktpost_port_valid = $vaktpost_port_value === "" || is_port_or_alias($vaktpost_port_value);
+          if (!$vaktpost_port_valid && strpos($vaktpost_port_value, "-") !== false) {
+            $vaktpost_range = explode("-", $vaktpost_port_value, 2);
+            $vaktpost_port_valid = count($vaktpost_range) === 2
+              && is_numeric($vaktpost_range[0]) && is_numeric($vaktpost_range[1])
+              && is_port_or_alias($vaktpost_range[0]) && is_port_or_alias($vaktpost_range[1])
+              && intval($vaktpost_range[0]) <= intval($vaktpost_range[1]);
+          }
+          if (!$vaktpost_port_valid) {
+            $vaktpost_payload_valid = false;
+            $vaktpost_validation_error = "The " . $vaktpost_port_name . " value is invalid";
+            break;
+          }
+        }
+        $vaktpost_family = strval($vaktpost_input["ipprotocol"] ?? "");
+        foreach ($vaktpost_sides as $vaktpost_side) {
+          if (!array_key_exists("address", $vaktpost_side)) { continue; }
+          $vaktpost_direct = explode("/", strval($vaktpost_side["address"]), 2)[0];
+          if ((is_ipaddrv4($vaktpost_direct) && $vaktpost_family !== "inet")
+              || (is_ipaddrv6($vaktpost_direct) && $vaktpost_family !== "inet6")) {
+            $vaktpost_payload_valid = false;
+            $vaktpost_validation_error = "A literal address does not match the selected IP version";
+            break;
+          }
+        }
+        $vaktpost_protocol = strval($vaktpost_input["protocol"] ?? "");
+        if ((trim(strval($vaktpost_input["source_port"] ?? "")) !== ""
+              || trim(strval($vaktpost_input["destination_port"] ?? "")) !== "")
+            && !in_array($vaktpost_protocol, ["tcp", "udp", "tcp/udp"], true)) {
+          $vaktpost_payload_valid = false;
+          $vaktpost_validation_error = "Ports require TCP or UDP";
+        }
+        if (!array_key_exists($vaktpost_interface, get_configured_interface_with_descr())
+            || !in_array(strval($vaktpost_input["type"] ?? ""), ["pass", "block", "reject"], true)
+            || !in_array($vaktpost_protocol, ["any", "tcp", "udp", "tcp/udp", "icmp", "esp", "gre"], true)
+            || !in_array($vaktpost_family, ["inet", "inet6", "inet46"], true)) {
+          $vaktpost_payload_valid = false;
+          $vaktpost_validation_error = "The rule type, protocol, IP version or interface is invalid";
+        }
+
         if (!$vaktpost_create && !$found) {
           // Never turn a stale edit into an append. The rule may have been
           // removed after the app's preflight read and before this write.
@@ -2934,6 +3038,9 @@ struct PHPSnippet: Sendable {
         } elseif (!$vaktpost_position_valid) {
           $toreturn["status"] = "position_not_found";
           $toreturn["error"] = "The selected rule position is no longer available";
+        } elseif (!$vaktpost_payload_valid) {
+          $toreturn["status"] = "validation_failed";
+          $toreturn["error"] = $vaktpost_validation_error;
         } else {
         $rule["interface"] = $vaktpost_interface;
         $rule["type"] = strval($vaktpost_input["type"] ?? "pass");
@@ -2949,20 +3056,18 @@ struct PHPSnippet: Sendable {
           $rule["tracker"] = $tracker;
         }
 
-        $vaktpost_src = $vaktpost_input["source"] ?? [];
-        $vaktpost_dst = $vaktpost_input["destination"] ?? [];
-        $rule["source"] = ["address" => strval(is_array($vaktpost_src) ? ($vaktpost_src["address"] ?? "any") : "any")];
-        $rule["destination"] = ["address" => strval(is_array($vaktpost_dst) ? ($vaktpost_dst["address"] ?? "any") : "any")];
+        $rule["source"] = $vaktpost_sides["source"];
+        $rule["destination"] = $vaktpost_sides["destination"];
 
         // Absent means absent. A port key left behind with an empty value is a
         // rule pfSense reads differently from one without the key at all.
-        $vaktpost_sport = strval($vaktpost_input["source_port"] ?? "");
+        $vaktpost_sport = trim(strval($vaktpost_input["source_port"] ?? ""));
         if ($vaktpost_sport !== "") {
           $rule["source_port"] = $vaktpost_sport;
         } else {
           unset($rule["source_port"]);
         }
-        $vaktpost_dport = strval($vaktpost_input["destination_port"] ?? "");
+        $vaktpost_dport = trim(strval($vaktpost_input["destination_port"] ?? ""));
         if ($vaktpost_dport !== "") {
           $rule["destination_port"] = $vaktpost_dport;
         } else {
@@ -3033,8 +3138,6 @@ struct PHPSnippet: Sendable {
         $tracker = strval($vaktpost_input["tracker"] ?? "");
         $vaktpost_if = strval($vaktpost_input["interface"] ?? "");
         $vaktpost_target = strval($vaktpost_input["target"] ?? "");
-        $vaktpost_dst = $vaktpost_input["destination"] ?? [];
-        $vaktpost_dstaddr = strval(is_array($vaktpost_dst) ? ($vaktpost_dst["address"] ?? "any") : "any");
         // The port is part of what identifies a forward.
         //
         // Without it, two forwards to the same host on the same interface —
@@ -3077,9 +3180,114 @@ struct PHPSnippet: Sendable {
           }
         }
 
+        $vaktpost_payload_valid = true;
+        $vaktpost_validation_error = "";
+        $vaktpost_sides = [];
+        foreach (["source", "destination"] as $vaktpost_side_name) {
+          $vaktpost_side = $vaktpost_input[$vaktpost_side_name] ?? [];
+          if (!is_array($vaktpost_side)) {
+            $vaktpost_payload_valid = false;
+            $vaktpost_validation_error = "The " . $vaktpost_side_name . " address has no valid type";
+            break;
+          }
+          $vaktpost_type_count = (($vaktpost_side["any"] ?? false) === true ? 1 : 0)
+            + (array_key_exists("network", $vaktpost_side) ? 1 : 0)
+            + (array_key_exists("address", $vaktpost_side) ? 1 : 0);
+          if ($vaktpost_type_count !== 1) {
+            $vaktpost_payload_valid = false;
+            $vaktpost_validation_error = "The " . $vaktpost_side_name . " address must have one type";
+            break;
+          }
+          if (($vaktpost_side["any"] ?? false) === true) {
+            $vaktpost_sides[$vaktpost_side_name] = ["any" => true];
+          } elseif (array_key_exists("network", $vaktpost_side)) {
+            $vaktpost_value = trim(strval($vaktpost_side["network"] ?? ""));
+            $vaktpost_special = get_specialnet($vaktpost_value, [
+              SPECIALNET_SELF, SPECIALNET_CLIENTS, SPECIALNET_IFADDR,
+              SPECIALNET_IFNET, SPECIALNET_GROUP
+            ]);
+            if ($vaktpost_value === "" || !$vaktpost_special) {
+              $vaktpost_payload_valid = false;
+              $vaktpost_validation_error = "The " . $vaktpost_side_name . " system selector is unavailable";
+              break;
+            }
+            $vaktpost_sides[$vaktpost_side_name] = ["network" => $vaktpost_value];
+          } elseif (array_key_exists("address", $vaktpost_side)) {
+            $vaktpost_value = trim(strval($vaktpost_side["address"] ?? ""));
+            $vaktpost_address_valid = $vaktpost_value !== "" && is_ipaddroralias($vaktpost_value);
+            if (!$vaktpost_address_valid && strpos($vaktpost_value, "/") !== false) {
+              $vaktpost_cidr = explode("/", $vaktpost_value, 2);
+              $vaktpost_bits = strval($vaktpost_cidr[1] ?? "");
+              $vaktpost_address_valid = count($vaktpost_cidr) === 2 && is_numeric($vaktpost_bits)
+                && ((is_ipaddrv4($vaktpost_cidr[0]) && intval($vaktpost_bits) >= 0 && intval($vaktpost_bits) <= 32)
+                  || (is_ipaddrv6($vaktpost_cidr[0]) && intval($vaktpost_bits) >= 0 && intval($vaktpost_bits) <= 128));
+            }
+            if (!$vaktpost_address_valid) {
+              $vaktpost_payload_valid = false;
+              $vaktpost_validation_error = "The " . $vaktpost_side_name . " address or alias is invalid";
+              break;
+            }
+            $vaktpost_sides[$vaktpost_side_name] = ["address" => $vaktpost_value];
+          } else {
+            $vaktpost_payload_valid = false;
+            $vaktpost_validation_error = "The " . $vaktpost_side_name . " address has no valid type";
+            break;
+          }
+        }
+        foreach (["destination_port", "local_port"] as $vaktpost_port_name) {
+          $vaktpost_port_value = trim(strval($vaktpost_input[$vaktpost_port_name] ?? ""));
+          $vaktpost_port_valid = $vaktpost_port_value === "" || is_port_or_alias($vaktpost_port_value);
+          if (!$vaktpost_port_valid && strpos($vaktpost_port_value, "-") !== false) {
+            $vaktpost_range = explode("-", $vaktpost_port_value, 2);
+            $vaktpost_port_valid = count($vaktpost_range) === 2
+              && is_numeric($vaktpost_range[0]) && is_numeric($vaktpost_range[1])
+              && is_port_or_alias($vaktpost_range[0]) && is_port_or_alias($vaktpost_range[1])
+              && intval($vaktpost_range[0]) <= intval($vaktpost_range[1]);
+          }
+          if (!$vaktpost_port_valid) {
+            $vaktpost_payload_valid = false;
+            $vaktpost_validation_error = "The " . $vaktpost_port_name . " value is invalid";
+            break;
+          }
+        }
+        $vaktpost_family = strval($vaktpost_input["ipprotocol"] ?? "");
+        foreach ($vaktpost_sides as $vaktpost_side) {
+          if (!array_key_exists("address", $vaktpost_side)) { continue; }
+          $vaktpost_direct = explode("/", strval($vaktpost_side["address"]), 2)[0];
+          if ((is_ipaddrv4($vaktpost_direct) && $vaktpost_family !== "inet")
+              || (is_ipaddrv6($vaktpost_direct) && $vaktpost_family !== "inet6")) {
+            $vaktpost_payload_valid = false;
+            $vaktpost_validation_error = "A literal address does not match the selected IP version";
+            break;
+          }
+        }
+        $vaktpost_protocol = strval($vaktpost_input["protocol"] ?? "");
+        $vaktpost_target_direct = explode("/", $vaktpost_target, 2)[0];
+        if ((is_ipaddrv4($vaktpost_target_direct) && $vaktpost_family !== "inet")
+            || (is_ipaddrv6($vaktpost_target_direct) && $vaktpost_family !== "inet6")) {
+          $vaktpost_payload_valid = false;
+          $vaktpost_validation_error = "The target does not match the selected IP version";
+        }
+        if ((trim(strval($vaktpost_input["destination_port"] ?? "")) !== ""
+              || trim(strval($vaktpost_input["local_port"] ?? "")) !== "")
+            && !in_array($vaktpost_protocol, ["tcp", "udp", "tcp/udp"], true)) {
+          $vaktpost_payload_valid = false;
+          $vaktpost_validation_error = "Ports require TCP or UDP";
+        }
+        if (!array_key_exists($vaktpost_if, get_configured_interface_with_descr())
+            || !in_array($vaktpost_protocol, ["any", "tcp", "udp", "tcp/udp", "icmp", "esp", "gre"], true)
+            || !in_array($vaktpost_family, ["inet", "inet6", "inet46"], true)
+            || $vaktpost_target === "" || !is_ipaddroralias($vaktpost_target)) {
+          $vaktpost_payload_valid = false;
+          $vaktpost_validation_error = "The target, protocol, IP version or interface is invalid";
+        }
+
         if (!$vaktpost_create && !$found) {
           $toreturn["status"] = "not_found";
           $toreturn["error"] = "The port-forward tracker no longer exists";
+        } elseif (!$vaktpost_payload_valid) {
+          $toreturn["status"] = "validation_failed";
+          $toreturn["error"] = $vaktpost_validation_error;
         } else {
         $rule["interface"] = $vaktpost_if;
         $rule["protocol"] = strval($vaktpost_input["protocol"] ?? "any");
@@ -3091,17 +3299,16 @@ struct PHPSnippet: Sendable {
           $rule["tracker"] = $tracker;
         }
 
-        $vaktpost_src = $vaktpost_input["source"] ?? [];
-        $rule["source"] = ["address" => strval(is_array($vaktpost_src) ? ($vaktpost_src["address"] ?? "any") : "any")];
-        $rule["destination"] = ["address" => $vaktpost_dstaddr];
+        $rule["source"] = $vaktpost_sides["source"];
+        $rule["destination"] = $vaktpost_sides["destination"];
 
-        $vaktpost_dport = strval($vaktpost_input["destination_port"] ?? "");
+        $vaktpost_dport = trim(strval($vaktpost_input["destination_port"] ?? ""));
         if ($vaktpost_dport !== "") {
           $rule["destination_port"] = $vaktpost_dport;
         } else {
           unset($rule["destination_port"]);
         }
-        $vaktpost_lport = strval($vaktpost_input["local_port"] ?? "");
+        $vaktpost_lport = trim(strval($vaktpost_input["local_port"] ?? ""));
         if ($vaktpost_lport !== "") {
           $rule["local_port"] = $vaktpost_lport;
         } else {

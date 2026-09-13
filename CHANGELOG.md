@@ -1,10 +1,20 @@
 # Changelog
 
-## pfSense interface addresses are no longer mistaken for missing aliases
+## Native pfSense address editing and validation
 
-- Rule and port-forward validation now recognizes configured interface subnet
-  keys such as `wan` and interface-address keys such as `wanip` as pfSense
-  system selectors rather than user aliases.
+- Rule and port-forward editors now separate Any, literal addresses/networks,
+  aliases and pfSense system selectors. Configured interface addresses and
+  subnets are offered by their friendly names rather than requiring internal
+  values such as `wanip` to be typed.
+- Saves preserve pfSense's native `any`, `network` and `address` shapes instead
+  of flattening all three into an address. Read-back checks both the value and
+  its shape, so a structurally incorrect save cannot be reported as successful.
+- The firewall validates the native shape, special selector, alias/address,
+  port, protocol, interface and IP family before changing its configuration.
+  Ambiguous or unavailable values fail without a configuration write.
+- Rule and port-forward validation recognizes configured interface subnet keys
+  such as `wan` and interface-address keys such as `wanip` as pfSense system
+  selectors rather than user aliases.
 - The fixed `self`, `pptp`, `pppoe` and `l2tp` selectors are accepted as well,
   while unknown alias-shaped values remain blocked so spelling errors are not
   silently written to the firewall.
