@@ -425,8 +425,11 @@ final class DashboardStore: Observable {
     var profile: ServerProfile { registry.active ?? activeProfile ?? ServerProfile() }
     var canAdminister: Bool { profile.isAdministrationEnabled }
 
-    func logout() async {
-        if let current = registry.active { registry.remove(current) }
+    func logout() async throws {
+        if let current = registry.active {
+            try auditTrail.delete(for: current.id)
+            try registry.remove(current).get()
+        }
         await rebind()
     }
 
@@ -442,9 +445,12 @@ final class DashboardStore: Observable {
         if registry.active?.id == profile.id { await rebind() }
     }
 
-    func removed(_ profile: ServerProfile) async {
-        auditTrail.delete(for: profile.id)
-        registry.remove(profile)
+    func removed(_ profile: ServerProfile) async throws {
+        // Delete the protected records first. If that fails the credential and
+        // profile remain intact. Registry removal similarly keeps metadata when
+        // Keychain cleanup fails, making either failure visible and retryable.
+        try auditTrail.delete(for: profile.id)
+        try registry.remove(profile).get()
         await rebind()
     }
 

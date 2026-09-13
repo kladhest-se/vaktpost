@@ -26,6 +26,26 @@ password you have to change everywhere if the phone is lost. A dedicated local
 account still holds administrator-equivalent power, but you can disable it
 without affecting anything else.
 
+## How the password is stored
+
+Each firewall password is held in a separate Keychain item using
+`WhenUnlockedThisDeviceOnly`. It is unavailable while the device is locked,
+does not migrate to a replacement device, and is excluded from backup restore.
+Vaktpost does not export credentials or connection profiles.
+
+Opening the firewall editor does not read the password. Revealing a saved
+password or replacing one requires a fresh Face ID or Touch ID evaluation with
+no passcode fallback. Passwords saved by earlier builds used an
+`AfterFirstUnlock` item. Migration copies the exact value into the protected
+service, reads the destination back byte-for-byte, and deletes the old item
+only after that succeeds. A failed write or verification leaves the original
+intact for a later retry.
+
+Removing a firewall, including the logout path, removes both current and
+pre-migration Keychain items plus that firewall's encrypted administrative
+history. If protected cleanup fails, the profile remains visible and the app
+reports the failure so removal can be retried.
+
 ## What this app can change
 
 **It can change a firewall.** For most of its life it could not, and this
@@ -63,6 +83,11 @@ deletes must match; reload and state flush operations are marked as read back
 because their effect cannot be proven from a stable identity. A transport
 failure after sending is recorded and shown as an unknown outcome, never as a
 safe retry.
+
+Read-only calls may retry once after a transient transport failure.
+Administrative calls use a separate one-attempt transport and are never
+automatically resent. This distinction is enforced for all eight operations by
+`vaktpost-tools/tests/lost-response.sh`.
 
 Audit records are separated by firewall and encrypted with AES-GCM. The audit
 key is stored in the Keychain as `WhenUnlockedThisDeviceOnly`, and the files
@@ -155,6 +180,9 @@ publish. `Tests/VaktpostTests/XMLRPCTests.swift` covers the same rules in Xcode.
 `vaktpost-tools/tests/write-coordinator.sh` separately fails if any view calls a
 mutation directly or if the coordinator no longer follows pre-state → pending
 audit → execution → read-back → completed audit ordering.
+`vaktpost-tools/tests/credential-lifecycle.sh` fails if password accessibility,
+copy/verify/delete migration, biometric reveal/replacement, or removal cleanup
+regresses.
 
 ## How this compares to the REST build
 

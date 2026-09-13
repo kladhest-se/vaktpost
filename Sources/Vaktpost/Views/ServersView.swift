@@ -17,6 +17,8 @@ struct ServersView: View {
 
     @State private var editing: ServerProfile?
     @State private var addingNew = false
+    @State private var pendingRemoval: ServerProfile?
+    @State private var removalError: String?
 
     var body: some View {
         ScrollView {
@@ -35,7 +37,7 @@ struct ServersView: View {
                             Label("Edit", systemImage: "pencil")
                         }
                         Button(role: .destructive) {
-                            delete(server)
+                            pendingRemoval = server
                         } label: {
                             Label("Remove", systemImage: "trash")
                         }
@@ -82,10 +84,35 @@ struct ServersView: View {
         .sheet(isPresented: $addingNew) {
             NavigationStack { ServerEditView(profile: ServerProfile()) }
         }
+        .confirmationDialog(
+            "Remove this firewall?",
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingRemoval
+        ) { server in
+            Button("Remove firewall and local data", role: .destructive) { delete(server) }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert(removalError ?? "Could not remove firewall", isPresented: Binding(
+            get: { removalError != nil },
+            set: { if !$0 { removalError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        }
     }
 
     private func delete(_ server: ServerProfile) {
-        Task { await store.removed(server) }
+        Task {
+            do {
+                try await store.removed(server)
+            } catch {
+                removalError = error.localizedDescription
+            }
+            pendingRemoval = nil
+        }
     }
 }
 
@@ -168,8 +195,10 @@ struct ServerEditView: View {
 
     @State var profile: ServerProfile
     @State private var password = ""
+    @State private var revealedPassword: String?
     @State private var showKey = false
     @State private var isTesting = false
+    @State private var isAuthenticatingCredential = false
     @State private var message: String?
     @State private var messageHealth: Health = .idle
     @State private var confirmDelete = false
@@ -199,12 +228,12 @@ struct ServerEditView: View {
                             HStack {
                                 Group {
                                     if showKey {
-                                        TextField("password", text: $password)
+                                        TextField(passwordPlaceholder, text: $password)
                                             .textInputAutocapitalization(.never)
                                             .autocorrectionDisabled()
                                             .scaledFont(14, design: .monospaced)
                                     } else {
-                                        SecureField("password", text: $password)
+                                        SecureField(passwordPlaceholder, text: $password)
                                             .textInputAutocapitalization(.never)
                                             .autocorrectionDisabled()
                                             .scaledFont(14, design: .monospaced)
@@ -295,10 +324,18 @@ struct ServerEditView: View {
                 } label: {
                     if isTesting { ProgressView().controlSize(.small) } else { Text("Save") }
                 }
-                .disabled(isTesting || isAuthenticatingAdministration || profile.baseURL.isEmpty)
+                .disabled(isTesting || isAuthenticatingAdministration
+                          || isAuthenticatingCredential || profile.baseURL.isEmpty)
             }
         }
-        .onAppear { password = Keychain.password(for: profile.id) ?? "" }
+        // Never pull a saved administrator password into view state merely
+        // because the editor appeared. A successful biometric prompt is the
+        // only path that reveals it.
+        .onDisappear {
+            password = ""
+            revealedPassword = nil
+            showKey = false
+        }
         .confirmationDialog("Pin this certificate?", isPresented: $offerPinning,
                             titleVisibility: .visible) {
             Button("Pin it") {
@@ -318,8 +355,13 @@ struct ServerEditView: View {
         .confirmationDialog("Remove this firewall?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
                 Task {
-                    await store.removed(profile)
-                    dismiss()
+                    do {
+                        try await store.removed(profile)
+                        dismiss()
+                    } catch {
+                        message = error.localizedDescription
+                        messageHealth = .bad
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -480,9 +522,77 @@ struct ServerEditView: View {
     }
 
     private var toggleKeyButton: some View {
-        Button { showKey.toggle() } label: {
-            Image(systemName: showKey ? "eye.slash" : "eye")
-                .foregroundStyle(theme.labelMuted)
+        Button {
+            if showKey {
+                showKey = false
+            } else {
+                Task { await authenticateToRevealPassword() }
+            }
+        } label: {
+            Group {
+                if isAuthenticatingCredential {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: showKey ? "eye.slash" : "eye")
+                }
+            }
+            .foregroundStyle(theme.labelMuted)
+        }
+        .disabled(isAuthenticatingCredential)
+    }
+
+    private var passwordPlaceholder: String {
+        isExisting && Keychain.hasPassword(for: profile.id)
+            ? "saved password unchanged"
+            : "password"
+    }
+
+    private func authenticateToRevealPassword() async {
+        guard !isAuthenticatingCredential else { return }
+        isAuthenticatingCredential = true
+        defer { isAuthenticatingCredential = false }
+
+        switch await BiometricAuth.authenticate(
+            reason: "Reveal the firewall password for \(profile.displayName)",
+            allowPasscode: false
+        ) {
+        case .success:
+            if password.isEmpty, isExisting, Keychain.hasPassword(for: profile.id) {
+                guard let stored = Keychain.password(for: profile.id) else {
+                    message = "The password is unavailable while the device is locked."
+                    messageHealth = .bad
+                    return
+                }
+                password = stored
+                revealedPassword = stored
+            }
+            showKey = true
+        case let .failed(text), let .unavailable(text):
+            showKey = false
+            message = "Password remains hidden. \(text)"
+            messageHealth = .bad
+        case .cancelled:
+            showKey = false
+        }
+    }
+
+    private func authenticateToReplacePassword() async -> Bool {
+        guard !isAuthenticatingCredential else { return false }
+        isAuthenticatingCredential = true
+        defer { isAuthenticatingCredential = false }
+
+        switch await BiometricAuth.authenticate(
+            reason: "Replace the administrator-equivalent password for \(profile.displayName)",
+            allowPasscode: false
+        ) {
+        case .success:
+            return true
+        case let .failed(text), let .unavailable(text):
+            message = "Password was not changed. \(text)"
+            messageHealth = .bad
+            return false
+        case .cancelled:
+            return false
         }
     }
 
@@ -490,13 +600,29 @@ struct ServerEditView: View {
         isTesting = true
         defer { isTesting = false }
 
-        switch Keychain.setPassword(password, for: profile.id) {
-        case .success:
-            break
-        case .failure(let error):
-            message = error.errorDescription ?? "Failed to save the password."
-            messageHealth = .bad
-            return
+        let hasStoredPassword = Keychain.hasPassword(for: profile.id)
+        let mustSavePassword = !hasStoredPassword
+            || (!password.isEmpty && password != revealedPassword)
+        if mustSavePassword {
+            guard !password.isEmpty else {
+                message = "Password cannot be empty."
+                messageHealth = .bad
+                return
+            }
+            if isExisting {
+                guard await authenticateToReplacePassword() else { return }
+            }
+            let result = isExisting
+                ? Keychain.replacePassword(password, for: profile.id)
+                : Keychain.setPassword(password, for: profile.id)
+            switch result {
+            case .success:
+                revealedPassword = password
+            case .failure(let error):
+                message = error.errorDescription ?? "Failed to save the password."
+                messageHealth = .bad
+                return
+            }
         }
         var p = profile
         p.normalize()

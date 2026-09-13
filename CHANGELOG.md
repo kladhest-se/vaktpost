@@ -1,5 +1,43 @@
 # Changelog
 
+## Lost-response safety and disposable compatibility matrix
+
+- Fixed a critical transport regression: all eight administrative operations
+  were calling the read path, whose retry-on-transport-failure policy could
+  send a mutation twice after pfSense committed it but its response was lost.
+  Writes now use an explicit one-attempt transport.
+- A lost response is still written to the encrypted audit as an unknown
+  outcome. The app directs the user to inspect pfSense and never treats the
+  failure as permission to repeat the action.
+- Rule and port-forward save snippets now retain a caller-supplied tracker when
+  creating a disposable test fixture, so the object can be found, verified and
+  removed safely. The app's normal editors continue to require an existing
+  tracked object.
+- Added a destructive lab matrix for all eight writes, with exact-host and
+  state-loss acknowledgements, one-attempt transport, read-back verification,
+  temporary tracked objects, JSON results, and explicit cleanup guidance.
+- Added fast `lost-response` and `admin-matrix` gates. No live firewall is
+  contacted by the automated suite.
+
+## Credential lifecycle hardening
+
+- Firewall passwords now use `WhenUnlockedThisDeviceOnly`: they are
+  unavailable while the device is locked and cannot migrate to another device
+  or through a backup restore.
+- Existing `AfterFirstUnlock` password items migrate without risking data loss.
+  Vaktpost copies the value, reads the protected destination back exactly, and
+  deletes the source only after verification. Failed steps keep the original
+  for retry.
+- Opening the firewall editor no longer reads a saved password into view state.
+  Revealing it and replacing it are separate actions, each requiring a fresh
+  Face ID or Touch ID evaluation without passcode fallback.
+- Removing a firewall and the logout path now require successful cleanup of
+  both current/pre-migration Keychain entries and the firewall's encrypted
+  administrative history. A failure keeps the profile visible and is reported
+  instead of leaving an invisible administrator credential.
+- Added migration ordering and accessibility tests plus the
+  `credential-lifecycle` repository gate.
+
 ## Administrative transactions and durable verification
 
 - All eight firewall mutations now pass through one `WriteCoordinator`; views

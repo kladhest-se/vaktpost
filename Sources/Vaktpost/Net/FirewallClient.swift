@@ -356,7 +356,7 @@ actor FirewallClient {
     /// Reloads the firewall ruleset.
     func reloadFirewall() async throws -> String {
         try requireAdministration()
-        let dict = try await rpc.runObject(.reloadFirewall)
+        let dict = try await rpc.runObjectOnce(.reloadFirewall)
         _ = try Self.validatedWriteResponse(dict, operation: "Firewall reload")
         return "ok"
     }
@@ -365,7 +365,7 @@ actor FirewallClient {
     func restartService(named serviceName: String) async throws -> String {
         try requireAdministration()
         let snippet = PHPSnippet.restartService(serviceName: serviceName)
-        let dict = try await rpc.runObject(snippet)
+        let dict = try await rpc.runObjectOnce(snippet)
         _ = try Self.validatedWriteResponse(dict, operation: "Service restart")
         return "ok"
     }
@@ -379,7 +379,7 @@ actor FirewallClient {
     func quickBlock(interface: String, address: String, description: String) async throws -> JSONDict {
         try requireAdministration()
         let snippet = PHPSnippet.quickBlock(interface: interface, address: address, description: description)
-        let dict = try await rpc.runObject(snippet)
+        let dict = try await rpc.runObjectOnce(snippet)
         return try Self.validatedWriteResponse(dict, operation: "Quick block")
     }
 
@@ -389,7 +389,7 @@ actor FirewallClient {
     func flushStates(interface: String = "") async throws -> String {
         try requireAdministration()
         let snippet = PHPSnippet.flushStates(interface: interface)
-        let dict = try await rpc.runObject(snippet)
+        let dict = try await rpc.runObjectOnce(snippet)
         _ = try Self.validatedWriteResponse(dict, operation: "State flush")
         return "ok"
     }
@@ -398,7 +398,7 @@ actor FirewallClient {
     func deleteRule(tracker: String) async throws -> String {
         try requireAdministration()
         let snippet = PHPSnippet.deleteRule(tracker: tracker)
-        let dict = try await rpc.runObject(snippet)
+        let dict = try await rpc.runObjectOnce(snippet)
         _ = try Self.validatedWriteResponse(dict, operation: "Rule deletion")
         return "ok"
     }
@@ -410,7 +410,7 @@ actor FirewallClient {
             throw RPCError.malformed("Port-forward deletion requires a tracker ID.")
         }
         let snippet = PHPSnippet.deleteNatRule(tracker: tracker)
-        let dict = try await rpc.runObject(snippet)
+        let dict = try await rpc.runObjectOnce(snippet)
         _ = try Self.validatedWriteResponse(dict, operation: "Port-forward deletion")
         return "ok"
     }
@@ -418,8 +418,11 @@ actor FirewallClient {
     /// Saves (creates or updates) a firewall rule.
     func saveRule(rule: JSONDict) async throws -> String {
         try requireAdministration()
+        guard !(rule.string("tracker") ?? "").isEmpty else {
+            throw RPCError.malformed("Rule save requires a tracker ID.")
+        }
         let snippet = PHPSnippet.saveRule(rule: rule)
-        let dict = try await rpc.runObject(snippet)
+        let dict = try await rpc.runObjectOnce(snippet)
         _ = try Self.validatedWriteResponse(dict, operation: "Rule save")
         return "ok"
     }
@@ -427,8 +430,11 @@ actor FirewallClient {
     /// Saves (creates or updates) a NAT/port forward rule.
     func saveNatRule(rule: JSONDict) async throws -> String {
         try requireAdministration()
+        guard !(rule.string("tracker") ?? "").isEmpty else {
+            throw RPCError.malformed("Port-forward save requires a tracker ID.")
+        }
         let snippet = PHPSnippet.saveNatRule(rule: rule)
-        let dict = try await rpc.runObject(snippet)
+        let dict = try await rpc.runObjectOnce(snippet)
         _ = try Self.validatedWriteResponse(dict, operation: "Port-forward save")
         return "ok"
     }

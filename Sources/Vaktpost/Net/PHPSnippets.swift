@@ -2881,6 +2881,12 @@ struct PHPSnippet: Sendable {
         $rule["descr"] = strval($vaktpost_input["descr"] ?? "");
         $rule["disabled"] = ($vaktpost_input["disabled"] ?? false) ? true : false;
         $rule["log"] = ($vaktpost_input["log"] ?? false) ? true : false;
+        if (!$found) {
+          // A caller outside the editor may deliberately create a fixture.
+          // Keep the supplied stable identity so it can be read back and
+          // removed; an untracked append cannot be cleaned up safely.
+          $rule["tracker"] = $tracker;
+        }
 
         $vaktpost_src = $vaktpost_input["source"] ?? [];
         $vaktpost_dst = $vaktpost_input["destination"] ?? [];
@@ -2993,6 +2999,9 @@ struct PHPSnippet: Sendable {
         $rule["target"] = $vaktpost_target;
         $rule["descr"] = strval($vaktpost_input["descr"] ?? "");
         $rule["disabled"] = ($vaktpost_input["disabled"] ?? false) ? true : false;
+        if (!$found) {
+          $rule["tracker"] = $tracker;
+        }
 
         $vaktpost_src = $vaktpost_input["source"] ?? [];
         $rule["source"] = ["address" => strval(is_array($vaktpost_src) ? ($vaktpost_src["address"] ?? "any") : "any")];

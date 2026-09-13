@@ -111,6 +111,12 @@ primitive.
 The `write-coordinator` suite additionally prevents views from calling those
 mutations directly and checks the required preview, audit, execution and
 read-back order.
+The `lost-response` suite requires every administrative operation to use the
+single-attempt transport. `vaktpost-tools/bin/admin-matrix.py` provides the
+destructive end-to-end CE/Plus check for a disposable VM; it covers all eight
+writes, performs read-back, emits a JSON report, and refuses to connect without
+an exact lab-host confirmation and explicit state-loss acknowledgement. See
+[`docs/LAB_COMPATIBILITY_MATRIX.md`](docs/LAB_COMPATIBILITY_MATRIX.md).
 
 ## Firewall setup (XML-RPC)
 
@@ -236,7 +242,12 @@ public-web/                    project website (static, no build step)
 
 ## Notes
 
-- Passwords are stored in the keychain, one item per firewall keyed by profile UUID, with `kSecAttrAccessibleAfterFirstUnlock`. Never in UserDefaults.
+- Passwords are stored in the Keychain, one item per firewall keyed by profile
+  UUID, with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. They cannot be
+  read while the device is locked, migrate to another device, or enter a
+  backup. Older Keychain items are copied and read back exactly before the
+  source is deleted. Revealing or replacing a saved password requires a fresh
+  Face ID or Touch ID check; Vaktpost provides no credential/profile export.
 - Auto-refresh runs only while the app is in the foreground and is cancelled on backgrounding.
 - Temperature is null on most hardware until a thermal sensor module is loaded
   under **System → Advanced → Miscellaneous → Thermal Sensors**. On Intel

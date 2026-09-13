@@ -70,4 +70,11 @@ final class WriteSafetyTests: XCTestCase {
         XCTAssertTrue(body.contains("'tracker' => $vaktpost_tracker"))
         XCTAssertFalse(body.contains("$config['rules']"))
     }
+
+    func testCreatedLabFixturesKeepTheirSuppliedTracker() {
+        let rule = PHPSnippet.saveRule(rule: JSONDict(["tracker": .string("123")])).body
+        let nat = PHPSnippet.saveNatRule(rule: JSONDict(["tracker": .string("456")])).body
+        XCTAssertTrue(rule.contains("$rule[\"tracker\"] = $tracker;"))
+        XCTAssertTrue(nat.contains("$rule[\"tracker\"] = $tracker;"))
+    }
 }

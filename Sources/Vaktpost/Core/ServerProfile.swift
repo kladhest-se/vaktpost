@@ -36,7 +36,10 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     var host: String { URL(string: baseURL)?.host ?? baseURL }
     var displayName: String { label.isEmpty ? host : label }
 
-    var hasCredentials: Bool { !username.isEmpty && Keychain.password(for: id) != nil }
+    /// Checking whether a credential exists must not copy its value out of the
+    /// Keychain. The password is only read when a foreground request actually
+    /// needs it, or after a biometric check in the editor.
+    var hasCredentials: Bool { !username.isEmpty && Keychain.hasPassword(for: id) }
     var isUsable: Bool { isConfigured && hasCredentials }
     var isAdministrationEnabled: Bool { administrationEnabled == true }
 
@@ -101,8 +104,13 @@ final class ServerRegistry: Observable {
             // is not.
             if let apiKey = Keychain.legacyAPIKey() {
                 switch Keychain.setPassword(apiKey, for: legacy.id) {
-                case .success:
+                case .success where Keychain.password(for: legacy.id) == apiKey:
                     Keychain.deleteLegacy()
+                case .success:
+                    // Never remove the source until the destination has been
+                    // read back byte-for-byte. The next launch can retry.
+                    os_log(.error, log: keychainLog,
+                           "Legacy credential verification failed, keeping the old entry")
                 case .failure(let error):
                     // Left in place deliberately: the next launch tries again.
                     os_log(.error, log: keychainLog,
@@ -146,11 +154,18 @@ final class ServerRegistry: Observable {
         return true
     }
 
-    func remove(_ profile: ServerProfile) {
-        Keychain.delete(for: profile.id)
+    @discardableResult
+    func remove(_ profile: ServerProfile) -> Result<Void, KeychainError> {
+        switch Keychain.delete(for: profile.id) {
+        case .success:
+            break
+        case .failure(let error):
+            return .failure(error)
+        }
         servers.removeAll { $0.id == profile.id }
         if activeID == profile.id { activeID = servers.first?.id }
         persist()
+        return .success(())
     }
 
     func setActive(_ profile: ServerProfile) {
@@ -163,10 +178,17 @@ final class ServerRegistry: Observable {
         persist()
     }
 
-    func reset() {
+    @discardableResult
+    func reset() -> Result<Void, KeychainError> {
+        for server in servers {
+            if case .failure(let error) = Keychain.delete(for: server.id) {
+                return .failure(error)
+            }
+        }
         servers.removeAll()
         activeID = nil
         persist()
+        return .success(())
     }
 
     /// Records the order the sections are in.
@@ -252,12 +274,18 @@ final class ServerRegistry: Observable {
 
 enum KeychainError: LocalizedError {
     case emptyKey
+    case migrationVerificationFailed
+    case deleteFailed(OSStatus)
     case keychainError(OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .emptyKey:
             return "Password cannot be empty."
+        case .migrationVerificationFailed:
+            return "The protected copy could not be verified. The original password was kept."
+        case .deleteFailed(let status):
+            return "The password could not be removed (keychain error \(status)). The firewall was kept."
         case .keychainError(let status):
             switch status {
             case -25293: // errSecUnlockedDeviceRequired
@@ -273,8 +301,9 @@ enum KeychainError: LocalizedError {
     }
 }
 
-/// One keychain item per firewall, keyed by profile UUID. Accessible after
-/// first unlock so a background refresh on a locked device still works.
+/// One keychain item per firewall, keyed by profile UUID. The current service
+/// is readable only while this device is unlocked and never migrates to a new
+/// device or backup restore.
 ///
 /// This is a heavier secret than the API key it replaced. A key was scoped to
 /// the REST API and revocable on its own; this password also opens the
@@ -282,7 +311,11 @@ enum KeychainError: LocalizedError {
 /// everywhere it is used. The service name is new so an upgrade does not
 /// silently reinterpret an old API key as a password.
 enum Keychain {
-    private static let service = "se.kladhest.vaktpost.password"
+    private static let service = "se.kladhest.vaktpost.password.device-only"
+    /// Builds before the credential-hardening release used this service with
+    /// `AfterFirstUnlock`. It remains readable only long enough to copy and
+    /// verify the password in the protected service.
+    private static let legacyPasswordService = "se.kladhest.vaktpost.password"
 
     /// Where the REST build kept its API keys.
     ///
@@ -309,7 +342,7 @@ enum Keychain {
         ]
         let attributes: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
         var status = update(query as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
@@ -324,9 +357,85 @@ enum Keychain {
         return .failure(.keychainError(status))
     }
 
-    static func password(for id: UUID) -> String? { read(account: id.uuidString) }
+    static func hasPassword(for id: UUID) -> Bool {
+        contains(account: id.uuidString, service: service)
+            || contains(account: id.uuidString, service: legacyPasswordService)
+    }
 
-    static func delete(for id: UUID) { delete(account: id.uuidString) }
+    /// Reads the protected item. An older item is migrated by copying it to the
+    /// new service, reading that copy back, and only then deleting the source.
+    /// If any step fails the original remains intact and is returned for this
+    /// foreground request, so an upgrade cannot silently sign somebody out.
+    static func password(for id: UUID) -> String? {
+        if let password = read(account: id.uuidString, service: service) {
+            return password
+        }
+        guard let legacy = read(account: id.uuidString, service: legacyPasswordService) else {
+            return nil
+        }
+        if case .failure(let error) = migratePassword(legacy, for: id) {
+            os_log(.error, log: keychainLog,
+                   "Password protection migration failed, keeping the old entry: %{public}@",
+                   String(describing: error))
+        }
+        return read(account: id.uuidString, service: service) ?? legacy
+    }
+
+    /// Injectable seams make the copy/verify/delete guarantee testable without
+    /// touching a developer's real Keychain.
+    static func migratePassword(
+        _ legacy: String,
+        for id: UUID,
+        write: (String, UUID) -> Result<Void, KeychainError> = { setPassword($0, for: $1) },
+        verify: (UUID) -> String? = { read(account: $0.uuidString, service: service) },
+        removeLegacy: (UUID) -> OSStatus = {
+            deleteStatus(account: $0.uuidString, service: legacyPasswordService)
+        }
+    ) -> Result<Void, KeychainError> {
+        switch write(legacy, id) {
+        case .success:
+            break
+        case .failure(let error):
+            return .failure(error)
+        }
+        guard verify(id) == legacy else {
+            return .failure(.migrationVerificationFailed)
+        }
+        let status = removeLegacy(id)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            return .failure(.keychainError(status))
+        }
+        return .success(())
+    }
+
+    /// Replacements use the same verification rule as migrations. This also
+    /// removes a pre-hardening duplicate after the new value is proven intact.
+    static func replacePassword(
+        _ password: String,
+        for id: UUID,
+        write: (String, UUID) -> Result<Void, KeychainError> = { setPassword($0, for: $1) },
+        verify: (UUID) -> String? = { read(account: $0.uuidString, service: service) },
+        removeLegacy: (UUID) -> OSStatus = {
+            deleteStatus(account: $0.uuidString, service: legacyPasswordService)
+        }
+    ) -> Result<Void, KeychainError> {
+        migratePassword(password, for: id, write: write,
+                        verify: verify, removeLegacy: removeLegacy)
+    }
+
+    /// Remove both the current item and any pre-migration duplicate. Metadata
+    /// is not removed if either Keychain deletion fails, so cleanup can be
+    /// retried instead of leaving an invisible administrator credential.
+    static func delete(for id: UUID) -> Result<Void, KeychainError> {
+        for itemService in [service, legacyPasswordService] {
+            let status = deleteStatus(account: id.uuidString, service: itemService)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                os_log(.error, log: keychainLog, "Password delete failed: %{public}d", status)
+                return .failure(.deleteFailed(status))
+            }
+        }
+        return .success(())
+    }
 
     static func legacyAPIKey() -> String? { read(account: legacyAccount, service: legacyService) }
     static func deleteLegacy() { delete(account: legacyAccount, service: legacyService) }
@@ -348,15 +457,29 @@ enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
+    private static func contains(account: String, service: String) -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
     private static func delete(account: String, service: String = service) {
+        let status = deleteStatus(account: account, service: service)
+        if status != errSecSuccess && status != errSecItemNotFound {
+            os_log(.error, log: keychainLog, "SecItemDelete failed: %{public}d", status)
+        }
+    }
+
+    private static func deleteStatus(account: String, service: String) -> OSStatus {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        let status = SecItemDelete(query as CFDictionary)
-        if status != errSecSuccess && status != errSecItemNotFound {
-            os_log(.error, log: keychainLog, "SecItemDelete failed: %{public}d", status)
-        }
+        return SecItemDelete(query as CFDictionary)
     }
 }

@@ -209,8 +209,11 @@ final class AuditTrail {
     }
 
     /// Removes local audit data when its firewall profile is removed.
-    func delete(for firewallID: UUID) {
-        try? FileManager.default.removeItem(at: fileURL(for: firewallID))
+    func delete(for firewallID: UUID) throws {
+        let url = fileURL(for: firewallID)
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
         if activeFirewallID == firewallID {
             activeFirewallID = nil
             entries = []

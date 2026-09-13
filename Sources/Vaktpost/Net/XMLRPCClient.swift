@@ -174,8 +174,32 @@ actor XMLRPCClient {
         }
     }
 
+    /// Executes exactly one transport attempt.
+    ///
+    /// Administrative calls must use this path. A connection can disappear
+    /// after pfSense commits a change but before the response reaches the
+    /// phone; retrying then repeats a potentially non-idempotent operation.
+    /// The write coordinator records that case as an unknown outcome and asks
+    /// for inspection instead of guessing that nothing happened.
+    func runOnce(_ snippet: PHPSnippet, timeout: TimeInterval? = nil) async throws -> JSONValue {
+        do {
+            return try await queue.run {
+                try await self.perform(snippet, timeout: timeout)
+            }
+        } catch is CancellationError {
+            throw RPCError.cancelled
+        }
+    }
+
     func runObject(_ snippet: PHPSnippet, timeout: TimeInterval? = nil) async throws -> JSONDict {
         guard let dict = JSONDict(try await run(snippet, timeout: timeout)) else {
+            throw RPCError.malformed(nil)
+        }
+        return dict
+    }
+
+    func runObjectOnce(_ snippet: PHPSnippet, timeout: TimeInterval? = nil) async throws -> JSONDict {
+        guard let dict = JSONDict(try await runOnce(snippet, timeout: timeout)) else {
             throw RPCError.malformed(nil)
         }
         return dict

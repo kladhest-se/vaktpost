@@ -135,11 +135,14 @@ final class AuditCoreTests: XCTestCase {
     func testPasswordWhitespaceReachesStorageUnchanged() throws {
         let password = " leading and trailing \n"
         var stored: Data?
+        var accessibility: String?
         try Keychain.setPassword(password, for: UUID(), update: { _, attributes in
             stored = (attributes as NSDictionary)[kSecValueData] as? Data
+            accessibility = (attributes as NSDictionary)[kSecAttrAccessible] as? String
             return errSecSuccess
         }, add: { _ in XCTFail("Existing item should be updated"); return errSecSuccess }).get()
         XCTAssertEqual(stored, password.data(using: .utf8))
+        XCTAssertEqual(accessibility, kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
     }
 
     func testFailedUpdateDoesNotTryReplacingTheExistingItem() {
@@ -159,5 +162,55 @@ final class AuditCoreTests: XCTestCase {
         }, add: { _ in errSecDuplicateItem })
         XCTAssertEqual(updates, 2)
         if case .success = result { XCTFail("Duplicate item was mistaken for a successful save") }
+    }
+
+    func testCredentialMigrationNeverDeletesAnUnverifiedSource() {
+        var deleted = false
+        let result = Keychain.migratePassword(
+            "administrator-equivalent",
+            for: UUID(),
+            write: { _, _ in .success(()) },
+            verify: { _ in "different value" },
+            removeLegacy: { _ in deleted = true; return errSecSuccess }
+        )
+        XCTAssertFalse(deleted)
+        if case .success = result { XCTFail("Unverified migration succeeded") }
+    }
+
+    func testCredentialMigrationDeletesSourceOnlyAfterExactReadBack() throws {
+        let password = " exact value \n"
+        var events: [String] = []
+        try Keychain.migratePassword(
+            password,
+            for: UUID(),
+            write: { value, _ in
+                events.append("write:\(value)")
+                return .success(())
+            },
+            verify: { _ in
+                events.append("verify")
+                return password
+            },
+            removeLegacy: { _ in
+                events.append("delete")
+                return errSecSuccess
+            }
+        ).get()
+        XCTAssertEqual(events, ["write:\(password)", "verify", "delete"])
+    }
+
+    func testCredentialMigrationKeepsSourceWhenProtectedWriteFails() {
+        var verified = false
+        var deleted = false
+        let result = Keychain.migratePassword(
+            "password",
+            for: UUID(),
+            write: { _, _ in .failure(.keychainError(errSecInteractionNotAllowed)) },
+            verify: { _ in verified = true; return "password" },
+            removeLegacy: { _ in deleted = true; return errSecSuccess }
+        )
+        XCTAssertFalse(verified)
+        XCTAssertFalse(deleted)
+        if case .success = result { XCTFail("Failed protected write succeeded") }
     }
 }

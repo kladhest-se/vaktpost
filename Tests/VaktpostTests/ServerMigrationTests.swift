@@ -88,6 +88,8 @@ final class ServerMigrationTests: XCTestCase {
         // nothing and hides every test that would have run after it.
         let listData = try XCTUnwrap(defaults.data(forKey: listKey))
         let servers = try JSONDecoder().decode([ServerProfile].self, from: listData)
+        let migratedID = try XCTUnwrap(servers.first?.id)
+        defer { _ = Keychain.delete(for: migratedID) }
         XCTAssertEqual(servers.count, 1)
         XCTAssertEqual(servers[0].baseURL, "https://firewall.example")
         XCTAssertEqual(servers[0].label, "Test firewall")
