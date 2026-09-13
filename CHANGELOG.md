@@ -1,5 +1,464 @@
 # Changelog
 
+## Rule and forward rows resolved aliases pfSense shows by name
+
+pfSense's own rules list shows "alias_host_nas003" — the alias, clickable,
+by name. This app was showing what that alias resolves to, "172.16.1.33",
+in the same field. Same for port aliases: pfSense's own list shows
+"alias_port_hyper_backup"; this app showed "6281, 5000, 5001". A rule was
+never lying — the values are exactly what the alias contains — but the list
+was answering a different question than pfSense's own list answers, and
+looked wrong sitting next to it for that reason.
+
+Source, destination, target, and both ports on both the rule row and the
+port-forward row now show the literal stored value, matching pfSense's own
+list exactly. `resolvedValue`, the function that resolved them, is now
+called from nowhere in the app and has been removed rather than left as
+dead code inviting a future "helpful" reintroduction.
+
+One correction to my own comment while making this change: the fix's first
+draft justified itself by pointing at `expandedAlias` as "the explicit
+drill-down used in the detail view" — checked, and it is not called from
+anywhere either. Fixed the comment rather than let a confident, false claim
+about the codebase stand uncorrected next to the change it was explaining.
+
+## Filter rules and port forwards were never refreshed, ever
+
+The two rules a reorder kept failing against were not the victims of a race.
+They genuinely no longer exist on the firewall — the error now confirms this
+directly ("no longer exists anywhere in the ruleset") — and the same two
+trackers failed identically on every retry because nothing had re-fetched
+`store.rules` since long before they were removed. This is the actual cause,
+traced to its root rather than patched at the symptom.
+
+`store.refresh()` — what every successful write in the Firewall feature calls
+afterward, and now what a failed reorder calls too — has never refreshed
+filter rules or port forwards, at all, under any circumstance. Not a stale
+window, not an occasional miss: **the general refresh cycle simply never
+requested them.** Every other section — clients, VPN, system, the firewall
+log — has a line launching its fetch; rules and forwards did not. The only
+paths that ever populated `store.rules`/`store.portForwards` were a screen's
+first appearance (guarded against repeating itself, by design, for exactly
+that case) and a handful of call sites passing `force: true` directly for
+their own narrow reasons. Once a screen had loaded rules the first time in a
+session, nothing — not a pull to refresh, not an automatic refresh timer, not
+a `store.refresh()` after any other successful write — ever asked again.
+
+Two changes, at the two different levels this bug lived on:
+
+- `store.refresh()`'s own cycle now includes rules and port forwards as one
+  of its concurrent fetches, the same way it already fetches the firewall
+  log, clients, and VPN status. One fetch, not two: `.firewall` and
+  `.portForwards` both resolve to the identical `loadFirewallObjects(force:
+  true)` call, so requesting both as separate concurrent tasks would have
+  raced that one call against itself. Requesting `.firewall` alone refreshes
+  rules, forwards, and separators together, exactly as it already does
+  everywhere else this function is called from.
+- The shared per-section fetcher that both `store.refresh()` and the
+  Diagnostics retry button route through now passes `force: true` rather
+  than the default — `loadFirewallObjects()`'s own once-per-session guard is
+  correct for a screen opening for the first time, and is exactly backwards
+  for a refresh, whose entire purpose is superseded by it.
+- The reorder failure path specifically now also triggers a refresh and
+  discards the stale pending order, rather than leaving a person free to keep
+  resubmitting the identical doomed payload against the identical stale data
+  forever. A "Save order" built from data just proven wrong is not worth
+  preserving; a fresh drag against current data is the only version of the
+  next attempt that can mean anything.
+
+I made a mechanical mistake putting the first of these together — a second
+edit to the same file was built from a copy of the file read before the first
+edit was written, so writing it back discarded the first change silently.
+Caught by checking that the change was actually present in the result rather
+than trusting that two edits which each reported success necessarily left
+both changes behind.
+
+## The mismatch error now says where a rule actually is
+
+The previous round named the specific trackers a reorder disagreed about —
+"not currently on this interface: 1788431726, 1788371063" — which was real
+progress and immediately raised the next question: where does the firewall
+think they are instead? A bare tracker number does not distinguish "this rule
+moved to another interface since it was fetched" from "this rule no longer
+exists at all," and those call for different responses.
+
+For every such tracker, the snippet now searches the entire ruleset and
+reports what it finds: `1788431726 (actually on "ovpns5")` if the rule
+exists elsewhere, `(no longer exists anywhere in the ruleset)` if it does
+not. One or the other will name the actual disagreement directly rather than
+leaving it to be inferred from a bare number a second time.
+
+If the report comes back naming a different raw interface value that the app
+also displays under the same "OPENVPN1" label — the leading theory, since
+`interfaceLabel` already matches a rule's interface field against three
+different stored names for one configured interface (`device`,
+`internalName`, `name`), any of which could appear in different rules
+depending on how or when they were created — that confirms the cause
+precisely rather than leaves it a guess. If it instead reports the rule as
+gone entirely, that points at deletion elsewhere between fetch and save
+rather than a naming mismatch, which is a different problem with a different
+fix.
+
+Verified against the real PHP interpreter: a `write-contract` case reorders
+using a rule tracker that genuinely belongs to a different interface in the
+fixture, and asserts the response names that interface specifically.
+
+A second backslash-escape rejection came out of building this one, for the
+same reason as the first: PHP double-quoted strings needed an embedded literal
+quote character, which needs a backslash to write with double quotes but
+needs nothing at all with single quotes. Rewritten with PHP's own single-quote
+syntax rather than adding another backslash for the gate to refuse.
+
+## The reorder mismatch error said nothing about what actually mismatched
+
+Reordering OPENVPN1 — two rules, no separators, none of them untracked —
+still failed with the same generic "does not match this interface's current
+rules and separators exactly." No untracked rule was the cause here, which
+was the previous fix's hypothesis; something else disagreed, and the message
+gave no way to tell what without guessing again.
+
+The message now says which. On a mismatch, the snippet computes the actual
+difference — which trackers or separator keys the firewall has that the
+submission didn't include, and which the submission included that the
+firewall doesn't currently have — and reports them by name. A missing rule,
+an extra one, a stale separator key: each now reads as what it is instead of
+one interchangeable "mismatch."
+
+Verified against the real PHP interpreter, not only traced by hand: a new
+`write-contract` case submits an order missing one rule and asserts the
+returned error names that exact rule.
+
+One rephrasing came out of building this: the message originally read
+"...exactly (" immediately before the detail — and the publish gate's
+function-call scanner reads PHP string contents the same as PHP syntax, so
+"exactly (" inside a string was indistinguishable from a call to a function
+named `exactly`. Rephrased with a colon rather than loosening what the gate
+checks.
+
+The next attempt on OPENVPN1 should return a message specific enough to
+finally show what disagreed, rather than another round of guessing.
+
+## Reordering failed with no way to tell why
+
+`reorder_filter_rules` has always silently skipped any same-interface rule
+with no tracker when it builds what it considers that interface's current
+set — the same shape as `save_rule` and `delete_rule`, both of which already
+refuse an empty tracker outright. If even one rule on the selected interface
+has none, a submission built from every visible rule can never match the
+firewall's own count, and every drag on that interface fails the same
+"mismatch" — dragged sensibly or not — with nothing said about why.
+
+This is now checked before the drag UI is ever offered. A rule with no
+tracker is named specifically — "One rule here has no stable ID: <its
+description>" — and reordering is not offered on that interface at all until
+it changes, rather than letting someone drag, wait, and get an error that
+gives no indication which rule was the problem or that a rule was the
+problem at all.
+
+Stated plainly alongside it, since it is a real limit and not a minor one:
+this app cannot edit, delete, or reorder a filter rule pfSense has not given
+a tracker. Nothing here heals one the way an edit already heals an untracked
+port forward — filter rules almost always get a tracker through pfSense's
+own mechanism, unlike NAT rules which never do through the ordinary web GUI,
+so there has been no equivalent fallback built for this side. A rule ending
+up untracked at all is itself unusual on a normal firewall; a package that
+injects rules by some path other than the ordinary edit form is a plausible
+source, though this does not depend on knowing which one it is here — it
+only needs to notice the rule has nothing stable to move it by.
+
+## Floating rules were bleeding into individual interface tabs
+
+A floating rule's interface field holds several interface names at once —
+that plurality is the actual definition of `isFloating`. Selecting a specific
+interface tab checked whether that interface was *one of* a rule's names, so
+a floating rule scoped to several interfaces appeared under every one of
+their tabs, when pfSense shows a floating rule only under Floating, regardless
+of which interfaces it applies to.
+
+This was already handled correctly elsewhere: `RulePlacement` and
+`reorderFilterRules` both compare a rule's interface field for exact
+equality, which excludes a multi-valued field with no special case needed.
+The visible rules list was the one place still reasoning about it differently
+from the rest of the app. It now excludes a floating rule from a specific
+interface's list explicitly, the same way those two already do.
+
+This also removes a failure mode the reorder feature could otherwise have
+hit without anyone reporting it yet: a floating rule visible under a specific
+interface's tab would have been draggable there, but `reorderFilterRules`'s
+own exact-match validation already excludes floating rules from that
+interface's reorderable set — so submitting an order that included one would
+have been rejected as a mismatch the moment someone tried to save it.
+
+## Editing an untracked port forward was rejected before it could heal itself
+
+`saveNatRule`'s own PHP has had a complete answer to "this forward has no
+tracker" for a while: match it by its original interface, destination, port
+and target instead, and assign it a fresh tracker on save so it is healable
+going forward. `PortForwardEditForm` already sends those original fields.
+`WriteCoordinator.validate()` already knew about the fallback. Two things
+between them did not:
+
+- **`FirewallClient.saveNatRule`'s own guard rejected the edit outright** —
+  "Port-forward editing requires a tracker ID" — before the payload, which
+  already carried everything the snippet needed, ever left the phone. It now
+  also accepts an edit whose forward has no tracker but does carry its
+  original identity.
+- **`validatedSaveResponse` would then have rejected the healed result
+  anyway.** It compared the tracker pfSense returned against the one that was
+  requested, and for a healed forward those are never equal — there was no
+  tracker to request in the first place, so a freshly assigned one is the
+  correct result, not a mismatch. The comparison is now skipped when nothing
+  was requested. A filter rule edit never reaches this with an empty tracker
+  at all — `validate()` already requires one before the request is sent — so
+  this changes nothing for that path.
+
+## Separator colours were all rendering the same
+
+`SeparatorBar` matched a separator's stored colour with an exact switch —
+`"warning"`, `"danger"`, `"success"`, everything else falls to the same
+default. `color` is read correctly from the payload, confirmed by re-reading
+the snippet, but pfSense's actual convention for that field was only ever
+confirmed as "used directly as a CSS class name"
+(`display_separator()`'s own `<td class="' . $cellcolor . '">`) — not
+confirmed as the bare word. If the real value is a compound class built
+around it, an exact match never fires. The comparison is `contains` now:
+correct for the bare word, and also correct for any class name built around
+it, without needing pfSense's exact convention pinned down first. Worth
+checking on a real firewall — this is the tolerant fix, not a confirmed one.
+
+## Investigated: a filter rule save failing "the rule tracker no longer exists"
+
+Traced completely and found no bug in this app's own handling. The tracker
+sent on save is `rule.tracker` — the same value the rule's own detail screen
+was opened with — carried through `RuleEditForm` and `toDict` unchanged; noteworthy since
+`WriteCoordinator.snapshotBefore` already re-reads the live ruleset immediately
+before the write and did not itself reject this at that point. A specific,
+checkable hypothesis — that a numeric tracker picks up a `.0` suffix somewhere
+in JSON decoding and silently stops matching the firewall's own string — was
+checked directly against `JSONValue.stringValue` and ruled out; it already
+converts a whole-number value through `Int(n)` rather than raw string
+interpolation.
+
+What is left, given `snapshotBefore`'s own fresh read still passed moments
+before the write failed, is a narrow window in which something else changed
+that interface's rules between those two calls. The visible pfBlockerNG
+activity on this firewall — its own cron-driven rule regeneration — is the
+most plausible candidate, and "not_found" is the correct, safe response to
+that race rather than a wrong one: refusing beats guessing. If this recurs on
+the *same* rule specifically rather than varying, that would point to
+something this investigation has not found yet and is worth reporting back.
+
+## NAT reordering: not built yet, and now better scoped
+
+Still not implemented — dragging a port forward has no effect, as before. But
+the investigation above into the NAT tracker-healing path clarifies exactly
+what a safe version needs: the same hybrid identity `saveNatRule` already
+uses and already ships with — tracker when one exists, the original
+interface/destination/port/target tuple when it does not — extended from a
+single edit to a whole-list permutation. That is real, bounded work now that
+the identity question has an answer, rather than the open one it was last
+time.
+
+## Drag to reorder rules and separators
+
+A leading drag handle (≡) on every rule and separator row, when exactly one
+interface is selected with nothing searched or floating — the same condition
+already required to show a separator's position at all, because reordering
+needs the identical well-defined, complete view of that interface's ruleset
+that showing a position does.
+
+- **The backend already existed.** `reorderFilterRules`, in `PHPSnippets.swift`
+  — fully written, fully verified against real PHP execution and a synthetic
+  multi-interface fixture in `write-contract.sh` — had been sitting unused,
+  the same way `RuleSimulationEngine` and `RuleConflictDetector` once were.
+  What was missing was everything between it and a person's finger: no
+  `WriteCoordinator` case, no `FirewallClient` method, no UI. This wires it up
+  rather than writing a second, competing implementation, which is what
+  nearly happened before the existing one was found.
+- Dragging rearranges an in-memory order only. A **Save order** bar appears
+  once it differs from the firewall's own order, with **Discard** beside it —
+  matching pfSense's own drag-reorder UI, which does not write on every drop
+  either. Saving goes through the same confirmation, rate limit, audit trail
+  and read-back verification as every other write; the read-back specifically
+  confirms the interface reads back in the exact order that was requested,
+  not merely that the write did not error.
+- Only the handle starts a drag. The rest of a row is untouched — tapping a
+  rule still opens it — because "pick this up" and "open this" need to stay
+  two different gestures on the same row.
+- A drag whose result no longer matches the firewall's current rules and
+  separators — because a refresh happened, or something changed elsewhere —
+  is discarded silently rather than shown or saved. Showing a stale order as
+  if it were current would be a wrong answer dressed as a live one.
+
+### A near-duplicate caught before it shipped
+
+The first attempt at this wrote a brand new pair of snippets,
+`reorder_rules`/`reorder_nat_rules`, from scratch — before running the write
+audit, which immediately reported `reorder_filter_rules` as an *undeclared*
+write: a snippet already existed under that exact name, already in
+`writeOperations`, already covered by seven `write-contract` test cases. The
+duplicate was deleted; this feature wires up the original.
+
+### The NAT half is not included, and will not be built the same way
+
+pfSense assigns **no tracker at all** to a NAT rule saved through its own web
+interface — confirmed directly against `firewall_nat.php` and
+`firewall_nat_edit.php`, neither of which references one anywhere. A NAT
+reorder snippet was written to mirror the filter one exactly, keyed on
+tracker the same way, and caught before it was wired to anything: on a typical
+firewall, where every port forward was created through pfSense's own GUI,
+every forward would have been excluded from the rebuilt array and silently
+deleted on first use. It was deleted rather than left in the tree unreachable
+— unreachable is not durable insurance against a later turn wiring it up
+without rediscovering the same problem.
+
+A safe version needs a different identity for a NAT rule than "its tracker,"
+since most real ones do not have one. `saveNatRule` already establishes what
+that identity looks like for a single edit — interface, destination, port and
+target together — and a reorder built the same way is real, separate work
+covering more cases (two forwards that happen to share all four of those, a
+forward that changed underfoot between fetch and drop) than adapting seven
+lines of validation.
+
+## Separators: two structural bugs fixed against pfSense's actual source
+
+The first version of this feature guessed at two things it should not have
+guessed at, and both guesses were wrong. Fixed by reading `filter.inc` itself
+rather than inferring further.
+
+- **`row` is an array, not a string.** pfSense stores a separator's position
+  as `row/0` — e.g. `["fr3"]` — and reads it with
+  `array_get_path($separator, 'row/0')`. The snippet read `row` as a plain
+  value, so `strval()` on the array produced the literal string `"Array"`,
+  which has no digits and could never be parsed. Every separator's position
+  was silently unrecoverable.
+- **Filter and NAT separators are not the same shape.** Filter really is
+  grouped by interface, at `filter/separator/<interface>`. NAT is a single
+  flat list at `nat/separator` with **no interface grouping at all** —
+  confirmed from `firewall_nat.php`, which reads `nat/separator` directly and
+  numbers every forward with one counter that runs across the whole list
+  regardless of interface. The snippet had assumed NAT mirrored filter's
+  per-interface grouping, so it iterated NAT's flat `sepN` keys as if they
+  were interface names, and iterated each separator's own fields (`row`,
+  `text`, `color`) as if each one might itself be a separate separator. That
+  is where "Separator — sep0" came from: `sep0` is the separator's own key,
+  read out as though it were an interface.
+- The row prefix is confirmed as exactly two characters, `"fr"`, from
+  `separator_rows()`'s own `substr(..., 2)` — no longer a tolerant guess at
+  an unknown prefix.
+
+### Interleaving now follows pfSense's own rule order
+
+- On the Rules pane, unchanged in principle: a separator renders at its
+  recorded position among that interface's own rules, only when exactly one
+  interface is selected and nothing is being searched.
+- On the NAT pane, separators are now interleaved at their real position in
+  the full forward list — not, as before, dumped as an unordered summary
+  above the list. Because NAT's position is a global count rather than a
+  per-interface one, this only needs "nothing is being searched" as its
+  condition; there is no interface selector on this pane to begin with.
+- Both panes read the identical `precedingRuleCount` field on
+  `RuleSeparator`; what differs, and what each pane's own code now says
+  explicitly, is what that count is taken *against* — one interface's rules
+  for filter, the whole list for NAT.
+
+### What is still open: dragging to reorder
+
+Not implemented in this round, and not attempted, because the risk sits behind
+one specific gap. The editor already has a rule-reordering primitive —
+`saveRule` accepts a `placement: "before"` with a stable tracker anchor, used
+today when saving an edited or newly created rule at a chosen position — but
+that is a single, deliberate move made through the editor, not a drag gesture,
+and nothing equivalent exists for port forwards yet.
+
+Separators have no reposition mechanism at all, and that is the part that
+cannot be added safely without more work first. pfSense keeps a dedicated
+function, `shift_separators()`, purely to renumber every separator's `row`
+value when a rule is inserted or removed at a given index — the direction and
+amount of the shift depends on whether a rule is being added or removed and
+where, relative to each separator. Moving a rule (by drag or otherwise)
+without reproducing that renumbering leaves every separator below the moved
+point pointing at the wrong rule from that moment on — which, worth noting, is
+a real, unresolved bug in pfSense's own web UI today, reported by its own
+users. Writing to this app's second, independent copy of the same fragile
+mechanism without first porting that renumbering faithfully would only add a
+second way for it to happen.
+
+## pfSense's own separators are now visible
+
+The rule and port-forward lists never showed the coloured grouping bars
+pfSense's own web GUI draws between rules — "Teamspeak" in a port-forward
+list, for instance. They were simply invisible: this app never read that part
+of the configuration at all.
+
+- Read-only. There is no write path for this and none is planned on what could
+  be confirmed. pfSense stores a separator's position as a bare count of
+  preceding rules rather than anchoring it to a rule's tracker, and pfSense's
+  own users report separators drifting out of place after an ordinary
+  insert or delete performed from pfSense's *own* web UI — a known,
+  unfixed fragility in a feature that changes nothing about what traffic is
+  allowed. Writing this from a second piece of software without the exact
+  placement semantics confirmed would risk making a real, if cosmetic,
+  pfSense bug worse, for no functional gain.
+- What's confirmed against pfSense's actual source: separators live at
+  `filter/separator/<interface>`, one entry per separator, keyed under an
+  interface name. What is **not** confirmed — because nothing short of a live
+  firewall or pfSense's own rendering code would confirm it — is the exact
+  key holding a separator's label, or the precise meaning of its position
+  field once decoded. The snippet reads every plausible label key rather than
+  betting on one, and passes the position through as the untouched string
+  pfSense wrote, for the model to interpret rather than the snippet asserting
+  a meaning it cannot verify.
+- NAT's separators are read from the equivalent path one level down, on the
+  working assumption that it mirrors the filter side. That assumption itself
+  is unconfirmed; if it's wrong, NAT separators simply don't appear, which is
+  a quiet miss rather than a wrong answer.
+- On the Rules pane, a separator renders in its recorded position **only**
+  when exactly one interface is selected, nothing is being searched, and
+  floating rules aren't shown — a position is a claim about one interface's
+  unfiltered rule order, and interleaving it into "All interfaces" or a
+  search result would be answering a question that no longer has the shape
+  the position was recorded against. The screen says the position is inferred
+  and to check the web GUI if a bar looks out of place.
+- On the NAT pane, which shows every forward regardless of interface and has
+  no single rule order to place a bar against, separators are listed by name
+  next to the interface they belong to instead — visible, without a position
+  claim this pane can't support.
+- Fetched alongside rules and forwards, but failing quietly if it fails: this
+  is read-only decoration on data that already loaded successfully, so a
+  problem here doesn't raise an error banner or block a retry of the section
+  that actually matters.
+
+## Editor save errors were invisible
+
+Editing and saving a rule or a port forward could silently do nothing: the
+confirmation popup would close and nothing would change on the firewall, with
+no error shown and nothing in the firewall's own log.
+
+- **The cause was structural, not a bad value.** The confirmation dialog is a
+  sheet nested inside the edit sheet. On failure, the error was being caught
+  and stored on the screen *two levels back* — the rule list or the rule
+  detail view — which was still covered by the edit sheet, since a failed save
+  deliberately did not dismiss it. An alert attached to a view that is covered
+  by an active sheet cannot appear until that sheet closes, and nothing closed
+  it, so the failure was real and simply never seen.
+- This affected all four write paths through the editor: editing or creating a
+  rule, editing or creating a port forward. Deleting was unaffected — its
+  confirmation is a single sheet, not nested inside another.
+- `RuleEditSheet` and `PortForwardEditSheet` now own their save error state
+  and show their own alert, since each is the view actually on screen at the
+  moment its own confirmation dismisses. `onSave` changed from
+  `async -> Bool` to `async throws -> Void` so the real error propagates
+  instead of being collapsed into a boolean before it can be displayed.
+- The top-level Firewall list's error state, which the create flow used to
+  write to, is now unused there and has been removed rather than left as dead
+  state that looks wired up but never fires.
+- Verified against the project's `write-contract` suite, which executes the
+  actual generated write PHP against synthetic pfSense configuration: editing
+  a port forward — including toggling `disabled` on one whose destination is
+  an interface address like `wanip` — round-trips correctly. The PHP was never
+  the problem; the error it was correctly returning could not reach the screen.
+
 ## Quick Block theme, honest diagnostics and visible blocks
 
 - Quick Block now uses the active Catppuccin background, cards, fields,

@@ -271,6 +271,14 @@ actor FirewallClient {
         try await rpc.runList(.portForwards).map(PortForward.init)
     }
 
+    /// Filter-rule and NAT separators, together, since one call reads both.
+    func ruleSeparators() async throws -> (filter: [RuleSeparator], nat: [RuleSeparator]) {
+        let payload = try await rpc.runObject(.ruleSeparators)
+        let filter = payload.list("filter").compactMap(JSONDict.init).map(RuleSeparator.init)
+        let nat = payload.list("nat").compactMap(JSONDict.init).map(RuleSeparator.init)
+        return (filter, nat)
+    }
+
     // MARK: High availability
 
     func carp() async throws -> CARPStatus {
@@ -366,7 +374,14 @@ actor FirewallClient {
         guard let tracker = result.string("tracker"), !tracker.isEmpty else {
             throw RPCError.malformed("\(operation) did not return a tracker ID.")
         }
-        if !isCreate, tracker != requestedTracker {
+        // Skipped when nothing was requested. An empty `requestedTracker` on
+        // an edit means a legacy save healing an untracked NAT rule — there
+        // was no tracker to differ *from*, so a freshly assigned one is the
+        // correct result, not a mismatch. A filter-rule edit never reaches
+        // this with an empty tracker at all; `WriteCoordinator.validate()`
+        // requires one before the request is ever sent, so this relaxation
+        // changes nothing for that path.
+        if !isCreate, !requestedTracker.isEmpty, tracker != requestedTracker {
             throw RPCError.fault(0, "\(operation) returned a different tracker ID.")
         }
         return result
@@ -465,10 +480,25 @@ actor FirewallClient {
         try requireAdministration()
         let tracker = rule.string("tracker") ?? ""
         let isCreate = rule.bool("create") ?? false
-        guard (isCreate && tracker.isEmpty) || (!isCreate && !tracker.isEmpty) else {
+        // pfSense assigns no tracker to a NAT rule at all through its own web
+        // GUI — confirmed against `firewall_nat_edit.php`, which identifies a
+        // forward purely by array position. So an edit of a forward nobody
+        // has saved through this app yet legitimately arrives with no
+        // tracker, and the snippet already has a complete fallback for that:
+        // it matches on the forward's original interface, destination, port
+        // and target instead, and heals it with a fresh tracker on save.
+        //
+        // This guard used to reject that case outright, before the payload —
+        // which already carried those original fields — ever left the
+        // phone. `WriteCoordinator.validate()` already knew about the
+        // fallback; this method had not been told.
+        let hasLegacyIdentity = !(rule.string("original_interface") ?? "").isEmpty
+            && !(rule.string("original_target") ?? "").isEmpty
+        guard (isCreate && tracker.isEmpty)
+                || (!isCreate && (!tracker.isEmpty || hasLegacyIdentity)) else {
             throw RPCError.malformed(isCreate
                                      ? "Port-forward creation must not supply a tracker ID."
-                                     : "Port-forward editing requires a tracker ID.")
+                                     : "Port-forward editing requires a tracker ID or the forward's original identity.")
         }
         let snippet = PHPSnippet.saveNatRule(rule: rule)
         let dict = try await rpc.runObjectOnce(snippet)
@@ -476,6 +506,47 @@ actor FirewallClient {
             dict, operation: "Port-forward save", requestedTracker: tracker, isCreate: isCreate
         )
     }
+
+    /// One item in a drag-produced order: a rule by tracker, or a separator
+    /// by its pfSense key.
+    enum ReorderItem {
+        case rule(tracker: String)
+        case separator(key: String)
+
+        var json: JSONValue {
+            switch self {
+            case .rule(let tracker):
+                return .object(["kind": .string("rule"), "id": .string(tracker)])
+            case .separator(let key):
+                return .object(["kind": .string("separator"), "id": .string(key)])
+            }
+        }
+
+        /// A single comparable string, for building and comparing whole
+        /// orders without repeatedly pattern-matching the case.
+        var token: String {
+            switch self {
+            case .rule(let tracker): return "rule:\(tracker)"
+            case .separator(let key): return "separator:\(key)"
+            }
+        }
+    }
+
+    /// Reorders one interface's filter rules and separators, from a complete
+    /// drag-produced arrangement.
+    func reorderFilterRules(interface: String, items: [ReorderItem]) async throws -> JSONDict {
+        try requireAdministration()
+        guard !interface.isEmpty else {
+            throw RPCError.malformed("Reordering rules requires an interface.")
+        }
+        guard !items.isEmpty else {
+            throw RPCError.malformed("Reordering rules requires a non-empty order.")
+        }
+        let snippet = PHPSnippet.reorderFilterRules(interface: interface, items: items.map(\.json))
+        let dict = try await rpc.runObjectOnce(snippet)
+        return try Self.validatedWriteResponse(dict, operation: "Rule reorder")
+    }
+
 
     // MARK: - Staged operations
 

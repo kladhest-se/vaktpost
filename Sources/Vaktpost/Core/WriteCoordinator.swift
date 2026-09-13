@@ -15,6 +15,7 @@ enum AdministrativeWrite: Sendable {
     case saveRule(rule: JSONDict, displayName: String)
     case deleteNatRule(tracker: String, displayName: String)
     case saveNatRule(rule: JSONDict, displayName: String)
+    case reorderFilterRules(interface: String, items: [FirewallClient.ReorderItem], displayName: String)
 
     var action: AuditAction {
         switch self {
@@ -28,6 +29,7 @@ enum AdministrativeWrite: Sendable {
             return Self.movesRule(rule) ? .reorderRules : .editRule
         case .deleteNatRule: return .deletePortForward
         case .saveNatRule(let rule, _): return Self.isCreate(rule) ? .addPortForward : .editPortForward
+        case .reorderFilterRules: return .reorderRules
         }
     }
 
@@ -41,6 +43,8 @@ enum AdministrativeWrite: Sendable {
         case .flushStates(let interface): return interface.isEmpty ? "all interfaces" : interface
         case .deleteRule(_, let displayName), .saveRule(_, let displayName),
              .deleteNatRule(_, let displayName), .saveNatRule(_, let displayName):
+            return displayName
+        case .reorderFilterRules(_, _, let displayName):
             return displayName
         }
     }
@@ -64,6 +68,10 @@ enum AdministrativeWrite: Sendable {
             return "Delete port forward \(displayName.isEmpty ? tracker : displayName)"
         case .saveNatRule(let rule, let displayName):
             return "\(Self.isCreate(rule) ? "Add" : "Edit") port forward \(displayName)"
+        case .reorderFilterRules(_, let items, let displayName):
+            let separators = items.filter { if case .separator = $0 { return true }; return false }.count
+            return "Reorder rules on \(displayName)"
+                + (separators > 0 ? " (\(separators) separator\(separators == 1 ? "" : "s"))" : "")
         }
     }
 
@@ -93,6 +101,12 @@ enum AdministrativeWrite: Sendable {
         case .saveNatRule(let rule, let displayName):
             let verb = Self.isCreate(rule) ? "Add" : "Update"
             return "\(verb) port forward “\(displayName)” as \(Self.natDescription(rule))."
+        case .reorderFilterRules(let interface, let items, _):
+            let ruleCount = items.filter { if case .rule = $0 { return true }; return false }.count
+            let sepCount = items.count - ruleCount
+            var text = "Rearrange \(interface) to the new order — \(ruleCount) rule\(ruleCount == 1 ? "" : "s")"
+            if sepCount > 0 { text += " and \(sepCount) separator\(sepCount == 1 ? "" : "s")" }
+            return text + ". Every other interface's rules are left exactly where they are."
         }
     }
 
@@ -361,11 +375,47 @@ final class WriteCoordinator {
             }
         case .saveNatRule(let rule, _):
             let isCreate = rule.bool("create") ?? false
-            guard isCreate || !(rule.string("tracker") ?? "").isEmpty else {
-                throw WriteCoordinatorError.invalidOperation("a stable tracker ID is required for an edit")
+            let hasTracker = !(rule.string("tracker") ?? "").isEmpty
+            // Real pfSense NAT rules carry no tracker at all -- pfSense
+            // assigns one to filter rules and never to NAT rules -- so an
+            // edit of a forward nobody has saved through this app yet
+            // legitimately has none. What it must have instead is the
+            // forward's own identity as fetched, which the save snippet
+            // matches on when no tracker is present. Requiring only that
+            // they are non-empty here; whether they actually match a
+            // forward still on the firewall is what `snapshotBefore` and
+            // the write itself go on to check.
+            let hasLegacyIdentity = !(rule.string("original_interface") ?? "").isEmpty
+                && !(rule.string("original_target") ?? "").isEmpty
+            guard isCreate || hasTracker || hasLegacyIdentity else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "a stable tracker ID or the forward's original identity is required for an edit")
             }
         case .reloadFirewall, .flushStates:
             break
+        case .reorderFilterRules(let interface, let items, _):
+            guard !interface.isEmpty else {
+                throw WriteCoordinatorError.invalidOperation("an interface is required")
+            }
+            guard !items.isEmpty else {
+                throw WriteCoordinatorError.invalidOperation("a non-empty order is required")
+            }
+            // Every id present once. The snippet re-validates this itself
+            // against the firewall's own current state — this is the same
+            // check done early, against what the app already has, so an
+            // obviously malformed drag is refused before a round trip rather
+            // than after one.
+            var seen = Set<String>()
+            for item in items {
+                let id: String
+                switch item {
+                case .rule(let tracker): id = "rule:\(tracker)"
+                case .separator(let key): id = "separator:\(key)"
+                }
+                guard seen.insert(id).inserted else {
+                    throw WriteCoordinatorError.invalidOperation("the order contains a duplicate")
+                }
+            }
         }
     }
 
@@ -402,6 +452,9 @@ final class WriteCoordinator {
         case .saveNatRule(let rule, _):
             let result = try await client.saveNatRule(rule: rule)
             return Receipt(status: result.string("status") ?? "ok", tracker: result.string("tracker"))
+        case .reorderFilterRules(let interface, let items, _):
+            let result = try await client.reorderFilterRules(interface: interface, items: items)
+            return Receipt(status: result.string("status") ?? "ok", tracker: nil)
         }
     }
 
@@ -456,7 +509,17 @@ final class WriteCoordinator {
                 + Self.requestedPlacementSnapshot(expected)
         case .saveNatRule(let rule, _) where rule.bool("create") == true:
             return "port_forwards=\((try await client.portForwards()).count);new_tracker=unassigned"
-        case .deleteNatRule, .saveNatRule:
+        case .deleteNatRule:
+            // Unchanged, and still narrower than it should be: deleting a
+            // legacy forward -- one with no tracker, saved by the web GUI or
+            // by a build of this app before it wrote trackers onto NAT rules
+            // -- fails here exactly as saving one used to, for the same
+            // reason. Editing a legacy forward heals it going forward (see
+            // `saveNatRule` below), so the practical way through this today
+            // is to open the forward, save it once with no other change to
+            // adopt a tracker, then delete it. Fixing this properly needs the
+            // same before/after identity split `saveNatRule` now has, and
+            // that is real, separate work rather than a one-line fix here.
             guard let tracker = operation.tracker else {
                 throw WriteCoordinatorError.invalidOperation("a stable port-forward tracker is required")
             }
@@ -464,6 +527,39 @@ final class WriteCoordinator {
                 throw WriteCoordinatorError.invalidOperation("the port forward is no longer present")
             }
             return Self.natSnapshot(forward)
+        case .saveNatRule(let rule, _):
+            if let tracker = rule.string("tracker"), !tracker.isEmpty {
+                guard let forward = try await client.portForwards().first(where: { $0.tracker == tracker }) else {
+                    throw WriteCoordinatorError.invalidOperation("the port forward is no longer present")
+                }
+                return Self.natSnapshot(forward)
+            }
+            // No tracker: this is a legacy forward, identified by the
+            // original fields `save(changes:)` captured before any edits in
+            // this payload -- the same ones the save snippet's fallback
+            // matches on. Checked here too, ahead of the write, so a
+            // vanished or already-edited-elsewhere forward is rejected with
+            // "no longer present" rather than reaching the firewall to find
+            // out.
+            guard let forward = Self.legacyNatMatch(rule, in: try await client.portForwards()) else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "the port forward is no longer present, or has changed since it was fetched")
+            }
+            return Self.natSnapshot(forward)
+        case .reorderFilterRules(let interface, let items, _):
+            // Validated early, against a fresh read, so a drag made against
+            // data that has since changed on the firewall is refused with a
+            // clear reason rather than reaching the write and failing there.
+            let rules = try await client.firewallRules()
+            let separators = try await client.ruleSeparators()
+            let currentTokens = Self.reorderTokens(for: interface, in: rules,
+                                                    separators: separators.filter)
+            let requestedTokens = items.map(\.token)
+            guard Set(currentTokens) == Set(requestedTokens), currentTokens.count == requestedTokens.count else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "the rules or separators on this interface changed since they were fetched")
+            }
+            return "order=" + currentTokens.joined(separator: ",")
         }
     }
 
@@ -515,6 +611,20 @@ final class WriteCoordinator {
             return Verification(state: exists ? .mismatch : .verified,
                                 detail: exists ? "The deleted rule is still present." : "The rule is absent during read-back.",
                                 snapshot: exists ? "tracker=\(tracker);present=true" : "tracker=\(tracker);present=false")
+        case .reorderFilterRules(let interface, let items, _):
+            let rules = try await client.firewallRules()
+            let separators = try await client.ruleSeparators()
+            let actualTokens = Self.reorderTokens(for: interface, in: rules,
+                                                   separators: separators.filter)
+            let requestedTokens = items.map(\.token)
+            let matches = actualTokens == requestedTokens
+            return Verification(
+                state: matches ? .verified : .mismatch,
+                detail: matches
+                    ? "The interface now reads back in the requested order."
+                    : "The interface's order after saving does not match what was requested.",
+                snapshot: "order=" + actualTokens.joined(separator: ",")
+            )
         case .saveRule(let expected, _):
             let isCreate = expected.bool("create") ?? false
             let rules = try await client.firewallRules()
@@ -564,6 +674,40 @@ final class WriteCoordinator {
         }
     }
 
+    /// The current order of one interface's rules and separators, as tokens,
+    /// in the same reading order the app displays them in.
+    ///
+    /// This is the one place the ordering logic could drift from what the
+    /// Rules screen shows, so it is built the same way that screen builds
+    /// it: this interface's own rules in on-disk order, with each separator
+    /// inserted at its recorded `precedingRuleCount` — matched by exact
+    /// interface equality, which is what already excludes a floating rule's
+    /// comma-joined interface list without a special case for it.
+    ///
+    /// A separator whose position could not be read, or one that names more
+    /// preceding rules than exist, is placed last rather than dropped —
+    /// the same fallback the display already uses, so a snapshot always
+    /// accounts for every separator it was given.
+    private static func reorderTokens(for interface: String,
+                                      in rules: [FirewallRule],
+                                      separators: [RuleSeparator]) -> [String] {
+        let ownRules = rules.filter { $0.interfaceName == interface }
+        let ownSeparators = separators.filter { $0.interfaceName == interface }
+
+        var tokens: [String] = []
+        for (index, rule) in ownRules.enumerated() {
+            for separator in ownSeparators where separator.precedingRuleCount == index {
+                tokens.append("separator:\(separator.key)")
+            }
+            tokens.append("rule:\(rule.tracker)")
+        }
+        for separator in ownSeparators
+        where (separator.precedingRuleCount ?? Int.max) >= ownRules.count {
+            tokens.append("separator:\(separator.key)")
+        }
+        return tokens
+    }
+
     private static func ruleSnapshot(_ rule: FirewallRule) -> String {
         [rule.tracker, rule.interfaceName, rule.type, rule.ipProtocol ?? "", rule.proto ?? "",
          rule.sourceSide.storageKind.rawValue, rule.source,
@@ -578,6 +722,29 @@ final class WriteCoordinator {
          forward.destinationSide.storageKind.rawValue, forward.destinationSide.text, forward.target,
          forward.localPort ?? "", forward.descr, String(forward.disabled)]
             .joined(separator: "|")
+    }
+
+    /// Finds the forward a legacy (trackerless) payload is editing, by the
+    /// identity `save(changes:)` captured before its edits were applied.
+    ///
+    /// Only ever matches a forward that itself has no tracker. Two things
+    /// this guards against: mistaking an already-adopted forward for one that
+    /// still needs adopting, and matching a forward that coincidentally now
+    /// shares the old identity of the one being edited -- both of which stay
+    /// impossible as long as a tracker, once assigned, is never reused.
+    private static func legacyNatMatch(_ rule: JSONDict, in forwards: [PortForward]) -> PortForward? {
+        guard let interface = rule.string("original_interface"), !interface.isEmpty else { return nil }
+        let destination = FilterAddress(rule.value("original_destination"))
+        let port = rule.string("original_destination_port") ?? ""
+        let target = rule.string("original_target") ?? ""
+        return forwards.first {
+            $0.tracker.isEmpty
+                && $0.interfaceName == interface
+                && $0.destinationSide.storageKind == destination.storageKind
+                && $0.destinationSide.address == destination.address
+                && ($0.destinationSide.port ?? "") == port
+                && $0.target == target
+        }
     }
 
     private static func serviceSnapshot(_ service: ServiceStatus) -> String {

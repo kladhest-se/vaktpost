@@ -53,7 +53,7 @@ document said so. That stopped being true when the editor arrived, and the
 sentence stayed — which is worse than either state, because the document people
 read before pointing this at a production box was describing a different app.
 
-The write surface is exactly eight operations, named in
+The write surface is exactly nine operations, named in
 `PHPSnippet.writeOperations`:
 
 | Operation | What it does |
@@ -66,10 +66,23 @@ The write surface is exactly eight operations, named in
 | `save_nat_rule` | replaces or creates one NAT rule |
 | `restart_service` | restarts one named service |
 | `flush_states` | drops the state table, or one interface's |
+| `reorder_filter_rules` | rearranges one interface's rules and separators |
 
-That list was six when it was first written. `readonly.sh` found the other two,
-which is the argument for having the check: the write surface was believed to
-be six and was eight, and nothing anywhere said so.
+That list was six when it was first written. `readonly.sh` found two more that
+were already there, and a ninth — `reorder_filter_rules` — existed in this same
+file, fully written and fully tested against real PHP execution, for some time
+before anything called it. A write operation nothing can reach is not a
+smaller risk than one missing from this table; it is the same omission, the
+wrong way round. This table describes what the app can do, not what its
+snippet file happens to contain.
+
+There is no NAT equivalent of `reorder_filter_rules`, on purpose. pfSense
+assigns no tracker at all to a NAT rule saved through its own web interface —
+confirmed against `firewall_nat.php` and `firewall_nat_edit.php`, neither of
+which references one — so a reorder keyed on tracker would silently exclude,
+and therefore delete, every real NAT rule on a typical firewall. One was
+written, found to have exactly that flaw, and removed before it was wired to
+anything.
 
 Each operation is called only by `WriteCoordinator`, which serializes the
 transaction and binds it to the selected firewall. The coordinator validates

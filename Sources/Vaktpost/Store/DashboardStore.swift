@@ -539,6 +539,7 @@ final class DashboardStore: Observable {
         store.openvpnServers = []; store.openvpnClients = []; store.ipsecSAs = []
         store.wireguardTunnels = []; store.wireguardPeers = []
         store.rules = []; store.aliases = []; store.portForwards = []
+        store.filterSeparators = []; store.natSeparators = []
         store.configHistory = []; store.certificates = []; store.packages = []; store.tables = []
         store.pfBlocker = nil; store.pfBlockerInstalled = false
         store.dnsblStats = nil
@@ -813,6 +814,29 @@ final class DashboardStore: Observable {
 
         async let firewallLogLoaded = run(.firewallLog)
 
+        // Filter rules and port forwards were entirely absent from this
+        // cycle — no batch listed them, no individual `run()` call requested
+        // them, only `.firewallLog` did. `store.refresh()` is what every
+        // successful (and, since the reorder failure fix, unsuccessful) write
+        // in the Firewall feature calls afterward, on the assumption that it
+        // brings rules and forwards current. It never has: the only paths
+        // that actually populated them were a screen's first appearance and
+        // a handful of call sites passing `force: true` directly. A rule
+        // deleted through the web GUI, or by anything else, could sit in
+        // `store.rules` indefinitely — through any number of refreshes,
+        // automatic or manual — until a write depending on it failed against
+        // a rule that no longer existed and reported it as a mystery, which
+        // is exactly what surfaced this.
+        //
+        // One call, not two. `.firewall` and `.portForwards` both resolve to
+        // the identical `loadFirewallObjects(force: true)` — the same
+        // function call, not merely the same effect — so running both as
+        // separate concurrent tasks here would race that one call against
+        // itself for no benefit. `.firewall` alone refreshes rules, port
+        // forwards, and separators together, exactly as it does everywhere
+        // else this function is called from.
+        async let firewallObjectsLoaded = run(.firewall)
+
         async let vpnLoaded = runBatch(
             .vpn,
             sections: [.openvpn, .openvpnClients, .ipsec, .wireguard]
@@ -842,7 +866,7 @@ final class DashboardStore: Observable {
             return true
         }
 
-        _ = await (clientsLoaded, firewallLogLoaded, vpnLoaded, systemLoaded)
+        _ = await (clientsLoaded, firewallLogLoaded, vpnLoaded, systemLoaded, firewallObjectsLoaded)
         guard isCurrent(binding) else { return }
         
         // Restore previous firewall counts after the firewall log was fetched.
@@ -1096,12 +1120,24 @@ final class DashboardStore: Observable {
             wireguardTunnels = wg.tunnels
             wireguardPeers = wg.peers
         case .firewall:
-            await loadFirewallObjects()
+            // `force: true`, not the default. `loadFirewallObjects()` was
+            // built to guard against repeating itself for a screen opening
+            // for the first time — cheap on every open after the first,
+            // exactly as intended there. Called the same way from inside a
+            // refresh cycle, that guard means the opposite of what a refresh
+            // is for: `hasLoadedFirewallObjects` being true from the first
+            // load is precisely the case where a refresh needs to run, not
+            // skip. Rules, port forwards and separators have been fetched
+            // once per session and never again since this was added — silent,
+            // because nothing about a stale rule list looks wrong until a
+            // write depending on it, like a reorder, fails against a rule
+            // that no longer exists and reports it as a mystery.
+            await loadFirewallObjects(force: true)
             guard isCurrent(binding) else { throw RPCError.cancelled }
         case .aliases:
             try await assign(binding, [section], fetcher: { try await client.firewallAliases() }) { self.aliases = $0 }
         case .portForwards:
-            await loadFirewallObjects()
+            await loadFirewallObjects(force: true)
             guard isCurrent(binding) else { throw RPCError.cancelled }
         case .carp:
             try await assign(binding, [section], fetcher: { try await client.carp() }) { self.carp = $0 }
@@ -1422,7 +1458,27 @@ final class DashboardStore: Observable {
             hasLoadedFirewallObjects = false
             errors[.portForwards] = error.localizedDescription
         }
+
+        // Best-effort, and deliberately quiet about it. This is read-only
+        // decoration on top of rules and forwards that already loaded
+        // successfully — a missing or wrong separator changes nothing about
+        // what traffic is allowed, so a failure here does not get an error
+        // banner, does not clear `hasLoadedFirewallObjects`, and does not
+        // block a retry of the section that actually matters.
+        if let separators = try? await client.ruleSeparators(), isCurrent(binding) {
+            filterSeparators = separators.filter
+            natSeparators = separators.nat
+        }
     }
+
+    /// Filter-rule separators, by interface. Position is inferred — see
+    /// `RuleSeparator.afterRuleIndex` — and shown as a best effort rather than
+    /// asserted as exact.
+    var filterSeparators: [RuleSeparator] = []
+    /// NAT separators. The storage path this reads was not confirmed against
+    /// pfSense source the way the filter path was; an empty array here may
+    /// mean there are none, or may mean the assumed path was wrong.
+    var natSeparators: [RuleSeparator] = []
 
     var packagesNeedingUpdate: [PackageInfo] { packages.filter(\.updateAvailable) }
 
@@ -1812,21 +1868,6 @@ final class DashboardStore: Observable {
         // a host, and listing it twice reads as a mistake.
         var seen = Set<String>()
         return out.filter { seen.insert($0).inserted }
-    }
-
-    /// One value with its aliases replaced by what they contain.
-    ///
-    /// Takes an address or a port, never `host:port` — splitting a joined
-    /// field on ":" cannot work for IPv6, where the address is full of them.
-    /// The two halves are resolved separately by the caller.
-    ///
-    /// Long lists are capped: `alias_url_cloudflare` holds twenty-two networks
-    /// and a rule row is not the place for them.
-    func resolvedValue(_ value: String, limit: Int = 3) -> String {
-        let name = value.trimmingCharacters(in: .whitespaces)
-        guard let members = resolveAlias(name), !members.isEmpty else { return name }
-        if members.count <= limit { return members.joined(separator: ", ") }
-        return members.prefix(limit).joined(separator: ", ") + " +\(members.count - limit)"
     }
 
     /// A rule field expanded for display, or nil if it is not an alias.

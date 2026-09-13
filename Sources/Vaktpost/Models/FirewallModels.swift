@@ -461,3 +461,62 @@ struct DNSBLStats {
         hours = d.list("hours").compactMap { JSONDict($0) }.map(DNSBLHour.init)
     }
 }
+
+// MARK: - Rule separators
+
+/// One grouping bar pfSense draws between rules, on one interface, in one
+/// section (filter rules or NAT).
+///
+/// Read-only in every direction: there is no write path for this and none is
+/// planned from what is confirmed here. pfSense stores separator position as
+/// a bare row count rather than anchoring it to a rule's tracker, and its own
+/// users report separators drifting out of place after an ordinary insert or
+/// delete performed from pfSense's *own* web UI. Writing this from a second,
+/// independent piece of software without the exact placement semantics
+/// confirmed would risk making that worse, for a feature that changes
+/// nothing about what traffic is allowed.
+struct RuleSeparator: Identifiable {
+    /// Filter keys are only unique within one interface, since storage itself
+    /// groups them that way; NAT keys are already unique on their own, since
+    /// storage does not group them at all.
+    var id: String { interfaceName.map { "\($0)-\(key)" } ?? "nat-\(key)" }
+
+    /// The interface this separator belongs to. Only meaningful for filter
+    /// rules: pfSense groups filter separators by interface in storage
+    /// (`filter/separator/<interface>`), but NAT separators are a single flat
+    /// list with no interface field at all (`nat/separator`, confirmed from
+    /// `firewall_nat.php`) — nil there rather than a guess standing in for
+    /// something that does not exist on disk.
+    var interfaceName: String?
+    var key: String
+    var text: String
+    var colorName: String
+
+    /// How many rules precede this separator, in on-disk order — `0` means
+    /// it comes before the first rule, and a value at or past the rule count
+    /// means it comes last. `nil` when pfSense's own field could not be read.
+    ///
+    /// **What this counts against differs by section, and that difference is
+    /// confirmed from pfSense's source, not inferred.** For a filter
+    /// separator it is a count within that interface's own subset of rules —
+    /// `firewall_rules.php` resets its counter per interface tab. For a NAT
+    /// separator it is a count against the *entire* flat forward list —
+    /// `firewall_nat.php` runs one counter across every forward regardless of
+    /// interface. The two are not interchangeable, and this field means
+    /// whichever one applies to where the separator was read from.
+    ///
+    /// Read from `row`, which pfSense itself stores as a one-element array
+    /// whose first entry is the string `"fr" . N` — confirmed by
+    /// `separator_rows()`'s own `substr(..., 2)`, which is exactly what this
+    /// does to recover `N`.
+    var precedingRuleCount: Int?
+
+    init(_ d: JSONDict) {
+        let interface = d.string("interface") ?? ""
+        interfaceName = interface.isEmpty ? nil : interface
+        key = d.string("key") ?? ""
+        text = d.string("text") ?? ""
+        colorName = d.string("color") ?? ""
+        precedingRuleCount = Int(d.string("position") ?? "")
+    }
+}

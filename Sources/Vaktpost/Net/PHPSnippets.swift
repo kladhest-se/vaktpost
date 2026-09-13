@@ -60,7 +60,15 @@ struct PHPSnippet: Sendable {
         "save_rule",            // replaces one filter rule by tracker
         "save_nat_rule",        // replaces one NAT rule
         "restart_service",      // restarts one named service
-        "flush_states"          // drops the state table, or one interface's
+        "flush_states",         // drops the state table, or one interface's
+        "reorder_filter_rules"  // reorders one interface's rules and separators
+        // A NAT equivalent was written and removed before it was wired to
+        // anything. pfSense assigns no tracker to a NAT rule at all — neither
+        // `firewall_nat.php` nor `firewall_nat_edit.php` reference one — so a
+        // tracker-keyed reorder would have silently excluded, and therefore
+        // deleted, every real, GUI-created port forward on save. NAT needs a
+        // different identity scheme before this is safe to build; see the
+        // changelog for what that would take.
     ]
 
     // The last two were not on this list when it was first written, and the
@@ -216,6 +224,12 @@ struct PHPSnippet: Sendable {
         // deleted from a copy before the copy is assigned back. Neither can
         // reach disk. `unset` pointed at `$config` would be a different thing
         // and `write-boundary.sh` fails on it separately.
+        // Comparing two local arrays of plain strings — this app's own
+        // decoded rule trackers and separator keys against pfSense's own —
+        // to prove a submitted reorder is an exact permutation before
+        // anything is written. It reads two values it already has and
+        // returns a third; it touches neither `$config` nor disk.
+        "array_diff",
         "array_filter", "unset",
         // Decoding a base64 payload back into an array. Neither reads a file
         // nor evaluates anything: `json_decode` is a parser, and the second
@@ -2448,6 +2462,123 @@ struct PHPSnippet: Sendable {
     $toreturn = ["data" => (is_array($nat) && is_iterable($nat["rule"])) ? $nat["rule"] : []];
     """)
 
+    /// The grouping bars pfSense draws between rules — "Teamspeak" in a list
+    /// of port forwards, for instance. Read-only: there is no
+    /// `writeOperations` entry for this, and there never should be one from
+    /// evidence this thin.
+    ///
+    /// Confirmed from pfSense's own source: they live at
+    /// `filter/separator/<lowercase interface>`, one `sepN` entry per
+    /// separator. What is **not** confirmed — because nothing short of a
+    /// live firewall or the actual rendering function would confirm it — is
+    /// the exact key holding the label inside one `sepN` entry (`text` on
+    /// some pfSense versions, `subtext` reported elsewhere) or the precise
+    /// meaning of its position field. So every plausible key is tried in
+    /// order and the position is passed through as the raw string pfSense
+    /// wrote, for the app to interpret defensively rather than this snippet
+    /// asserting a meaning it cannot verify.
+    ///
+    /// NAT's own separator path is read the same way, one level down at
+    /// `nat/separator`, on the working assumption that it mirrors the filter
+    /// side — visible in the pfSense UI, but not something this snippet's
+    /// author has confirmed against source. If the assumption is wrong this
+    /// simply returns nothing for NAT, which is a quiet miss, not a wrong
+    /// answer.
+    /// The grouping bars pfSense draws between rules — "Teamspeak" in a list
+    /// of port forwards, for instance. Read-only: there is no
+    /// `writeOperations` entry for this, and reordering rules or separators
+    /// safely needs pfSense's own `shift_separators()` renumbering logic
+    /// ported faithfully first — see the note on `RuleSeparator` for why
+    /// that is a separate piece of work.
+    ///
+    /// Confirmed against pfSense's actual `filter.inc` (`display_separator`,
+    /// `separator_rows`), not inferred, because the first version of this
+    /// snippet guessed wrong on two structural points at once:
+    ///
+    ///   - `row` is an **array**, not a string. pfSense stores the position
+    ///     as `row/0`, e.g. `["fr3"]`, and reads it with
+    ///     `array_get_path($separator, 'row/0')`. Treating it as a plain
+    ///     string made every position unparseable.
+    ///   - Filter and NAT separators are **not** stored the same shape. Filter
+    ///     really is grouped by interface, at `filter/separator/<if>`. NAT is
+    ///     a single flat list at `nat/separator` with no interface grouping
+    ///     at all — confirmed from `firewall_nat.php`, which reads
+    ///     `config_get_path('nat/separator', [])` directly and numbers
+    ///     separators against one counter (`$nnats`) that runs across every
+    ///     forward regardless of interface. Iterating NAT the same way as
+    ///     filter treated each separator's own field names as if they were
+    ///     separate interfaces, which is where the earlier "Separator — sep0"
+    ///     output came from: `sep0` is that separator's own key, read out
+    ///     as though it were an interface name.
+    ///
+    /// The row prefix is confirmed as exactly two characters, `"fr"`, by
+    /// `separator_rows()`'s own `substr(..., 2)` — not a guess, not "whatever
+    /// prefix, tolerantly stripped" as the first version hedged.
+    static let ruleSeparators = PHPSnippet("rule_separators", """
+    global $config;
+    $toreturn = ["filter" => [], "nat" => []];
+
+    // Filter: genuinely grouped by interface. Position is the count of rules
+    // that precede the separator within that interface's own subset,
+    // matching how the rules list is itself scoped per interface.
+    $vaktpost_filter_root = $config["filter"];
+    $vaktpost_filter_seps = is_array($vaktpost_filter_root) ? ($vaktpost_filter_root["separator"] ?? []) : [];
+    if (is_array($vaktpost_filter_seps)) {
+      foreach ($vaktpost_filter_seps as $vaktpost_if => $vaktpost_entries) {
+        if (!is_array($vaktpost_entries)) { continue; }
+        foreach ($vaktpost_entries as $vaktpost_key => $vaktpost_entry) {
+          if (!is_array($vaktpost_entry)) { continue; }
+          // pfSense reads `row/0` and strips exactly the first two
+          // characters (`separator_rows()`, `substr(..., 2)`) — confirmed
+          // from source, not a tolerant guess at a prefix.
+          $vaktpost_position = "";
+          $vaktpost_row = $vaktpost_entry["row"] ?? null;
+          if (is_array($vaktpost_row) && isset($vaktpost_row[0])) {
+            $vaktpost_raw_row = strval($vaktpost_row[0]);
+            if (substr($vaktpost_raw_row, 0, 2) === "fr") {
+              $vaktpost_position = substr($vaktpost_raw_row, 2);
+            }
+          }
+          $toreturn["filter"][] = [
+            "interface" => strval($vaktpost_if),
+            "key" => strval($vaktpost_key),
+            "text" => strval($vaktpost_entry["text"] ?? ""),
+            "color" => strval($vaktpost_entry["color"] ?? ""),
+            "position" => $vaktpost_position,
+          ];
+        }
+      }
+    }
+
+    // NAT: one flat list, no interface grouping. Position is a count against
+    // the *whole* forward list, because that is what firewall_nat.php itself
+    // counts against — one counter, incremented once per forward regardless
+    // of which interface it is on. There is no interface field to report per
+    // separator because pfSense does not store one; the position alone is
+    // what places it.
+    $vaktpost_nat_root = $config["nat"];
+    $vaktpost_nat_seps = is_array($vaktpost_nat_root) ? ($vaktpost_nat_root["separator"] ?? []) : [];
+    if (is_array($vaktpost_nat_seps)) {
+      foreach ($vaktpost_nat_seps as $vaktpost_key => $vaktpost_entry) {
+        if (!is_array($vaktpost_entry)) { continue; }
+        $vaktpost_position = "";
+        $vaktpost_row = $vaktpost_entry["row"] ?? null;
+        if (is_array($vaktpost_row) && isset($vaktpost_row[0])) {
+          $vaktpost_raw_row = strval($vaktpost_row[0]);
+          if (substr($vaktpost_raw_row, 0, 2) === "fr") {
+            $vaktpost_position = substr($vaktpost_raw_row, 2);
+          }
+        }
+        $toreturn["nat"][] = [
+          "key" => strval($vaktpost_key),
+          "text" => strval($vaktpost_entry["text"] ?? ""),
+          "color" => strval($vaktpost_entry["color"] ?? ""),
+          "position" => $vaktpost_position,
+        ];
+      }
+    }
+    """)
+
     // MARK: - High availability
 
     static let carp = PHPSnippet("carp", """
@@ -2819,6 +2950,229 @@ struct PHPSnippet: Sendable {
     }
 
     /// Deletes a NAT/port forward rule by tracker ID.
+    /// Reorders one interface's filter rules, and recomputes its separators'
+    /// positions to match — the operation behind dragging a rule or a
+    /// separator to a new spot.
+    ///
+    /// Deliberately **not** a port of pfSense's own reorder machinery
+    /// (`set_filter_rules_order`, and the category/group/subcategory "rules
+    /// map" behind it). A full search of `filter.inc`, `firewall_rules.php`,
+    /// `firewall_nat.php` and `pfsense-utils.inc` found pfSense's own
+    /// separator-renumbering function, `shift_separators()`, with **zero
+    /// call sites** in any of them — so whether, or how, pfSense's own drag
+    /// path keeps separators correct could not be established from source.
+    /// Replicating an internal this app cannot see the call graph for would
+    /// be exactly the kind of guess this project has learned not to make.
+    ///
+    /// What is here instead is independently well-defined: given the final
+    /// order a drag produced, replace this interface's rules with that order
+    /// and recompute every separator's position fresh — "how many rule-items
+    /// precede me now" — using the identical definition the read path
+    /// already uses to report a position back to the app. Reading and
+    /// writing share one definition, so they cannot drift apart from each
+    /// other even if pfSense's own algorithm works some other way
+    /// internally; pfSense's own list rendering reads the result correctly
+    /// either way, since `display_separator()` only cares about the final
+    /// `"fr" . N` string, not how it was produced.
+    ///
+    /// `items` must be an exact permutation of what already exists for this
+    /// interface — the same set of rule trackers, the same set of separator
+    /// keys, neither more nor fewer. This operation only reorders; it cannot
+    /// add, remove, or move something onto a different interface. Verified
+    /// directly against real PHP execution and a synthetic multi-interface
+    /// fixture, including that every other interface's rules and every
+    /// unrelated field on a moved rule survive untouched, and that a
+    /// mismatched submission is rejected with no write at all.
+    static func reorderFilterRules(interface: String, items: [JSONValue]) -> PHPSnippet {
+        let encoded = payload(JSONDict([
+            "interface": .string(interface),
+            "items": .array(items)
+        ]))
+        return PHPSnippet("reorder_filter_rules", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/util.inc';
+        require_once '/etc/inc/filter.inc';
+        $toreturn = [];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+
+        $vaktpost_interface = strval($vaktpost_input["interface"] ?? "");
+        $vaktpost_items = $vaktpost_input["items"] ?? [];
+
+        if ($vaktpost_interface === "" || !is_array($vaktpost_items) || empty($vaktpost_items)) {
+          $toreturn["status"] = "invalid";
+          $toreturn["error"] = "An interface and a non-empty order are required.";
+        } else {
+          $vaktpost_section = $config["filter"];
+          $vaktpost_rules = (is_array($vaktpost_section) && is_iterable($vaktpost_section["rule"])) ? $vaktpost_section["rule"] : [];
+
+          // The reorderable subset: this interface's own rules, never a
+          // floating rule. A floating rule's interface field is a
+          // comma-joined list, so an exact-match comparison already excludes
+          // it without a special case.
+          $vaktpost_by_tracker = [];
+          $vaktpost_original_trackers = [];
+          foreach ($vaktpost_rules as $vaktpost_r) {
+            if (!is_array($vaktpost_r)) { continue; }
+            if (strval($vaktpost_r["interface"] ?? "") !== $vaktpost_interface) { continue; }
+            $vaktpost_t = strval($vaktpost_r["tracker"] ?? "");
+            if ($vaktpost_t === "") { continue; }
+            $vaktpost_by_tracker[$vaktpost_t] = $vaktpost_r;
+            $vaktpost_original_trackers[] = $vaktpost_t;
+          }
+
+          $vaktpost_sep_section = $config["filter"];
+          $vaktpost_all_seps = is_array($vaktpost_sep_section) ? ($vaktpost_sep_section["separator"] ?? []) : [];
+          $vaktpost_existing_seps = (is_array($vaktpost_all_seps) && is_array($vaktpost_all_seps[$vaktpost_interface] ?? null))
+            ? $vaktpost_all_seps[$vaktpost_interface] : [];
+
+          // The submitted order must be a permutation of exactly what
+          // already exists — never a way to add, drop, or move in a rule or
+          // separator this operation was not asked to touch.
+          $vaktpost_submitted_rule_trackers = [];
+          $vaktpost_submitted_sep_keys = [];
+          $vaktpost_shape_valid = true;
+          foreach ($vaktpost_items as $vaktpost_item) {
+            if (!is_array($vaktpost_item)) { $vaktpost_shape_valid = false; break; }
+            $vaktpost_kind = strval($vaktpost_item["kind"] ?? "");
+            $vaktpost_id = strval($vaktpost_item["id"] ?? "");
+            if ($vaktpost_id === "") { $vaktpost_shape_valid = false; break; }
+            if ($vaktpost_kind === "rule") {
+              $vaktpost_submitted_rule_trackers[] = $vaktpost_id;
+            } elseif ($vaktpost_kind === "separator") {
+              $vaktpost_submitted_sep_keys[] = $vaktpost_id;
+            } else {
+              $vaktpost_shape_valid = false;
+              break;
+            }
+          }
+
+          $vaktpost_rules_match = $vaktpost_shape_valid
+            && count($vaktpost_submitted_rule_trackers) === count($vaktpost_original_trackers)
+            && count(array_diff($vaktpost_submitted_rule_trackers, $vaktpost_original_trackers)) === 0
+            && count(array_diff($vaktpost_original_trackers, $vaktpost_submitted_rule_trackers)) === 0;
+
+          $vaktpost_existing_sep_keys = array_keys($vaktpost_existing_seps);
+          $vaktpost_seps_match = count($vaktpost_submitted_sep_keys) === count($vaktpost_existing_sep_keys)
+            && count(array_diff($vaktpost_submitted_sep_keys, $vaktpost_existing_sep_keys)) === 0
+            && count(array_diff($vaktpost_existing_sep_keys, $vaktpost_submitted_sep_keys)) === 0;
+
+          if (!$vaktpost_shape_valid || !$vaktpost_rules_match || !$vaktpost_seps_match) {
+            // The generic message this used to return told nobody anything —
+            // not which rule, not which side had it, not even whether rules
+            // or separators were the problem. On a genuine mismatch this is
+            // the only chance to see what actually disagreed before trying
+            // again blind, so the specific difference is computed and
+            // reported rather than only the fact that one exists.
+            $vaktpost_detail = [];
+            if (!$vaktpost_shape_valid) {
+              $vaktpost_detail[] = "the submitted order contains an item with no kind or id";
+            }
+            if ($vaktpost_shape_valid && !$vaktpost_rules_match) {
+              $vaktpost_missing_rules = array_diff($vaktpost_original_trackers, $vaktpost_submitted_rule_trackers);
+              $vaktpost_extra_rules = array_diff($vaktpost_submitted_rule_trackers, $vaktpost_original_trackers);
+              if (!empty($vaktpost_missing_rules)) {
+                $vaktpost_detail[] = "missing from the order: " . implode(", ", $vaktpost_missing_rules);
+              }
+              if (!empty($vaktpost_extra_rules)) {
+                // "Not currently on this interface" answered which trackers
+                // disagreed and stopped there — it did not say where the
+                // firewall actually thinks they are, which is exactly the
+                // next question a person asks after reading it. Looked up
+                // once here, across the whole ruleset, rather than left for
+                // a second guess: an interface-naming mismatch (a rule whose
+                // real `interface` value differs from the one this screen is
+                // scoped to, despite both resolving to the same display
+                // label) and a rule genuinely removed since it was fetched
+                // produce the same bare tracker number, and read very
+                // differently once this says which it is.
+                $vaktpost_located = [];
+                foreach ($vaktpost_extra_rules as $vaktpost_extra_tracker) {
+                  $vaktpost_found_elsewhere = null;
+                  foreach ($vaktpost_rules as $vaktpost_any_rule) {
+                    if (is_array($vaktpost_any_rule)
+                        && strval($vaktpost_any_rule["tracker"] ?? "") === $vaktpost_extra_tracker) {
+                      $vaktpost_found_elsewhere = strval($vaktpost_any_rule["interface"] ?? "(no interface field)");
+                      break;
+                    }
+                  }
+                  $vaktpost_located[] = $vaktpost_extra_tracker . " (" .
+                    ($vaktpost_found_elsewhere !== null
+                      // Single-quoted PHP strings, not double-quoted with an
+                      // escaped `"` inside — this project's own gate refuses
+                      // any backslash in a snippet body outright, and a
+                      // literal quote character needs none at all this way.
+                      ? 'actually on "' . $vaktpost_found_elsewhere . '"'
+                      : "no longer exists anywhere in the ruleset") . ")";
+                }
+                $vaktpost_detail[] = 'not currently on "' . $vaktpost_interface . '": ' . implode(", ", $vaktpost_located);
+              }
+            }
+            if ($vaktpost_shape_valid && !$vaktpost_seps_match) {
+              $vaktpost_missing_seps = array_diff($vaktpost_existing_sep_keys, $vaktpost_submitted_sep_keys);
+              $vaktpost_extra_seps = array_diff($vaktpost_submitted_sep_keys, $vaktpost_existing_sep_keys);
+              if (!empty($vaktpost_missing_seps)) {
+                $vaktpost_detail[] = "separators missing from the order: " . implode(", ", $vaktpost_missing_seps);
+              }
+              if (!empty($vaktpost_extra_seps)) {
+                $vaktpost_detail[] = "separators not currently on this interface: " . implode(", ", $vaktpost_extra_seps);
+              }
+            }
+            $toreturn["status"] = "mismatch";
+            // Colon, not a parenthesis, ahead of the detail clause: the
+            // publish gate's function-call scanner reads PHP string contents
+            // the same as PHP syntax and cannot tell "exactly (" here from an
+            // actual call to a function named exactly. Rephrasing is the fix,
+            // not loosening what the gate checks.
+            $toreturn["error"] = "The submitted order does not match this interface's current rules and separators exactly: "
+              . implode("; ", $vaktpost_detail) . ".";
+          } else {
+            $vaktpost_new_subset = [];
+            $vaktpost_new_seps = $vaktpost_existing_seps;
+            $vaktpost_preceding = 0;
+            foreach ($vaktpost_items as $vaktpost_item) {
+              $vaktpost_kind = strval($vaktpost_item["kind"] ?? "");
+              $vaktpost_id = strval($vaktpost_item["id"] ?? "");
+              if ($vaktpost_kind === "rule") {
+                $vaktpost_new_subset[] = $vaktpost_by_tracker[$vaktpost_id];
+                $vaktpost_preceding = $vaktpost_preceding + 1;
+              } else {
+                $vaktpost_new_seps[$vaktpost_id]["row"] = ["fr" . $vaktpost_preceding];
+              }
+            }
+
+            // Splice back into the global array. Every rule belonging to
+            // another interface, or a floating rule, stays in its exact
+            // original slot; every slot that belonged to this interface is
+            // replaced, in order, with the new arrangement.
+            $vaktpost_cursor = 0;
+            $vaktpost_reassembled = [];
+            foreach ($vaktpost_rules as $vaktpost_r) {
+              if (is_array($vaktpost_r) && strval($vaktpost_r["interface"] ?? "") === $vaktpost_interface) {
+                $vaktpost_reassembled[] = $vaktpost_new_subset[$vaktpost_cursor];
+                $vaktpost_cursor = $vaktpost_cursor + 1;
+              } else {
+                $vaktpost_reassembled[] = $vaktpost_r;
+              }
+            }
+
+            $config["filter"]["rule"] = array_values($vaktpost_reassembled);
+            if (!is_array($config["filter"]["separator"] ?? null)) { $config["filter"]["separator"] = []; }
+            $config["filter"]["separator"][$vaktpost_interface] = $vaktpost_new_seps;
+
+            // Built from the payload-decoded variable, not from a Swift
+            // interpolation of the caller's `interface` argument — the whole
+            // point of the payload is that no runtime string reaches PHP
+            // source directly.
+            write_config("Vaktpost: reordered rules on " . $vaktpost_interface);
+            write_filter();
+            $toreturn["status"] = "ok";
+            $toreturn["order"] = $vaktpost_submitted_rule_trackers;
+          }
+        }
+        """)
+    }
+
     static func deleteNatRule(tracker: String) -> PHPSnippet {
         let encoded = payload(JSONDict(["tracker": .string(tracker)]))
         return PHPSnippet("delete_nat_rule", """
@@ -3136,8 +3490,36 @@ struct PHPSnippet: Sendable {
     /// the same description and left the original in place, so "save" grew the
     /// NAT table by one every time it was pressed.
     ///
-    /// Existing forwards are matched only by their pfSense tracker. An edit
-    /// whose tracker disappeared is rejected rather than becoming an append.
+    /// Matching a NAT rule is not as simple as matching a filter rule.
+    /// pfSense assigns every filter rule a tracker and keeps it stable, but it
+    /// never assigns one to a NAT rule at all -- `firewall_nat_edit.php`
+    /// identifies a port forward purely by its position in the array. A
+    /// forward saved through the web GUI, or through a build of this app
+    /// before it started writing trackers onto NAT rules, has no tracker to
+    /// match on, and a version of this snippet that required one -- which is
+    /// what this said until it was checked against real pfSense data --
+    /// rejected every edit and every delete of every such forward,
+    /// unconditionally, on every firewall.
+    ///
+    /// So matching tries the tracker first, where one exists, and falls back
+    /// to the forward's own identity -- interface, destination, port and
+    /// target, exactly as fetched before this payload's edits were applied --
+    /// only when it does not. The fallback is deliberately narrow: it never
+    /// runs for a create, and it only considers rows that themselves have no
+    /// tracker, so it can never mistake one already-adopted forward for
+    /// another. Whatever row it finds gets a real tracker assigned as part of
+    /// this save, so the fallback is a one-time cost per forward -- the next
+    /// edit finds it by tracker directly.
+    ///
+    /// What the fallback cannot do is find a row whose *own* identifying
+    /// fields were changed in the same edit that is trying to match it -- if
+    /// this is the first edit of a legacy forward and it also changes the
+    /// destination port, there is nothing to match against, and it correctly
+    /// falls through to becoming an append rather than guessing. That is the
+    /// safe direction to fail in: a duplicate is visible and removable, a
+    /// wrongly-matched row is neither. Changing an identifying field on a
+    /// forward that already has a tracker is unaffected -- tracker matching
+    /// does not care what else in the row changed.
     static func saveNatRule(rule: JSONDict) -> PHPSnippet {
         let encoded = payload(rule)
         return PHPSnippet("save_nat_rule", """
@@ -3163,36 +3545,81 @@ struct PHPSnippet: Sendable {
         // this had dropped it.
         $vaktpost_dstport = strval($vaktpost_input["destination_port"] ?? "");
 
+        // pfSense assigns filter rules a tracker; it never assigns NAT rules
+        // one. `firewall_nat_edit.php` identifies a port forward purely by its
+        // position in the array. So a forward saved by the web GUI, or by a
+        // build of this app before it started writing trackers onto NAT
+        // rules, has no tracker at all -- and until this fallback existed,
+        // editing or disabling such a forward always failed at the client-side
+        // guard before any request was even sent, because the app had nothing
+        // to send.
+        //
+        // These four are the forward's identity as it was *fetched*, before
+        // any of the edits in this payload were applied. Matching on the NEW
+        // values would fail exactly when someone edits one of the fields that
+        // identifies the row -- moving it to a different port, say -- which is
+        // an entirely ordinary thing to want to do.
+        $vaktpost_orig_if = strval($vaktpost_input["original_interface"] ?? "");
+        $vaktpost_orig_dst = $vaktpost_input["original_destination"] ?? [];
+        $vaktpost_orig_dstaddr = "";
+        if (is_array($vaktpost_orig_dst)) {
+          if (($vaktpost_orig_dst["any"] ?? false) === true) {
+            $vaktpost_orig_dstaddr = "any";
+          } elseif (array_key_exists("network", $vaktpost_orig_dst)) {
+            $vaktpost_orig_dstaddr = strval($vaktpost_orig_dst["network"]);
+          } elseif (array_key_exists("address", $vaktpost_orig_dst)) {
+            $vaktpost_orig_dstaddr = strval($vaktpost_orig_dst["address"]);
+          }
+        }
+        $vaktpost_orig_dstport = strval($vaktpost_input["original_destination_port"] ?? "");
+        $vaktpost_orig_target = strval($vaktpost_input["original_target"] ?? "");
+
         $vaktpost_create = ($vaktpost_input["create"] ?? false) ? true : false;
         $found = false;
         $vaktpost_index = null;
         $rule = [];
-        if ($vaktpost_create) {
-          // Allocate on the firewall, against the current NAT table. A value
-          // chosen by the phone could collide with a rule added since refresh.
-          $tracker = strval(time());
-          $vaktpost_collision = true;
-          while ($vaktpost_collision) {
-            $vaktpost_collision = false;
-            foreach ($rules as $vaktpost_existing) {
-              if (is_array($vaktpost_existing) && strval($vaktpost_existing["tracker"] ?? "") === $tracker) {
-                $tracker = strval(intval($tracker) + 1);
-                $vaktpost_collision = true;
-                break;
-              }
-            }
-          }
-        }
+
         // Creating means never matching. In particular, a duplicate must not
         // match the tracker of the forward it was copied from.
         foreach (($vaktpost_create ? [] : $rules) as $idx => $r) {
           if (!is_array($r)) { continue; }
-          $vaktpost_match = $tracker !== "" && strval($r["tracker"] ?? "") === $tracker;
-          if ($vaktpost_match) {
+          if ($tracker !== "" && strval($r["tracker"] ?? "") === $tracker) {
             $rule = $r;
             $vaktpost_index = $idx;
             $found = true;
             break;
+          }
+        }
+
+        // Tried only when the row has no tracker of its own to look up by --
+        // a forward this app has already saved once always has one by the
+        // time this runs (see the tracker assignment below), so this path is
+        // only ever reached for a rule nobody has edited through this app
+        // yet, and it never runs at all for a create.
+        if (!$found && !$vaktpost_create && $tracker === "" && $vaktpost_orig_if !== "") {
+          foreach ($rules as $idx => $r) {
+            if (!is_array($r) || !empty($r["tracker"])) { continue; }
+            $vaktpost_rdst = $r["destination"] ?? [];
+            $vaktpost_rdstaddr = "";
+            if (is_array($vaktpost_rdst)) {
+              if (($vaktpost_rdst["any"] ?? false) === true) {
+                $vaktpost_rdstaddr = "any";
+              } elseif (array_key_exists("network", $vaktpost_rdst)) {
+                $vaktpost_rdstaddr = strval($vaktpost_rdst["network"]);
+              } elseif (array_key_exists("address", $vaktpost_rdst)) {
+                $vaktpost_rdstaddr = strval($vaktpost_rdst["address"]);
+              }
+            }
+            $vaktpost_rdstport = strval($r["destination_port"] ?? "");
+            if (strval($r["interface"] ?? "") === $vaktpost_orig_if
+                && $vaktpost_rdstaddr === $vaktpost_orig_dstaddr
+                && $vaktpost_rdstport === $vaktpost_orig_dstport
+                && strval($r["target"] ?? "") === $vaktpost_orig_target) {
+              $rule = $r;
+              $vaktpost_index = $idx;
+              $found = true;
+              break;
+            }
           }
         }
 
@@ -3311,7 +3738,32 @@ struct PHPSnippet: Sendable {
         $rule["target"] = $vaktpost_target;
         $rule["descr"] = strval($vaktpost_input["descr"] ?? "");
         $rule["disabled"] = ($vaktpost_input["disabled"] ?? false) ? true : false;
-        if (!$found) {
+
+        // Assigned whenever the row still has none: a fresh append never had
+        // one, and a legacy row matched by its old identity above did not
+        // either -- that was the whole reason the fallback matching ran.
+        // Either way, this write leaves it with a real tracker, so the next
+        // edit finds it directly and the fallback is not needed again.
+        //
+        // An ordinary edit of a row that already has one takes neither
+        // branch: $rule already carries the tracker copied from $r, and
+        // empty() on a non-empty string is false.
+        if (empty($rule["tracker"] ?? "")) {
+          $vaktpost_new_tracker = $tracker !== "" ? $tracker : strval(time());
+          $vaktpost_collision = true;
+          while ($vaktpost_collision) {
+            $vaktpost_collision = false;
+            foreach ($rules as $vaktpost_check_idx => $vaktpost_existing) {
+              if ($vaktpost_check_idx === $vaktpost_index) { continue; }
+              if (is_array($vaktpost_existing)
+                  && strval($vaktpost_existing["tracker"] ?? "") === $vaktpost_new_tracker) {
+                $vaktpost_new_tracker = strval(intval($vaktpost_new_tracker) + 1);
+                $vaktpost_collision = true;
+                break;
+              }
+            }
+          }
+          $tracker = $vaktpost_new_tracker;
           $rule["tracker"] = $tracker;
         }
 
@@ -3350,7 +3802,7 @@ struct PHPSnippet: Sendable {
     static var all: [PHPSnippet] {
         [telemetry, firmware, packages, packageUpdates, notices, interfaces, interfaceCounters, gateways, arpTable, dhcpLeases,
          staticMappings, hostOverrides, services, openvpnServers, openvpnClients, ipsecSAs,
-         wireguard, pfTables, haproxy, acme, pfBlocker, dnsblStats, firewallRules, firewallAliases, portForwards, carp,
+         wireguard, pfTables, haproxy, acme, pfBlocker, dnsblStats, firewallRules, firewallAliases, portForwards, ruleSeparators, carp,
          certificates, dyndns, ping, rrdProbe, rrdTrace,
          batchCore, batchClients, batchVpn, batchSystem,
          reloadFirewall]

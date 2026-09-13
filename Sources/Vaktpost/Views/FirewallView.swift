@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FirewallView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
@@ -20,8 +21,26 @@ struct FirewallView: View {
     @State private var newRule: RuleEditForm?
     /// A new port forward being drafted.
     @State private var newForward: PortForwardEditForm?
-    @State private var writeError: WriteError?
-    @State private var showErrorAlert = false
+    // No writeError/showErrorAlert here any more. createRule and
+    // createForward used to catch here and stash an error on this view — the
+    // view still covered by the edit sheet at the moment of failure, so the
+    // alert could never actually show. They now rethrow and the sheet catches
+    // it, since the sheet is what is on screen. Keeping dead state and a dead
+    // alert modifier here would tell the next person reading this that errors
+    // are handled at this level, which they no longer are.
+
+    /// A drag's result, kept separate from the live data until it is saved.
+    /// Nil means "show what the firewall actually has."
+    @State private var rulePendingOrder: [RuleListItem]?
+    @State private var ruleDraggingID: String?
+    @State private var showReorderConfirmation = false
+    @State private var isSavingOrder = false
+    /// This alert belongs directly on this view rather than a sheet it
+    /// presents: the confirmation here is a single, unnested sheet, so this
+    /// is already the topmost view when it dismisses — unlike the editor,
+    /// nothing here is covering it.
+    @State private var reorderError: WriteError?
+    @State private var showReorderErrorAlert = false
 
     var body: some View {
         MasterDetail(
@@ -175,36 +194,34 @@ struct FirewallView: View {
                               "tracker": .string(""),
                               "interface": .string(form.interface)
                           ]))),
-                          onSave: { saved in await createRule(saved) })
+                          onSave: { saved in try await createRule(saved) })
         }
         .sheet(item: $newForward) { form in
             PortForwardEditSheet(form: form,
                                  interfaces: store.interfaces,
                                  aliases: store.aliases,
-                                 onSave: { saved in await createForward(saved) })
+                                 onSave: { saved in try await createForward(saved) })
         }
-        .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
     }
 
     /// Write a new port forward and refresh.
     ///
     /// Through the same coordinator as an edit: rate limit, audit, read-back.
-    private func createForward(_ form: PortForwardEditForm) async -> Bool {
+    /// Rethrows rather than swallowing into a `Bool`.
+    ///
+    /// This used to catch here and stash the error on this view's own state —
+    /// which is exactly wrong, because this view is still covered by the edit
+    /// sheet when the failure happens. The sheet catches it now, where it is
+    /// actually visible.
+    private func createForward(_ form: PortForwardEditForm) async throws {
         let dict = form.toDict(interface: form.interface)
-        do {
-            _ = try await store.writeCoordinator.execute(
-                .saveNatRule(
-                    rule: dict,
-                    displayName: form.descr.isEmpty ? "new forward on \(form.interface)" : form.descr
-                )
+        _ = try await store.writeCoordinator.execute(
+            .saveNatRule(
+                rule: dict,
+                displayName: form.descr.isEmpty ? "new forward on \(form.interface)" : form.descr
             )
-            await store.refreshManually()
-            return true
-        } catch {
-            writeError = WriteError.from(error, operation: .other)
-            showErrorAlert = true
-            return false
-        }
+        )
+        await store.refreshManually()
     }
 
     /// Write a new rule and refresh.
@@ -212,22 +229,18 @@ struct FirewallView: View {
     /// Goes through the same coordinator as an edit — rate limit, audit,
     /// read-back — because a create is a write like any other. The only
     /// difference is that the firewall assigns the tracker.
-    private func createRule(_ form: RuleEditForm) async -> Bool {
+    /// Rethrows rather than swallowing into a `Bool`, for the same reason as
+    /// `createForward`: this view is still covered by the edit sheet when a
+    /// failure happens, and the sheet is where it has to be shown.
+    private func createRule(_ form: RuleEditForm) async throws {
         let dict = form.toDict(tracker: "", interface: form.interface)
-        do {
-            _ = try await store.writeCoordinator.execute(
-                .saveRule(
-                    rule: dict,
-                    displayName: form.descr.isEmpty ? "new rule on \(form.interface)" : form.descr
-                )
+        _ = try await store.writeCoordinator.execute(
+            .saveRule(
+                rule: dict,
+                displayName: form.descr.isEmpty ? "new rule on \(form.interface)" : form.descr
             )
-            await store.refreshManually()
-            return true
-        } catch {
-            writeError = WriteError.from(error, operation: .other)
-            showErrorAlert = true
-            return false
-        }
+        )
+        await store.refreshManually()
     }
 
     // MARK: Rules
@@ -253,10 +266,18 @@ struct FirewallView: View {
             ? store.rules.filter(\.isFloating)
             : store.rules
         if let iface = interfaceFilter {
-            list = list.filter { rule in
-                rule.interfaceName.split(separator: ",")
-                    .contains { $0.trimmingCharacters(in: .whitespaces) == iface }
-            }
+            // A floating rule's interface field holds several names — that is
+            // the definition of `isFloating` — and this used to match it
+            // against a single chosen tab if that tab happened to be one of
+            // the several. pfSense never shows a floating rule under a named
+            // interface's own tab; it belongs to Floating alone, regardless
+            // of which interfaces it actually applies to. `RulePlacement` and
+            // `reorderFilterRules` already compare the interface field for
+            // exact equality, which excludes a multi-valued field
+            // automatically — this now reasons about it the same way, rather
+            // than the list of rules on screen disagreeing with what
+            // placement and reordering already treated as true.
+            list = list.filter { !$0.isFloating && $0.interfaceName == iface }
         }
         guard !query.isEmpty else { return list }
         let q = query.lowercased()
@@ -287,6 +308,70 @@ struct FirewallView: View {
         return false
     }
 
+    /// Separators for the interface currently selected, ordered by position.
+    ///
+    /// Only meaningful with exactly one interface chosen and nothing filtered
+    /// out — a separator's position is a claim about *this interface's*
+    /// unfiltered rule order, and interleaving it into "All interfaces" or a
+    /// search result would be answering a question that no longer has the
+    /// shape the position was recorded against.
+    private var rulesSeparatorsForCurrentSelection: [RuleSeparator] {
+        guard let iface = interfaceFilter, !showFloating, query.isEmpty else { return [] }
+        return store.filterSeparators.filter { $0.interfaceName?.lowercased() == iface.lowercased() }
+    }
+
+    /// Reordering needs the same well-defined order that showing a
+    /// separator's position already needs — one interface, nothing filtered
+    /// out by a search, no floating rules mixed in. Dragging under any other
+    /// condition would be producing an order for a set of rules that is not
+    /// actually the interface's whole, real ruleset.
+    /// Rules on the selected interface with no tracker at all.
+    ///
+    /// Filter rules almost always get one — pfSense assigns it through its
+    /// own `filter_rule_tracker()` — but `reorder_filter_rules` silently
+    /// skips any same-interface rule that has none when it builds what it
+    /// considers the interface's current set, matching the write path's
+    /// established shape elsewhere (`save_rule`, `delete_rule` refuse an
+    /// empty tracker the same way). If even one exists here, a submission
+    /// built from every visible rule will never match what the firewall
+    /// itself considers current — count for count — and every drag on this
+    /// interface fails the same "mismatch" whether or not anything sensible
+    /// was dragged, without saying why.
+    ///
+    /// A rule ending up untracked on an otherwise-normal firewall is itself
+    /// unusual — a plausible source is a package that injects rules by some
+    /// path other than the ordinary edit form, which would not run through
+    /// `filter_rule_tracker()`. This does not depend on knowing which; it
+    /// only needs to notice the rule has nothing stable to be moved by.
+    private var untrackedRulesOnSelectedInterface: [FirewallRule] {
+        guard interfaceFilter != nil else { return [] }
+        return filteredRules.filter(\.tracker.isEmpty)
+    }
+
+    private var canReorderRules: Bool {
+        interfaceFilter != nil && !showFloating && query.isEmpty
+            && untrackedRulesOnSelectedInterface.isEmpty
+    }
+
+    private var currentRuleListItems: [RuleListItem] {
+        mergedRuleList(rules: filteredRules, separators: rulesSeparatorsForCurrentSelection)
+    }
+
+    /// The pending drag if one exists and still matches the live data
+    /// exactly — same set of items, nothing added or removed underneath it
+    /// by a refresh — otherwise the live order. A stale drag is discarded
+    /// silently rather than shown: it would be an order for rules that may
+    /// no longer be the interface's actual rules.
+    private var displayedRuleItems: [RuleListItem] {
+        guard let pending = rulePendingOrder,
+              Set(pending.map(\.id)) == Set(currentRuleListItems.map(\.id)) else { return currentRuleListItems }
+        return pending
+    }
+
+    private var ruleOrderIsDirty: Bool {
+        rulePendingOrder.map { $0.map(\.id) != currentRuleListItems.map(\.id) } ?? false
+    }
+
     @ViewBuilder
     private var rulesPane: some View {
         if let err = store.errors[.firewall] {
@@ -294,6 +379,43 @@ struct FirewallView: View {
         } else if filteredRules.isEmpty {
             let title = showFloating ? "No floating rules" : "No rules returned"
             Notice(symbol: "shield.slash", title: query.isEmpty ? title : "No matches")
+        } else if !untrackedRulesOnSelectedInterface.isEmpty {
+            // Named rather than folded into the ordinary "can't reorder
+            // here" case below: a search or a multi-interface view not
+            // supporting reordering is expected and needs no explanation,
+            // but a firewall that cannot be reordered because of what one of
+            // its own rules is missing is worth saying plainly, since
+            // dragging here would otherwise fail the same opaque way no
+            // matter what was actually dragged.
+            countLine("\(filteredRules.count) rules")
+            Notice(symbol: "questionmark.circle",
+                   title: untrackedRulesOnSelectedInterface.count == 1
+                       ? "One rule here has no stable ID"
+                       : "\(untrackedRulesOnSelectedInterface.count) rules here have no stable ID",
+                   detail: "The firewall itself does not treat \(untrackedRulesOnSelectedInterface.count == 1 ? "this rule" : "these rules") as reorderable, so nothing here can be dragged until that changes: "
+                       + untrackedRulesOnSelectedInterface
+                           .map { $0.descr.isEmpty ? "an unlabelled rule" : $0.descr }
+                           .joined(separator: ", ")
+                       + ". This app cannot edit, delete, or reorder a rule pfSense has not given a tracker, the same way it could not for a port forward until that forward was edited once elsewhere.",
+                   health: .warn)
+            ForEach(filteredRules) { rule in
+                Button { selection = rule.id } label: { RuleRow(rule: rule) }
+                    .buttonStyle(.plain)
+            }
+        } else if canReorderRules {
+            countLine("\(filteredRules.count) rules")
+            Text("Drag \(Image(systemName: "line.3.horizontal")) to reorder. Position here is pfSense's own; check the web GUI if a separator looks out of place.")
+                .scaledFont(11)
+                .foregroundStyle(theme.labelFaint)
+                .padding(.horizontal, 2)
+
+            if ruleOrderIsDirty {
+                orderChangedBar
+            }
+
+            ForEach(displayedRuleItems) { item in
+                reorderableRow(item)
+            }
         } else {
             countLine("\(filteredRules.count) rules")
             ForEach(filteredRules) { rule in
@@ -301,6 +423,114 @@ struct FirewallView: View {
                     .buttonStyle(.plain)
             }
         }
+    }
+
+    private var orderChangedBar: some View {
+        HStack(spacing: 10) {
+            Text("Order changed")
+                .scaledFont(12, weight: .semibold)
+                .foregroundStyle(theme.warn)
+            Spacer()
+            Button("Discard") { rulePendingOrder = nil }
+                .scaledFont(12)
+                .foregroundStyle(theme.labelMuted)
+            Button {
+                showReorderConfirmation = true
+            } label: {
+                if isSavingOrder {
+                    ProgressView()
+                } else {
+                    Text("Save order").scaledFont(12, weight: .semibold)
+                }
+            }
+            .disabled(isSavingOrder)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(theme.warn.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .confirmationSheet(
+            isPresented: $showReorderConfirmation,
+            title: "Save new order",
+            message: reorderPreview,
+            destructive: false,
+            destructiveLabel: "Save order",
+            confirmLabel: "Cancel",
+            onConfirm: saveRuleOrder,
+            onCancel: {}
+        )
+        .writeErrorAlert(isErrorPresented: $showReorderErrorAlert, error: $reorderError)
+    }
+
+    private var reorderPreview: String {
+        guard let interface = interfaceFilter, let items = rulePendingOrder else { return "" }
+        return store.writeCoordinator.preview(for: .reorderFilterRules(
+            interface: interface,
+            items: items.map(\.reorderItem),
+            displayName: store.interfaceLabel(for: interface) ?? interface
+        ))
+    }
+
+    private func saveRuleOrder() async {
+        guard let interface = interfaceFilter, let items = rulePendingOrder else { return }
+        isSavingOrder = true
+        do {
+            _ = try await store.writeCoordinator.execute(.reorderFilterRules(
+                interface: interface,
+                items: items.map(\.reorderItem),
+                displayName: store.interfaceLabel(for: interface) ?? interface
+            ))
+            rulePendingOrder = nil
+            await store.refresh()
+        } catch {
+            // A refresh here, not only on success. A "mismatch" means the
+            // rules this order was built from are not what the firewall
+            // currently has — before this, nothing re-fetched them, `refresh()`
+            // silently no-opped for the same reason, and every retry
+            // resubmitted the identical stale order and failed the identical
+            // way. The pending drag is discarded rather than kept and offered
+            // again: a "Save order" built from data just proven wrong is not
+            // worth preserving, and forcing a fresh drag against current data
+            // is the only way the next attempt can mean anything.
+            rulePendingOrder = nil
+            reorderError = WriteError.from(error, operation: .other)
+            showReorderErrorAlert = true
+            await store.refresh()
+        }
+        isSavingOrder = false
+    }
+
+    /// One row, draggable by its leading handle only. The row's own tap
+    /// target — selection, navigation — is untouched; only the handle
+    /// initiates a drag, so picking up a rule and opening it remain two
+    /// different gestures rather than one gesture doing both badly.
+    @ViewBuilder
+    private func reorderableRow(_ item: RuleListItem) -> some View {
+        HStack(spacing: 0) {
+            RuleDragHandle()
+                .onDrag {
+                    ruleDraggingID = item.id
+                    return NSItemProvider(object: item.id as NSString)
+                }
+            Group {
+                switch item {
+                case .rule(let rule):
+                    Button { selection = rule.id } label: { RuleRow(rule: rule) }
+                        .buttonStyle(.plain)
+                case .separator(let separator):
+                    SeparatorBar(separator: separator)
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .onDrop(of: [.text], delegate: RuleReorderDropDelegate(
+            target: item,
+            items: Binding(
+                get: { displayedRuleItems },
+                set: { rulePendingOrder = $0 }
+            ),
+            draggingID: $ruleDraggingID
+        ))
     }
 
     // MARK: NAT
@@ -329,6 +559,19 @@ struct FirewallView: View {
         return false
     }
 
+    /// NAT separators, when it is safe to place them.
+    ///
+    /// Unlike filter separators, NAT's are not grouped by interface at all —
+    /// pfSense counts one position across the *entire* forward list,
+    /// confirmed from `firewall_nat.php` itself. So the only thing that can
+    /// invalidate the claim here is a search: `filteredForwards` already
+    /// equals `store.portForwards` unchanged whenever the query is empty,
+    /// which is the one condition this needs.
+    private var natSeparatorsForCurrentSelection: [RuleSeparator] {
+        guard query.isEmpty else { return [] }
+        return store.natSeparators
+    }
+
     @ViewBuilder
     private var natPane: some View {
         if let err = store.errors[.portForwards] {
@@ -337,7 +580,28 @@ struct FirewallView: View {
             Notice(symbol: "arrow.left.arrow.right", title: query.isEmpty ? "No port forwards" : "No matches")
         } else {
             countLine("\(filteredForwards.count) port forwards")
-            ForEach(filteredForwards) { pf in
+            let separators = natSeparatorsForCurrentSelection
+            if !separators.isEmpty {
+                // Named at the point the claim is made, the same as the
+                // rules pane: position here is pfSense's own, read from its
+                // own config, but shown as best this app's understanding of
+                // that structure allows.
+                Text("Separators shown below are pfSense's own, in pfSense's own order.")
+                    .scaledFont(11)
+                    .foregroundStyle(theme.labelFaint)
+                    .padding(.horizontal, 2)
+            }
+            ForEach(Array(filteredForwards.enumerated()), id: \.element.id) { index, pf in
+                // A separator's recorded count of preceding forwards is a
+                // count against the whole flat NAT list — confirmed from
+                // `firewall_nat.php`, which numbers every forward with one
+                // counter regardless of interface — so it lines up with this
+                // index exactly when nothing has been filtered out, which is
+                // the condition `natSeparatorsForCurrentSelection` already
+                // enforces.
+                ForEach(separators.filter { $0.precedingRuleCount == index }) { separator in
+                    SeparatorBar(separator: separator)
+                }
                 Button { selection = pf.id } label: {
                     Slab(rail: pf.health, trailing: store.interfaceLabel(for: pf.interfaceName)) {
                         VStack(alignment: .leading, spacing: 5) {
@@ -354,8 +618,10 @@ struct FirewallView: View {
                             // Same shape as a rule, because they are read the
                             // same way — the only difference is that a forward
                             // has somewhere it sends the traffic on to.
-                            natField("TO", store.resolvedValue(pf.destinationSide.address))
-                            natField("SENDS", store.resolvedValue(pf.target))
+                            // Same reasoning as the rule row: pfSense shows
+                            // the alias name, not its resolved members.
+                            natField("TO", pf.destinationSide.address)
+                            natField("SENDS", pf.target)
                             if let port = natPorts(pf) { natField("PORT", port) }
                             if !pf.descr.isEmpty {
                                 natField("DESC", pf.descr, mono: false)
@@ -365,13 +631,16 @@ struct FirewallView: View {
                 }
                 .buttonStyle(.plain)
             }
+            ForEach(separators.filter { ($0.precedingRuleCount ?? Int.max) >= filteredForwards.count }) { separator in
+                SeparatorBar(separator: separator)
+            }
         }
     }
 
     /// The port it arrives on, and the port it is sent to when they differ.
     private func natPorts(_ pf: PortForward) -> String? {
-        let arriving = pf.destinationSide.port.map { store.resolvedValue($0) }
-        let local = pf.localPort.map { store.resolvedValue($0) }
+        let arriving = pf.destinationSide.port
+        let local = pf.localPort
         switch (arriving, local) {
         case let (a?, l?) where a != l: return "\(a) → \(l)"
         case let (a?, _): return a
@@ -455,6 +724,140 @@ struct FirewallView: View {
 /// Addresses, never alias names: what a rule permits is the addresses. The
 /// kind marker went too — with the names gone it was labelling an address as
 /// "alias", which describes where the value came from rather than what it is.
+/// A rule or a separator, treated as one thing for reordering.
+///
+/// The drag has to move both kinds through a single list, since dropping a
+/// rule above or below a separator is exactly the interaction being asked
+/// for — a list of only rules could not express that.
+enum RuleListItem: Identifiable {
+    case rule(FirewallRule)
+    case separator(RuleSeparator)
+
+    var id: String {
+        switch self {
+        case .rule(let rule): return "rule:\(rule.tracker)"
+        case .separator(let separator): return "separator:\(separator.key)"
+        }
+    }
+
+    var reorderItem: FirewallClient.ReorderItem {
+        switch self {
+        case .rule(let rule): return .rule(tracker: rule.tracker)
+        case .separator(let separator): return .separator(key: separator.key)
+        }
+    }
+}
+
+/// Rules and separators, in reading order, for one interface.
+///
+/// The one function both the live display and a drag's starting point build
+/// from, so the two can never show a different order from each other. This
+/// mirrors `WriteCoordinator.reorderTokens` on the write side — one on-disk
+/// order, walked the same way wherever it needs to be read.
+func mergedRuleList(rules: [FirewallRule], separators: [RuleSeparator]) -> [RuleListItem] {
+    var items: [RuleListItem] = []
+    for (index, rule) in rules.enumerated() {
+        for separator in separators where separator.precedingRuleCount == index {
+            items.append(.separator(separator))
+        }
+        items.append(.rule(rule))
+    }
+    for separator in separators where (separator.precedingRuleCount ?? Int.max) >= rules.count {
+        items.append(.separator(separator))
+    }
+    return items
+}
+
+/// Where a drag currently wants to drop, computed live as the drag moves
+/// over other rows — the same "swap as you hover" feel `List`'s own reorder
+/// handle has, built by hand because that handle cannot be moved to the
+/// leading edge it was asked to appear on.
+struct RuleReorderDropDelegate: DropDelegate {
+    let target: RuleListItem
+    @Binding var items: [RuleListItem]
+    @Binding var draggingID: String?
+
+    func dropEntered(info: DropInfo) {
+        guard let draggingID, draggingID != target.id,
+              let from = items.firstIndex(where: { $0.id == draggingID }),
+              let to = items.firstIndex(where: { $0.id == target.id }) else { return }
+        guard items[from].id != items[to].id else { return }
+        withAnimation(.default) {
+            items.move(fromOffsets: IndexSet(integer: from),
+                      toOffset: to > from ? to + 1 : to)
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggingID = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+}
+
+/// The handle itself — the only part of a row that starts a drag, so the
+/// rest of the row keeps working as a normal tap target.
+struct RuleDragHandle: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+
+    var body: some View {
+        Image(systemName: "line.3.horizontal")
+            .scaledFont(13, weight: .semibold)
+            .foregroundStyle(theme.labelFaint)
+            .frame(width: 28, height: 36)
+            .contentShape(Rectangle())
+    }
+}
+
+/// One of pfSense's own grouping bars, drawn the way its list draws them:
+/// a coloured strip with a label, no rail, nothing tappable.
+///
+/// The colour names — info/warning/danger/success — come from the ansible
+/// pfSense module's own documented choices for this field, not from this
+/// app's palette, so they are mapped rather than assumed to line up.
+struct SeparatorBar: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+    let separator: RuleSeparator
+
+    /// Every separator was rendering in the same colour, and an exact
+    /// switch on the stored string is the likely reason why. `color` is read
+    /// correctly from the payload — confirmed by re-reading the snippet — but
+    /// this compared it with `==`, and pfSense's actual convention for that
+    /// field was never confirmed beyond "used directly as a CSS class name"
+    /// (`display_separator()`'s own `<td class="' . $cellcolor . '">`). If the
+    /// real value is a compound class — `bg-warning`, `table-warning` — rather
+    /// than the bare word, an exact match never fires and everything falls
+    /// through to the same default, which is exactly the symptom reported.
+    ///
+    /// `contains` is the defensively tolerant choice: correct for the bare
+    /// word, and also correct for any class name built around it, without
+    /// needing pfSense's exact convention confirmed first.
+    private var tint: Color {
+        let name = separator.colorName.lowercased()
+        if name.contains("warning") { return theme.warn }
+        if name.contains("danger") { return theme.bad }
+        if name.contains("success") { return theme.ok }
+        return theme.info
+    }
+
+    var body: some View {
+        HStack {
+            Text(separator.text.isEmpty ? "Separator" : separator.text)
+                .scaledFont(12, weight: .semibold)
+                .foregroundStyle(theme.label)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .background(tint.opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
+
 struct RuleRow: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
@@ -475,8 +878,13 @@ struct RuleRow: View {
                         .foregroundStyle(theme.labelFaint)
                 }
 
-                field("FROM", store.resolvedValue(rule.sourceSide.address))
-                field("TO", store.resolvedValue(rule.destinationSide.address))
+                // The raw stored value, not what it resolves to. pfSense's
+                // own rules list shows "alias_host_nas003" as a clickable
+                // alias name, never the address it expands to — resolving it
+                // here made the list disagree with the firewall's own about
+                // what a rule literally says.
+                field("FROM", rule.sourceSide.address)
+                field("TO", rule.destinationSide.address)
 
                 if let port = ports {
                     field("PORT", port)
@@ -492,8 +900,8 @@ struct RuleRow: View {
     /// labelling it separately in a list would waste a row on every rule that
     /// does not have one.
     private var ports: String? {
-        let source = rule.sourceSide.port.map { store.resolvedValue($0) }
-        let destination = rule.destinationSide.port.map { store.resolvedValue($0) }
+        let source = rule.sourceSide.port
+        let destination = rule.destinationSide.port
         switch (source, destination) {
         case let (s?, d?): return "\(s) → \(d)"
         case let (nil, d?): return d
@@ -695,7 +1103,7 @@ struct RuleDetailView: View {
                           aliases: store.aliases,
                           ruleset: store.rules,
                           subject: rule,
-                          onSave: { saved in await save(changes: saved) })
+                          onSave: { saved in try await save(changes: saved) })
         }
         .sheet(isPresented: $showSimulation) {
             RuleSimulationSheet(rule: rule)
@@ -732,27 +1140,27 @@ struct RuleDetailView: View {
     /// whole write. It returns a result now, and the sheet closes itself on
     /// success rather than the detail view dismissing out from under it.
     @discardableResult
-    private func save(changes: RuleEditForm) async -> Bool {
-        do {
-            // The interface comes from the form now. It was taken from the
-            // rule, so moving a rule between interfaces in the editor
-            // changed the screen and not the firewall.
-            _ = try await store.writeCoordinator.execute(
-                .saveRule(
-                    rule: changes.toDict(tracker: rule.tracker, interface: changes.interface),
-                    displayName: rule.descr.isEmpty ? rule.tracker : rule.descr
-                )
+    /// Rethrows rather than swallowing into a `Bool`.
+    ///
+    /// This view is still covered by the edit sheet when a save fails — the
+    /// confirmation dismissing does not dismiss the sheet underneath it — so
+    /// an error stashed here stayed invisible until something else happened
+    /// to dismiss that sheet later. The sheet catches it now, where it is
+    /// actually on screen.
+    private func save(changes: RuleEditForm) async throws {
+        // The interface comes from the form now. It was taken from the
+        // rule, so moving a rule between interfaces in the editor
+        // changed the screen and not the firewall.
+        _ = try await store.writeCoordinator.execute(
+            .saveRule(
+                rule: changes.toDict(tracker: rule.tracker, interface: changes.interface),
+                displayName: rule.descr.isEmpty ? rule.tracker : rule.descr
             )
+        )
 
-            // Refreshed but not dismissed. The rule that was just edited is
-            // the thing somebody wants to look at to check it took.
-            Task { await store.refresh() }
-            return true
-        } catch {
-            writeError = WriteError.from(error, operation: .other)
-            showErrorAlert = true
-            return false
-        }
+        // Refreshed but not dismissed. The rule that was just edited is
+        // the thing somebody wants to look at to check it took.
+        Task { await store.refresh() }
     }
 
     /// A field, with the alias name kept above its contents.
@@ -923,7 +1331,7 @@ struct PortForwardDetailView: View {
             PortForwardEditSheet(form: editorForm ?? PortForwardEditForm(from: forward),
                                  interfaces: store.interfaces,
                                  aliases: store.aliases,
-                                 onSave: { saved in await save(changes: saved) })
+                                 onSave: { saved in try await save(changes: saved) })
         }
         .confirmationSheet(
             isPresented: $showDeleteConfirm,
@@ -970,24 +1378,35 @@ struct PortForwardDetailView: View {
     }
 
     @discardableResult
-    private func save(changes: PortForwardEditForm) async -> Bool {
-        do {
-            // From the form, not the forward: the editor offers an
-            // interface field and it was being ignored on save.
-            _ = try await store.writeCoordinator.execute(
-                .saveNatRule(
-                    rule: changes.toDict(interface: changes.interface),
-                    displayName: forward.descr.isEmpty ? forward.id : forward.descr
-                )
-            )
+    /// Rethrows rather than swallowing into a `Bool`, for the same reason as
+    /// the rule detail's `save(changes:)`.
+    private func save(changes: PortForwardEditForm) async throws {
+        // From the form, not the forward: the editor offers an
+        // interface field and it was being ignored on save.
+        var dict = changes.toDict(interface: changes.interface).raw
 
-            Task { await store.refresh() }
-            return true
-        } catch {
-            writeError = WriteError.from(error, operation: .other)
-            showErrorAlert = true
-            return false
-        }
+        // The forward's identity as it was fetched, before any of the edits
+        // in `changes` were applied. Real pfSense NAT rules carry no tracker
+        // at all -- only filter rules get one -- so this is what the save
+        // matches an existing, never-yet-adopted forward by. It has to come
+        // from `forward`, the untouched value this screen was opened with,
+        // never from `changes`: matching against the NEW values would fail
+        // exactly when the edit changes one of these fields, which is an
+        // ordinary thing to want to do.
+        dict["original_interface"] = .string(forward.interfaceName)
+        dict["original_destination"] = FilterAddress.encoded(
+            forward.destinationSide.address, as: forward.destinationSide.storageKind)
+        dict["original_destination_port"] = .string(forward.destinationSide.port ?? "")
+        dict["original_target"] = .string(forward.target)
+
+        _ = try await store.writeCoordinator.execute(
+            .saveNatRule(
+                rule: JSONDict(dict),
+                displayName: forward.descr.isEmpty ? forward.id : forward.descr
+            )
+        )
+
+        Task { await store.refresh() }
     }
 
     /// Every address or port behind a value, one per line. Same as the rule
@@ -1171,15 +1590,27 @@ struct RuleEditSheet: View {
     /// The rule as the firewall currently has it, which is what gets placed —
     /// the edited copy is not in the ruleset yet.
     let subject: FirewallRule
-    let onSave: (RuleEditForm) async -> Bool
+    let onSave: (RuleEditForm) async throws -> Void
 
     @State private var edited: RuleEditForm
     @State private var isSaving = false
     @State private var showSaveConfirmation = false
 
+    /// Shown by this sheet itself, not by whatever presented it.
+    ///
+    /// The confirmation is a second sheet nested inside this one. When the
+    /// save fails, this sheet is what is on screen the moment the
+    /// confirmation dismisses — the presenter behind it is still covered.
+    /// An error stashed on the presenter cannot surface until this sheet is
+    /// dismissed, and nothing dismisses it on failure, so the error was real
+    /// and invisible: the confirmation just closed and nothing seemed to
+    /// happen.
+    @State private var writeError: WriteError?
+    @State private var showErrorAlert = false
+
     init(form: RuleEditForm, interfaces: [InterfaceStat], aliases: [FirewallAliasEntry],
          ruleset: [FirewallRule], subject: FirewallRule,
-         onSave: @escaping (RuleEditForm) async -> Bool) {
+         onSave: @escaping (RuleEditForm) async throws -> Void) {
         self.interfaces = interfaces
         self.aliases = aliases
         self.ruleset = ruleset
@@ -1372,6 +1803,10 @@ struct RuleEditSheet: View {
                 onConfirm: saveConfirmed,
                 onCancel: {}
             )
+            // Attached here rather than on whatever presented this sheet.
+            // This is the topmost view when the confirmation above dismisses,
+            // so this is where the failure has to be shown.
+            .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
         }
     }
 
@@ -1459,9 +1894,17 @@ struct RuleEditSheet: View {
 
     private func saveConfirmed() async {
         isSaving = true
-        let saved = await onSave(edited)
-        isSaving = false
-        if saved { dismiss() }
+        do {
+            try await onSave(edited)
+            isSaving = false
+            dismiss()
+        } catch {
+            // Caught and shown here, on the view that is actually on screen —
+            // not passed back to a presenter this sheet is still covering.
+            isSaving = false
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
+        }
     }
 }
 
@@ -1676,11 +2119,17 @@ struct PortForwardEditSheet: View {
 
     let interfaces: [InterfaceStat]
     let aliases: [FirewallAliasEntry]
-    let onSave: (PortForwardEditForm) async -> Bool
+    let onSave: (PortForwardEditForm) async throws -> Void
 
     @State private var edited: PortForwardEditForm
     @State private var isSaving = false
     @State private var showSaveConfirmation = false
+
+    /// Shown by this sheet, for the same reason as `RuleEditSheet`: it is the
+    /// topmost view when its own nested confirmation dismisses, and an error
+    /// stashed on the presenter behind it would stay invisible.
+    @State private var writeError: WriteError?
+    @State private var showErrorAlert = false
 
     private let original: PortForwardEditForm
 
@@ -1688,7 +2137,7 @@ struct PortForwardEditSheet: View {
 
     init(form: PortForwardEditForm, interfaces: [InterfaceStat],
          aliases: [FirewallAliasEntry],
-         onSave: @escaping (PortForwardEditForm) async -> Bool) {
+         onSave: @escaping (PortForwardEditForm) async throws -> Void) {
         self.interfaces = interfaces
         self.aliases = aliases
         self.onSave = onSave
@@ -1801,6 +2250,7 @@ struct PortForwardEditSheet: View {
                 onConfirm: saveConfirmed,
                 onCancel: {}
             )
+            .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
         }
     }
 
@@ -1861,8 +2311,16 @@ struct PortForwardEditSheet: View {
 
     private func saveConfirmed() async {
         isSaving = true
-        let saved = await onSave(edited)
-        isSaving = false
-        if saved { dismiss() }
+        do {
+            try await onSave(edited)
+            isSaving = false
+            dismiss()
+        } catch {
+            // Caught and shown here, on the view that is actually on screen —
+            // not passed back to a presenter this sheet is still covering.
+            isSaving = false
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
+        }
     }
 }
