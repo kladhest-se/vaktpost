@@ -145,6 +145,18 @@ struct FirewallRule: Identifiable {
     var isFloating: Bool {
         interfaceName.components(separatedBy: ",").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count > 1
     }
+
+    /// A configured block whose source is a literal host or CIDR. Quick Block
+    /// always creates this shape. Keeping it separate from dynamic pf tables
+    /// lets the System screen show what Vaktpost just added even on pfSense
+    /// Plus, where the live table accessor is not exposed to PHP.
+    var isConfiguredHostBlock: Bool {
+        type == "block"
+            && !disabled
+            && sourceSide.storageKind == .address
+            && !sourceSide.address.isEmpty
+            && sourceSide.address.lowercased() != "any"
+    }
 }
 
 struct FirewallAliasEntry: Identifiable {

@@ -1,11 +1,12 @@
 import XCTest
+import os
 @testable import Vaktpost
 
 @MainActor
 final class RefreshSchedulerTests: XCTestCase {
 
     func testStartSetsRunningStateAndCallsRefresh() async {
-        var refreshes = 0
+        let refreshes = OSAllocatedUnfairLock(initialState: 0)
         let scheduler = RefreshScheduler(interval: 0.1)
         let done = expectation(description: "refresh called")
         
@@ -16,13 +17,16 @@ final class RefreshSchedulerTests: XCTestCase {
         }
         
         scheduler.start {
-            refreshes += 1
-            if refreshes == 1 { done.fulfill() }
+            let count = refreshes.withLock { value in
+                value += 1
+                return value
+            }
+            if count == 1 { done.fulfill() }
         }
         
         await fulfillment(of: [done], timeout: 2)
         scheduler.stop()
-        XCTAssertTrue(refreshes >= 1)
+        XCTAssertTrue(refreshes.withLock { $0 } >= 1)
     }
 
     func testStopRecordsManualReason() async {
@@ -41,7 +45,7 @@ final class RefreshSchedulerTests: XCTestCase {
     }
 
     func testResumeRestartsTimer() async {
-        var refreshes = 0
+        let refreshes = OSAllocatedUnfairLock(initialState: 0)
         let scheduler = RefreshScheduler(interval: 0.1)
         let done = expectation(description: "refresh after resume")
         
@@ -49,8 +53,11 @@ final class RefreshSchedulerTests: XCTestCase {
         scheduler.stop(reason: .manual)
         
         scheduler.resume {
-            refreshes += 1
-            if refreshes == 1 { done.fulfill() }
+            let count = refreshes.withLock { value in
+                value += 1
+                return value
+            }
+            if count == 1 { done.fulfill() }
         }
         
         await fulfillment(of: [done], timeout: 2)
@@ -67,25 +74,22 @@ final class RefreshSchedulerTests: XCTestCase {
 
     func testSchedulerStopsOnCancellation() async {
         let scheduler = RefreshScheduler(interval: 0.05)
-        let task = Task<Void, Never> {
-            await withCheckedContinuation { _ in }
-        }
-        
-        var callCount = 0
+        let callCount = OSAllocatedUnfairLock(initialState: 0)
+        let reachedThree = expectation(description: "three refreshes")
         scheduler.start {
-            callCount += 1
-            if callCount >= 3 { task.cancel() }
+            let count = callCount.withLock { value in
+                value += 1
+                return value
+            }
+            if count == 3 { reachedThree.fulfill() }
         }
-        
-        // Let it run for a bit
-        try? await Task.sleep(for: .milliseconds(200))
-        task.cancel()
-        
-        // Wait for scheduler to notice cancellation
-        try? await Task.sleep(for: .milliseconds(100))
+
+        await fulfillment(of: [reachedThree], timeout: 2)
         scheduler.stop()
-        
-        // Should have had at least 2-3 calls before cancellation
-        XCTAssertTrue(callCount >= 2, "Expected multiple refreshes before cancellation")
+        let stoppedAt = callCount.withLock { $0 }
+        try? await Task.sleep(for: .milliseconds(150))
+
+        XCTAssertEqual(callCount.withLock { $0 }, stoppedAt,
+                       "A cancelled scheduler must not fire again")
     }
 }

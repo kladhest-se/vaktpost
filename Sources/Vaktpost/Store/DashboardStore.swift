@@ -59,6 +59,12 @@ final class DashboardStore: Observable {
     }
     }
 
+    enum TableReadState: Equatable {
+        case notLoaded
+        case live
+        case unavailable
+    }
+
     // MARK: UserDefaults keys
 
     private enum UDKey: String {
@@ -84,6 +90,19 @@ final class DashboardStore: Observable {
 
     enum BatchGroup {
         case core, clients, vpn, system
+    }
+
+    /// Mutable bookkeeping shared by the concurrently-started refresh jobs.
+    /// Every access remains on the main actor while network awaits can still
+    /// overlap, so Swift 6 can prove there is no unsynchronised shared state.
+    @MainActor
+    private final class RefreshCycle {
+        var freshErrors: [Section: String] = [:]
+        var fatal: String?
+        var networkDown = false
+        var succeeded = 0
+        var succeededSections: Set<Section> = []
+        var failedSections: Set<Section> = []
     }
 
     // MARK: Managers
@@ -279,6 +298,19 @@ final class DashboardStore: Observable {
     var tables: [FirewallTable] = []
     var blockedHosts: [FirewallTable] = []
     var isLoadingTables = false
+    var tableReadState: TableReadState = .notLoaded
+
+    /// Enabled literal-source block rules, including rules created by Quick
+    /// Block. Configuration remains readable even when this pfSense build has
+    /// no safe PHP accessor for dynamic pf-table entries.
+    var configuredHostBlocks: [FirewallRule] {
+        rules.filter(\.isConfiguredHostBlock).sorted {
+            if $0.interfaceName == $1.interfaceName {
+                return $0.sourceSide.address < $1.sourceSide.address
+            }
+            return $0.interfaceName < $1.interfaceName
+        }
+    }
 
     /// Rules, aliases and port forwards are loaded lazily when the user
     /// first navigates to the Firewall screen, then refreshed on the timer.
@@ -513,6 +545,7 @@ final class DashboardStore: Observable {
         store.interfaceErrors.reset()
         store.notices = []; store.filesystems = []; store.dyndns = []
         store.isLoadingTables = false
+        store.tableReadState = .notLoaded
         store.isLoadingFirewallObjects = false
         store.hasLoadedFirewallObjects = false
         store.hasLoadedHAProxy = false
@@ -563,8 +596,7 @@ final class DashboardStore: Observable {
         refreshCount += 1
         let refreshStartTime = Date()
 
-        var freshErrors: [Section: String] = [:]
-        var fatal: String?
+        let cycle = RefreshCycle()
 
         /// Set the moment a request fails at the transport level.
         ///
@@ -576,76 +608,78 @@ final class DashboardStore: Observable {
         ///
         /// So the first transport failure ends the cycle and says so straight
         /// away, rather than at the end of a queue of timeouts.
-        var networkDown = false
-        var succeeded = 0
-        var succeededSections: Set<Section> = []
-
         /// Runs one section and records whether it worked.
         @discardableResult
+        @MainActor @Sendable
         func run(_ section: Section, optional: Bool = false) async -> Bool {
-            guard isCurrent(binding), !networkDown else { return false }
+            guard isCurrent(binding), !cycle.networkDown else { return false }
             // Retry a known-missing optional endpoint every 20th cycle only.
             guard !optional || !missingEndpoints.contains(section) || refreshCount % 20 == 0 else { return false }
             do {
                 try await fetchOne(section)
                 guard isCurrent(binding) else { return false }
                 missingEndpoints.remove(section)
-                succeeded += 1
-                succeededSections.insert(section)
+                cycle.succeeded += 1
+                cycle.succeededSections.insert(section)
                 return true
             } catch let err as RPCError {
                 guard isCurrent(binding) else { return false }
                 recordError(err, for: section, optional: optional)
             } catch {
                 guard isCurrent(binding) else { return false }
-                freshErrors[section] = error.localizedDescription
+                cycle.failedSections.insert(section)
+                cycle.freshErrors[section] = error.localizedDescription
             }
             return false
         }
 
+        @MainActor
         func recordError(_ err: RPCError, for section: Section, optional: Bool) {
+            if err != .cancelled { cycle.failedSections.insert(section) }
             switch err {
             case .cancelled:
                 break
             case .transport, .offline:
-                fatal = err.localizedDescription
-                networkDown = true
-                connectionError = fatal
+                cycle.fatal = err.localizedDescription
+                cycle.networkDown = true
+                connectionError = cycle.fatal
             case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
-                fatal = err.localizedDescription
+                cycle.fatal = err.localizedDescription
             case .fault:
                 let count = (faultCounts[section] ?? 0) + 1
                 faultCounts[section] = count
                 if optional { missingEndpoints.insert(section) }
-                freshErrors[section] = count >= Self.faultLimit
+                cycle.freshErrors[section] = count >= Self.faultLimit
                     ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
                     : err.localizedDescription
             default:
-                freshErrors[section] = err.localizedDescription
+                cycle.freshErrors[section] = err.localizedDescription
             }
         }
 
+        @MainActor
         func recordBatchError(_ err: RPCError, for sections: [Section]) {
+            if err != .cancelled { cycle.failedSections.formUnion(sections) }
             switch err {
             case .cancelled:
                 break
             case .transport, .offline:
-                fatal = err.localizedDescription
-                networkDown = true
-                connectionError = fatal
+                cycle.fatal = err.localizedDescription
+                cycle.networkDown = true
+                connectionError = cycle.fatal
             case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
-                fatal = err.localizedDescription
+                cycle.fatal = err.localizedDescription
             case .fault:
                 for section in sections {
                     let count = (faultCounts[section] ?? 0) + 1
                     faultCounts[section] = count
                     missingEndpoints.insert(section)
-                    freshErrors[section] = count >= Self.faultLimit
+                    cycle.freshErrors[section] = count >= Self.faultLimit
                         ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
                         : err.localizedDescription
                 }
             default:
-                for section in sections { freshErrors[section] = err.localizedDescription }
+                for section in sections { cycle.freshErrors[section] = err.localizedDescription }
             }
         }
 
@@ -664,6 +698,7 @@ final class DashboardStore: Observable {
         /// since a fault in a grouped call writes one notice to the firewall
         /// on behalf of five sections rather than one.
         @discardableResult
+        @MainActor @Sendable
         func runBatch(
             _ group: BatchGroup,
             sections: [Section],
@@ -671,7 +706,7 @@ final class DashboardStore: Observable {
         ) async -> Bool {
             // Skipped only when every section in it has been abandoned. One
             // bad section should not stop the other four from loading.
-            guard isCurrent(binding), !networkDown else { return false }
+            guard isCurrent(binding), !cycle.networkDown else { return false }
             let live = sections.filter { !missingEndpoints.contains($0) }
             guard !live.isEmpty || refreshCount % 20 == 0 else { return false }
 
@@ -687,16 +722,17 @@ final class DashboardStore: Observable {
                 let result = decode(batch)
                 for section in sections {
                     missingEndpoints.remove(section)
-                    succeededSections.insert(section)
+                    cycle.succeededSections.insert(section)
                 }
-                succeeded += 1
+                cycle.succeeded += 1
                 return result
             } catch let err as RPCError {
                 guard isCurrent(binding) else { return false }
                 recordBatchError(err, for: sections)
             } catch {
                 guard isCurrent(binding) else { return false }
-                for section in sections { freshErrors[section] = error.localizedDescription }
+                cycle.failedSections.formUnion(sections)
+                for section in sections { cycle.freshErrors[section] = error.localizedDescription }
             }
             return false
         }
@@ -728,12 +764,12 @@ final class DashboardStore: Observable {
         }
         guard isCurrent(binding) else { return }
 
-        if succeededSections.contains(.system) { deriveCPUUsage() }
+        if cycle.succeededSections.contains(.system) { deriveCPUUsage() }
         seedFavouritesIfNeeded()
-        if succeededSections.contains(.states), let current = states?.current {
+        if cycle.succeededSections.contains(.states), let current = states?.current {
             stateHistory.ingest(current: current)
         }
-        for gw in gatewayManager.gateways where succeededSections.contains(.gateways) {
+        for gw in gatewayManager.gateways where cycle.succeededSections.contains(.gateways) {
             gatewayManager.ingest(
                 key: gw.name,
                 delayMS: gw.delayMS,
@@ -742,7 +778,7 @@ final class DashboardStore: Observable {
         }
         // Only sample when this cycle actually fetched counters.
         if interfacesLoaded { throughput.ingest(interfaces) }
-        if succeededSections.contains(.system), let sys = system {
+        if cycle.succeededSections.contains(.system), let sys = system {
             if let cpu = sys.cpuUsage { systemMetrics.ingest(key: "cpu", value: cpu) }
             if let mem = sys.memUsage { systemMetrics.ingest(key: "mem", value: mem) }
             if let disk = sys.diskUsage { systemMetrics.ingest(key: "disk", value: disk) }
@@ -763,70 +799,50 @@ final class DashboardStore: Observable {
             passed: self.firewallLog.count - self.overviewLayout.blockedRecently - self.overviewLayout.rejectedRecently
         )
 
-        await withTaskGroup(of: (String, Bool).self) { group in
-            // Clients
-            group.addTask {
-                let success = await runBatch(
-                    .clients,
-                    sections: [.leases, .arp, .statics, .hostOverrides, .aliases]
-                ) { batch in
-                    self.leases = batch.rows("dhcp_leases").map(DHCPLease.init)
-                    self.arp = batch.rows("arp_table").map(ARPEntry.init)
-                    self.staticMappings = batch.rows("static_mappings").map(StaticMapping.init)
-                    self.hostOverrides = batch.rows("host_overrides").map(HostOverride.init)
-                    self.aliases = batch.rows("firewall_aliases").map(FirewallAliasEntry.init)
-                    return true
-                }
-                return ("clients", success)
-            }
-
-            // Firewall log
-            group.addTask {
-                let success = await run(.firewallLog)
-                return ("firewallLog", success)
-            }
-
-            // VPN
-            group.addTask {
-                let success = await runBatch(
-                    .vpn,
-                    sections: [.openvpn, .openvpnClients, .ipsec, .wireguard]
-                ) { batch in
-                    self.openvpnServers = batch.rows("openvpn_servers").map(OpenVPNServerStatus.init)
-                    self.openvpnClients = batch.rows("openvpn_clients").map(OpenVPNServerStatus.init)
-                    self.ipsecSAs = batch.rows("ipsec_sas").map(IPsecSA.init)
-                    let wg = batch.object("wireguard")
-                    self.wireguardTunnels = wg.list("tunnels").compactMap { JSONDict($0) }
-                        .map(WireGuardTunnel.init)
-                    self.wireguardPeers = wg.list("peers").compactMap { JSONDict($0) }
-                        .map(WireGuardPeer.init)
-                    return true
-                }
-                return ("vpn", success)
-            }
-
-            // System detail
-            group.addTask {
-                let success = await runBatch(
-                    .system,
-                    sections: [.carp, .certificates, .packages, .notices, .dyndns]
-                ) { batch in
-                    self.carp = CARPStatus(batch.object("carp"))
-                    self.certificates = batch.rows("certificates").map { dict in
-                        CertificateInfo(dict, isCA: dict.bool("is_ca") ?? false)
-                    }
-                    self.packages = batch.rows("packages").map(PackageInfo.init)
-                    self.notices = batch.rows("notices").map(SystemNotice.init)
-                    self.dyndns = batch.rows("dyndns").map(DyndnsEntry.init)
-                    return true
-                }
-                return ("system", success)
-            }
-
-            for await _ in group {
-                guard isCurrent(binding) else { return }
-            }
+        async let clientsLoaded = runBatch(
+            .clients,
+            sections: [.leases, .arp, .statics, .hostOverrides, .aliases]
+        ) { batch in
+            self.leases = batch.rows("dhcp_leases").map(DHCPLease.init)
+            self.arp = batch.rows("arp_table").map(ARPEntry.init)
+            self.staticMappings = batch.rows("static_mappings").map(StaticMapping.init)
+            self.hostOverrides = batch.rows("host_overrides").map(HostOverride.init)
+            self.aliases = batch.rows("firewall_aliases").map(FirewallAliasEntry.init)
+            return true
         }
+
+        async let firewallLogLoaded = run(.firewallLog)
+
+        async let vpnLoaded = runBatch(
+            .vpn,
+            sections: [.openvpn, .openvpnClients, .ipsec, .wireguard]
+        ) { batch in
+            self.openvpnServers = batch.rows("openvpn_servers").map(OpenVPNServerStatus.init)
+            self.openvpnClients = batch.rows("openvpn_clients").map(OpenVPNServerStatus.init)
+            self.ipsecSAs = batch.rows("ipsec_sas").map(IPsecSA.init)
+            let wg = batch.object("wireguard")
+            self.wireguardTunnels = wg.list("tunnels").compactMap { JSONDict($0) }
+                .map(WireGuardTunnel.init)
+            self.wireguardPeers = wg.list("peers").compactMap { JSONDict($0) }
+                .map(WireGuardPeer.init)
+            return true
+        }
+
+        async let systemLoaded = runBatch(
+            .system,
+            sections: [.carp, .certificates, .packages, .notices, .dyndns]
+        ) { batch in
+            self.carp = CARPStatus(batch.object("carp"))
+            self.certificates = batch.rows("certificates").map { dict in
+                CertificateInfo(dict, isCA: dict.bool("is_ca") ?? false)
+            }
+            self.packages = batch.rows("packages").map(PackageInfo.init)
+            self.notices = batch.rows("notices").map(SystemNotice.init)
+            self.dyndns = batch.rows("dyndns").map(DyndnsEntry.init)
+            return true
+        }
+
+        _ = await (clientsLoaded, firewallLogLoaded, vpnLoaded, systemLoaded)
         guard isCurrent(binding) else { return }
         
         // Restore previous firewall counts after the firewall log was fetched.
@@ -877,8 +893,8 @@ final class DashboardStore: Observable {
         }
         guard isCurrent(binding) else { return }
 
-        for section in succeededSections { errors[section] = nil }
-        for (section, message) in freshErrors { errors[section] = message }
+        for section in cycle.succeededSections { errors[section] = nil }
+        for (section, message) in cycle.freshErrors { errors[section] = message }
 
         // A fatal error only counts when nothing at all got through.
         //
@@ -892,8 +908,8 @@ final class DashboardStore: Observable {
         // twenty should not put "cannot reach firewall" over a screen of fresh
         // data. A transport failure is different — it means no request can
         // succeed — and it has already been reported above.
-        if !networkDown {
-            connectionError = succeeded == 0 ? fatal : nil
+        if !cycle.networkDown {
+            connectionError = cycle.succeeded == 0 ? cycle.fatal : nil
         }
         lastRefresh = Date()
         alertManager.alerts = VaktpostAlert.build(from: self)
@@ -933,9 +949,11 @@ final class DashboardStore: Observable {
         
         performanceMetrics.recordRefresh(
             duration: Date().timeIntervalSince(refreshStartTime),
-            sectionsCompleted: succeededSections.count,
-            sectionsFailed: Section.allCases.count - succeededSections.count,
-            success: !networkDown && fatal == nil
+            sectionsCompleted: cycle.succeededSections.count,
+            // Only attempted sections can fail. The old subtraction counted
+            // every lazy screen that this refresh deliberately did not load.
+            sectionsFailed: cycle.failedSections.count,
+            success: cycle.failedSections.isEmpty
         )
     }
 
@@ -960,9 +978,9 @@ final class DashboardStore: Observable {
                                               serverName: name) }
     }
 
-    /// Fetches the pf tables. Called when the System screen appears, not by
-    /// the refresh timer: the payload is dominated by `bogons`, which is large,
-    /// static, and of no interest to anybody looking at this app.
+    /// Fetches the operational pf tables. Called when the System screen
+    /// appears, not by the refresh timer: these dynamic entries are useful on
+    /// demand and not worth another XML-RPC request every thirty seconds.
     func loadTables() async {
         let binding = bindingID
         let client = client
@@ -975,6 +993,7 @@ final class DashboardStore: Observable {
             if let fetched {
                 tables = fetched
                 blockedHosts = fetched.filter { $0.isNotable && $0.entryCount > 0 }
+                tableReadState = .live
                 errors[.tables] = nil
             } else {
                 // Reachable only through pfctl, which is a shell, or a PHP
@@ -983,10 +1002,15 @@ final class DashboardStore: Observable {
                 // is blocked".
                 tables = []
                 blockedHosts = []
-                errors[.tables] = "This pfSense exposes no way to read pf tables without a shell, so blocked hosts cannot be listed. Check Diagnostics → Tables in the webConfigurator."
+                tableReadState = .unavailable
+                // This is a platform capability, not a failed request. Keep
+                // the limitation visible beside the feature without making
+                // Diagnostics report a permanent false failure.
+                errors[.tables] = nil
             }
         } catch {
             guard isCurrent(binding) else { return }
+            tableReadState = .notLoaded
             errors[.tables] = error.localizedDescription
         }
     }
@@ -1370,9 +1394,10 @@ final class DashboardStore: Observable {
         haproxyBackends.filter { !$0.isMonitored && !$0.servers.isEmpty }
     }
 
-    func loadFirewallObjects() async {
+    func loadFirewallObjects(force: Bool = false) async {
         let binding = bindingID
         let client = client
+        if force { hasLoadedFirewallObjects = false }
         guard isConfigured, !isLoadingFirewallObjects, !hasLoadedFirewallObjects else { return }
         isLoadingFirewallObjects = true
         defer { if bindingID == binding { isLoadingFirewallObjects = false } }

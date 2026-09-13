@@ -202,8 +202,10 @@ a ninth appears or if one of the eight quietly stops being used.
 
 Every newly added or migrated firewall nevertheless starts in **monitor-only
 mode**. The client rejects all eight mutation methods before transport in that
-mode. Enabling administration is stored per firewall and requires both an
-explicit risk acknowledgement and a fresh Face ID or Touch ID evaluation.
+mode. Enabling administration is stored per firewall and requires an explicit
+risk acknowledgement, but no Face ID or Touch ID evaluation. Biometric checks
+remain in place for revealing or replacing a stored password and for the
+optional whole-app lock.
 This is an application safety boundary, not a reduction in the credential's
 pfSense privileges.
 

@@ -4,7 +4,7 @@ import Observation
 /// Each selection owns its result and loading state. An obsolete request may
 /// finish even after cancellation, but cannot replace the selected range.
 @MainActor
-final class HistoryLoader<Key: Hashable, Value>: Observable {
+final class HistoryLoader<Key: Hashable & Sendable, Value: Sendable>: Observable {
     struct Entry {
         let value: Value
         let fetchedAt: Date

@@ -48,36 +48,36 @@ final class MonitoringTests: XCTestCase {
         var clock = Date(timeIntervalSince1970: 1000)
         let loader = HistoryLoader<String, Int>(lifetime: 300, now: { clock })
         var calls = 0
-        await loader.load("week") { calls += 1; return calls }
+        _ = await loader.load("week") { calls += 1; return calls }
         let firstDate = loader.fetchedAt
         clock = clock.addingTimeInterval(299)
-        await loader.load("week") { calls += 1; return calls }
+        _ = await loader.load("week") { calls += 1; return calls }
         XCTAssertEqual(calls, 1)
         XCTAssertEqual(loader.fetchedAt, firstDate)
         clock = clock.addingTimeInterval(2)
-        await loader.load("week") { calls += 1; return calls }
+        _ = await loader.load("week") { calls += 1; return calls }
         XCTAssertEqual(calls, 2)
-        await loader.load("week", force: true) { calls += 1; return calls }
+        _ = await loader.load("week", force: true) { calls += 1; return calls }
         XCTAssertEqual(calls, 3)
     }
 
     func testHistoryFailureKeepsLastValueAndRetries() async {
         enum Failure: Error { case offline }
         let loader = HistoryLoader<String, Int>()
-        await loader.load("week") { 1 }
+        _ = await loader.load("week") { 1 }
         let date = loader.fetchedAt
-        await loader.load("week", force: true) { throw Failure.offline }
+        _ = await loader.load("week", force: true) { throw Failure.offline }
         XCTAssertEqual(loader.value, 1)
         XCTAssertEqual(loader.fetchedAt, date)
         XCTAssertNotNil(loader.error)
-        await loader.load("week") { 2 }
+        _ = await loader.load("week") { 2 }
         XCTAssertEqual(loader.value, 2)
         XCTAssertNil(loader.error)
     }
 
     func testHistoryRangeChangeDoesNotShowPreviousRangeWhileLoading() async {
         let loader = HistoryLoader<String, Int>()
-        await loader.load("week") { 1 }
+        _ = await loader.load("week") { 1 }
         let ready = expectation(description: "month pending")
         var pending: CheckedContinuation<Int, Never>?
         let request = Task { await loader.load("month") {

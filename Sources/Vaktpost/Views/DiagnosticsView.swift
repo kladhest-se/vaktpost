@@ -241,7 +241,7 @@ struct DiagnosticsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(_failing.isEmpty
                      ? "Everything the app asks for is answering"
-                     : "\(_failing.count) of \(DashboardStore.Section.allCases.count) sections are failing")
+                     : "\(_failing.count) section\(_failing.count == 1 ? "" : "s") need attention")
                     .scaledFont(14, weight: .semibold)
                     .foregroundStyle(theme.label)
                 Text("Nothing here is fetched — it is what the last refresh already found out.")

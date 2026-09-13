@@ -38,7 +38,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
 
     /// Checking whether a credential exists must not copy its value out of the
     /// Keychain. The password is only read when a foreground request actually
-    /// needs it, or after a biometric check in the editor.
+    /// needs it, or after a biometric check to reveal it in the editor.
     var hasCredentials: Bool { !username.isEmpty && Keychain.hasPassword(for: id) }
     var isUsable: Bool { isConfigured && hasCredentials }
     var isAdministrationEnabled: Bool { administrationEnabled == true }

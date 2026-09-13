@@ -238,6 +238,34 @@ final class LiveShapeTests2: XCTestCase {
         XCTAssertEqual(sshguard.entryCount, 2)
     }
 
+    func testConfiguredLiteralBlockIsSurfacedWithoutPfTableAccess() throws {
+        let quickBlock = FirewallRule(try dict("""
+        {
+          "tracker": "1757720000", "type": "block", "interface": "wan",
+          "source": {"address": "192.0.2.44/32"},
+          "destination": {"any": true}, "descr": "Blocked by Vaktpost"
+        }
+        """))
+        XCTAssertTrue(quickBlock.isConfiguredHostBlock)
+
+        let disabled = FirewallRule(try dict("""
+        {
+          "tracker": "1757720001", "type": "block", "interface": "wan",
+          "source": {"address": "192.0.2.45"},
+          "destination": {"any": true}, "disabled": true
+        }
+        """))
+        XCTAssertFalse(disabled.isConfiguredHostBlock)
+
+        let selector = FirewallRule(try dict("""
+        {
+          "tracker": "1757720002", "type": "block", "interface": "wan",
+          "source": {"network": "wanip"}, "destination": {"any": true}
+        }
+        """))
+        XCTAssertFalse(selector.isConfiguredHostBlock)
+    }
+
     func testHugeTablesAreCappedButStillCountedHonestly() throws {
         // `bogons` runs to thousands of rows. Keeping them all on a phone to
         // render a list nobody scrolls is pointless, but the count must not lie.

@@ -37,9 +37,13 @@ struct SystemView: View {
         .background(theme.bg.ignoresSafeArea())
         .refreshable {
             await store.refresh()
+            await store.loadFirewallObjects(force: true)
             await store.loadTables()
         }
-        .task { await store.loadTables() }
+        .task {
+            await store.loadFirewallObjects()
+            await store.loadTables()
+        }
         .navigationTitle("System")
     }
 
@@ -87,28 +91,57 @@ struct SystemView: View {
     /// connection that times out rather than one that says why.
     @ViewBuilder
     private var blockedSlab: some View {
-        if store.isLoadingTables && store.tables.isEmpty {
+        if (store.isLoadingTables || store.isLoadingFirewallObjects)
+            && store.tables.isEmpty && store.rules.isEmpty {
             Slab(rail: .idle) {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Reading pf tables…")
+                    Text("Reading block rules and pf tables…")
                         .scaledFont(12)
                         .foregroundStyle(theme.labelMuted)
                 }
             }
-        } else if let err = store.errors[.tables] {
-            Slab(rail: .warn) {
-                Text(err)
-                    .scaledFont(12)
-                    .foregroundStyle(theme.labelMuted)
-            }
-        } else if store.blockedHosts.isEmpty {
-            Slab(rail: .ok) {
-                Text("Nothing is currently blocked.")
-                    .scaledFont(13)
-                    .foregroundStyle(theme.labelMuted)
-            }
         } else {
+            if let err = store.errors[.firewall] {
+                Slab(rail: .warn, title: "Configured block rules") {
+                    Text(err)
+                        .scaledFont(12)
+                        .foregroundStyle(theme.labelMuted)
+                }
+            }
+
+            if !store.configuredHostBlocks.isEmpty {
+                Slab(rail: .bad, title: "Configured block rules",
+                     trailing: "\(store.configuredHostBlocks.count)") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(store.configuredHostBlocks.prefix(25)) { rule in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(rule.sourceSide.address)
+                                        .scaledFont(12, weight: .semibold, design: .monospaced)
+                                        .foregroundStyle(theme.label)
+                                    Spacer()
+                                    Text(store.interfaceLabel(for: rule.interfaceName)
+                                         ?? rule.interfaceName)
+                                        .scaledFont(10, design: .monospaced)
+                                        .foregroundStyle(theme.labelFaint)
+                                }
+                                if !rule.descr.isEmpty {
+                                    Text(rule.descr)
+                                        .scaledFont(11)
+                                        .foregroundStyle(theme.labelMuted)
+                                }
+                            }
+                        }
+                        if store.configuredHostBlocks.count > 25 {
+                            Text("+\(store.configuredHostBlocks.count - 25) more")
+                                .scaledFont(11)
+                                .foregroundStyle(theme.labelFaint)
+                        }
+                    }
+                }
+            }
+
             ForEach(store.blockedHosts) { table in
                 Slab(rail: .warn, title: table.name, trailing: "\(table.entryCount)") {
                     VStack(alignment: .leading, spacing: 4) {
@@ -126,7 +159,41 @@ struct SystemView: View {
                     }
                 }
             }
+
+            if let err = store.errors[.tables] {
+                Slab(rail: .warn, title: "Dynamic blocks") {
+                    Text(err)
+                        .scaledFont(12)
+                        .foregroundStyle(theme.labelMuted)
+                }
+            } else if store.tableReadState == .unavailable {
+                Slab(rail: .info, title: "Dynamic blocks") {
+                    Text(dynamicBlocksUnavailableMessage)
+                        .scaledFont(12)
+                        .foregroundStyle(theme.labelMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if store.blockedHosts.isEmpty && store.configuredHostBlocks.isEmpty {
+                Slab(rail: .ok) {
+                    Text("No configured host blocks or dynamic blocked hosts were found.")
+                        .scaledFont(13)
+                        .foregroundStyle(theme.labelMuted)
+                }
+            } else if store.blockedHosts.isEmpty {
+                Slab(rail: .info, title: "Dynamic blocks") {
+                    Text("No Login Protection or IDS table entries are currently blocked.")
+                        .scaledFont(12)
+                        .foregroundStyle(theme.labelMuted)
+                }
+            }
         }
+    }
+
+    private var dynamicBlocksUnavailableMessage: String {
+        let configured = store.configuredHostBlocks.isEmpty
+            ? "No enabled literal-source block rules were found in the configuration."
+            : "Configured block rules are shown above."
+        return "This pfSense build does not expose live pf-table entries to PHP. \(configured) Login Protection and IDS tables require Diagnostics → Tables in the webConfigurator."
     }
 
     /// The check is a button rather than automatic.

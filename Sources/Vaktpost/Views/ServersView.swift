@@ -203,7 +203,6 @@ struct ServerEditView: View {
     @State private var messageHealth: Health = .idle
     @State private var confirmDelete = false
     @State private var showAdministrationRisk = false
-    @State private var isAuthenticatingAdministration = false
 
     private var isExisting: Bool { registry.servers.contains { $0.id == profile.id } }
 
@@ -324,8 +323,7 @@ struct ServerEditView: View {
                 } label: {
                     if isTesting { ProgressView().controlSize(.small) } else { Text("Save") }
                 }
-                .disabled(isTesting || isAuthenticatingAdministration
-                          || isAuthenticatingCredential || profile.baseURL.isEmpty)
+                .disabled(isTesting || isAuthenticatingCredential || profile.baseURL.isEmpty)
             }
         }
         // Never pull a saved administrator password into view state merely
@@ -371,12 +369,14 @@ struct ServerEditView: View {
         .confirmationDialog("Enable administrative actions?",
                             isPresented: $showAdministrationRisk,
                             titleVisibility: .visible) {
-            Button("Authenticate and enable", role: .destructive) {
-                Task { await authenticateForAdministration() }
+            Button("Enable for this firewall", role: .destructive) {
+                profile.administrationEnabled = true
+                message = "Tap Save to enable administrative actions for this firewall."
+                messageHealth = .warn
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This firewall uses an administrator-equivalent XML-RPC credential. Enabling this mode allows Vaktpost to change rules, delete port forwards, reload the firewall, restart services, and drop active states. Face ID or Touch ID is required to enable it.")
+            Text("This firewall uses an administrator-equivalent XML-RPC credential. Enabling this mode allows Vaktpost to change rules, delete port forwards, reload the firewall, restart services, and drop active states. The setting applies only to \(profile.displayName) and takes effect after you tap Save.")
         }
     }
 
@@ -411,42 +411,12 @@ struct ServerEditView: View {
                     Button {
                         showAdministrationRisk = true
                     } label: {
-                        HStack(spacing: 6) {
-                            if isAuthenticatingAdministration {
-                                ProgressView().controlSize(.small)
-                            }
-                            Text(isAuthenticatingAdministration
-                                 ? "Authenticating…"
-                                 : "Enable administrative actions")
-                        }
+                        Text("Enable administrative actions")
                         .scaledFont(13, weight: .semibold)
                         .foregroundStyle(theme.warn)
                     }
-                    .disabled(isAuthenticatingAdministration)
                 }
             }
-        }
-    }
-
-    private func authenticateForAdministration() async {
-        guard !isAuthenticatingAdministration else { return }
-        isAuthenticatingAdministration = true
-        defer { isAuthenticatingAdministration = false }
-
-        switch await BiometricAuth.authenticate(
-            reason: "Enable administrative actions for \(profile.displayName)",
-            allowPasscode: false
-        ) {
-        case .success:
-            profile.administrationEnabled = true
-            message = "Identity verified. Tap Save to enable administrative actions for this firewall."
-            messageHealth = .warn
-        case let .failed(text), let .unavailable(text):
-            profile.administrationEnabled = false
-            message = "Administrative actions remain disabled. \(text)"
-            messageHealth = .bad
-        case .cancelled:
-            profile.administrationEnabled = false
         }
     }
 

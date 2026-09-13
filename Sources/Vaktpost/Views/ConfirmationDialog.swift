@@ -21,62 +21,70 @@ struct ConfirmationSheet: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text(title)
-                .scaledFont(17, weight: .semibold)
-                .foregroundStyle(themeManager.label)
-                .multilineTextAlignment(.center)
+        ZStack {
+            themeManager.bg.ignoresSafeArea()
 
-            if let message {
-                Text(message)
-                    .scaledFont(14)
-                    .foregroundStyle(themeManager.labelMuted)
+            VStack(spacing: 16) {
+                Text(title)
+                    .scaledFont(17, weight: .semibold)
+                    .foregroundStyle(themeManager.label)
                     .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
 
-            if let error {
-                Text(error)
-                    .scaledFont(13)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            if isConfirming {
-                ProgressView()
-                    .scaleEffect(0.8)
-            }
-
-            HStack(spacing: 12) {
-                Button(cancelLabel) {
-                    dismiss()
-                    onCancel()
+                if let message {
+                    Text(message)
+                        .scaledFont(14)
+                        .foregroundStyle(themeManager.labelMuted)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .scaledFont(15)
-                .foregroundStyle(themeManager.label)
-                .buttonStyle(.bordered)
-                .buttonBorderShape(.roundedRectangle(radius: 8))
 
-                Button(destructiveLabel) {
-                    isConfirming = true
-                    Task {
-                        await onConfirm()
+                if let error {
+                    Text(error)
+                        .scaledFont(13)
+                        .foregroundStyle(themeManager.bad)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if isConfirming {
+                    ProgressView()
+                        .tint(themeManager.accentColor)
+                        .scaleEffect(0.8)
+                }
+
+                HStack(spacing: 12) {
+                    Button(cancelLabel) {
                         dismiss()
-                        isConfirming = false
+                        onCancel()
                     }
+                    .scaledFont(15)
+                    .foregroundStyle(themeManager.label)
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.roundedRectangle(radius: 8))
+                    .tint(themeManager.cardRaised)
+
+                    Button(destructiveLabel) {
+                        isConfirming = true
+                        Task {
+                            await onConfirm()
+                            dismiss()
+                            isConfirming = false
+                        }
+                    }
+                    .scaledFont(15, weight: .semibold)
+                    .foregroundStyle(themeManager.palette.crust)
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.roundedRectangle(radius: 8))
+                    .tint(destructive ? themeManager.bad : themeManager.accentColor)
+                    .disabled(isConfirming)
                 }
-                .scaledFont(15, weight: .semibold)
-                .foregroundStyle(destructive ? .red : themeManager.label)
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.roundedRectangle(radius: 8))
-                .disabled(isConfirming)
+                .padding(.top, 8)
             }
-            .padding(.top, 8)
+            .padding()
+            .frame(maxWidth: 320)
+            .background(themeManager.card, in: RoundedRectangle(cornerRadius: 12))
         }
-        .padding()
-        .frame(maxWidth: 320)
-        .background(themeManager.card, in: RoundedRectangle(cornerRadius: 12))
+        .presentationBackground(themeManager.bg)
     }
 
     @Environment(\.themeManager) private var themeManager

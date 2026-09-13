@@ -572,7 +572,7 @@ struct ACMECertificate: Identifiable {
 // MARK: - RRD history
 
 /// One series of historical traffic, as pfSense recorded it.
-struct RRDSeries: Identifiable {
+struct RRDSeries: Identifiable, Sendable {
     var id: String { "\(file)-\(name)" }
     /// The interface the file belongs to, as pfSense names its files — `wan`,
     /// `opt3`, `lan`. Not the administrator's label, so it needs the same
@@ -643,7 +643,7 @@ struct RRDSeries: Identifiable {
 }
 
 /// What the firewall could tell us about its own history.
-struct RRDHistory {
+struct RRDHistory: Sendable {
     var available: Bool
     var series: [RRDSeries]
 

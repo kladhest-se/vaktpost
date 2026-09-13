@@ -75,7 +75,7 @@ struct OnboardingView: View {
                         step("1", "Nothing to install — this uses pfSense's built-in XML-RPC service.")
                         step("2", "Set System → Advanced → Max Processes to 5 or more.")
                         step("3", "Give the account the System - HA node sync privilege, which is administrator-equivalent. Read SECURITY.md first.")
-                        step("4", "Use a dedicated account, not your own login. New firewalls start in monitor-only mode; administration must be enabled separately with biometrics.")
+                        step("4", "Use a dedicated account, not your own login. New firewalls start in monitor-only mode; administration must be enabled separately for each firewall after reviewing the risk warning.")
                     }
                 }
             }

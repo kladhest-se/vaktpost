@@ -8,22 +8,22 @@ import Foundation
 
 // MARK: - Environment key wrappers
 
-private struct DashboardStoreEnvironmentKey: EnvironmentKey {
+private struct DashboardStoreEnvironmentKey: @preconcurrency EnvironmentKey {
     @MainActor
     static var defaultValue: DashboardStore { _defaultDashboardStore }
 }
 
-private struct ServerRegistryEnvironmentKey: EnvironmentKey {
+private struct ServerRegistryEnvironmentKey: @preconcurrency EnvironmentKey {
     @MainActor
     static var defaultValue: ServerRegistry { _defaultServerRegistry }
 }
 
-private struct ThemeManagerEnvironmentKey: EnvironmentKey {
+private struct ThemeManagerEnvironmentKey: @preconcurrency EnvironmentKey {
     @MainActor
     static var defaultValue: ThemeManager { _defaultThemeManager }
 }
 
-private struct DeepLinkRouterEnvironmentKey: EnvironmentKey {
+private struct DeepLinkRouterEnvironmentKey: @preconcurrency EnvironmentKey {
     @MainActor
     static var defaultValue: DeepLinkRouter { DeepLinkRouter() }
 }

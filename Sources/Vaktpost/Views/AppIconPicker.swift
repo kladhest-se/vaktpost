@@ -24,6 +24,7 @@ enum AppIcon: String, CaseIterable, Identifiable {
     /// icon set is not loadable as an ordinary image.
     var previewName: String { "Preview-\(rawValue)" }
 
+    @MainActor
     static var current: AppIcon {
         guard let name = UIApplication.shared.alternateIconName else { return .coral }
         return allCases.first { $0.alternateName == name } ?? .coral

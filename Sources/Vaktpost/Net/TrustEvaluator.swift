@@ -1,38 +1,37 @@
 import Foundation
 import CryptoKit
 import UIKit
+import os
 
-private final class TrustState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var profile: ServerProfile
-    private var fingerprint: String?
-    private var invalidated = false
+private final class TrustState: Sendable {
+    private struct Storage: Sendable {
+        var profile: ServerProfile
+        var fingerprint: String?
+        var invalidated = false
+    }
+    private let lock: OSAllocatedUnfairLock<Storage>
 
-    init(profile: ServerProfile) { self.profile = profile }
+    init(profile: ServerProfile) {
+        lock = OSAllocatedUnfairLock(initialState: Storage(profile: profile))
+    }
 
     func read() -> (profile: ServerProfile, fingerprint: String?, invalidated: Bool) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (profile, fingerprint, invalidated)
+        lock.withLock { ($0.profile, $0.fingerprint, $0.invalidated) }
     }
 
     func recordFingerprint(_ fingerprint: String?) {
-        lock.lock()
-        defer { lock.unlock() }
-        self.fingerprint = fingerprint
+        lock.withLock { $0.fingerprint = fingerprint }
     }
 
     func pin(_ fingerprint: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        profile.pinnedFingerprint = fingerprint
-        profile.allowUntrustedTLS = false
+        lock.withLock {
+            $0.profile.pinnedFingerprint = fingerprint
+            $0.profile.allowUntrustedTLS = false
+        }
     }
 
     func invalidate() {
-        lock.lock()
-        defer { lock.unlock() }
-        invalidated = true
+        lock.withLock { $0.invalidated = true }
     }
 }
 
@@ -74,7 +73,7 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
         _ session: URLSession,
         task: URLSessionTask,
         didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
         let completion = Once<(URLSession.AuthChallengeDisposition, URLCredential?)> {
             completionHandler($0.0, $0.1)
@@ -114,6 +113,7 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
             return
         }
         let subject = Self.subjectName(of: trust) ?? "Unknown certificate"
+        let trustCredential = URLCredential(trust: trust)
         Task { @MainActor [self] in
             guard !state.read().invalidated, task.state != .canceling, task.state != .completed else {
                 completion.resolve((.cancelAuthenticationChallenge, nil))
@@ -132,9 +132,9 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
                         return
                     }
                     self.state.pin(fingerprint)
-                    completion.resolve((.useCredential, URLCredential(trust: trust)))
+                    completion.resolve((.useCredential, trustCredential))
                 case .trust:
-                    completion.resolve((.useCredential, URLCredential(trust: trust)))
+                    completion.resolve((.useCredential, trustCredential))
                 case .cancel:
                     completion.resolve((.cancelAuthenticationChallenge, nil))
                 }
@@ -142,7 +142,7 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
         }
     }
 
-    enum PinningDecision { case pin, trust, cancel }
+    enum PinningDecision: Sendable { case pin, trust, cancel }
 
     /// Lowercase hex SHA-256 over the leaf certificate's DER encoding.
     static func fingerprint(of trust: SecTrust) -> String? {
@@ -179,12 +179,12 @@ private enum CertificatePrompt {
     private struct Pending {
         let alert: UIAlertController
         let taskID: Int
-        let completion: Once<TrustEvaluator.PinningDecision>
+        let completion: @MainActor (TrustEvaluator.PinningDecision) -> Void
     }
     private static var pending: [UUID: Pending] = [:]
 
     static func show(owner: UUID, taskID: Int, host: String, subject: String, fingerprint: String,
-                     completion: @escaping (TrustEvaluator.PinningDecision) -> Void) {
+                     completion: @escaping @MainActor (TrustEvaluator.PinningDecision) -> Void) {
         guard pending[owner] == nil,
               let scene = UIApplication.shared.connectedScenes
                 .compactMap({ $0 as? UIWindowScene })
@@ -205,8 +205,7 @@ private enum CertificatePrompt {
             title: "Trust certificate?",
             message: "Server: \(host)\nCertificate: \(subject)\nSHA-256: \(fingerprint)\n\nVerify this fingerprint with your firewall before trusting it.",
             preferredStyle: .alert)
-        let once = Once(completion)
-        pending[owner] = Pending(alert: alert, taskID: taskID, completion: once)
+        pending[owner] = Pending(alert: alert, taskID: taskID, completion: completion)
         for (title, style, decision) in [
             ("Cancel", UIAlertAction.Style.cancel, TrustEvaluator.PinningDecision.cancel),
             ("Trust Only", .default, .trust),
@@ -226,13 +225,13 @@ private enum CertificatePrompt {
 
     private static func finish(owner: UUID, decision: TrustEvaluator.PinningDecision) {
         guard let value = pending.removeValue(forKey: owner) else { return }
-        value.completion.resolve(decision)
+        value.completion(decision)
     }
 
     static func cancel(owner: UUID, taskID: Int? = nil) {
         guard let value = pending[owner], taskID == nil || value.taskID == taskID else { return }
         pending[owner] = nil
         value.alert.dismiss(animated: false)
-        value.completion.resolve(.cancel)
+        value.completion(.cancel)
     }
 }

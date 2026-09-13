@@ -13,22 +13,12 @@ SWIFT_TREAT_WARNINGS_AS_ERRORS[config=Release] = YES
 GCC_TREAT_WARNINGS_AS_ERRORS = NO
 GCC_TREAT_WARNINGS_AS_ERRORS[config=Release] = YES
 
-// Swift 5 language mode with minimal concurrency checking, which is below the
-// house default of 6.0 and `complete`.
-//
-// A known debt rather than a preference, and the remaining distance is
-// smaller than it was: `Health.color(_:)` is now `@MainActor` rather than
-// reaching across isolation, which the Xcode 26 toolchain rejects outright
-// even at this setting. What is left is `TrustEvaluator`, which is
-// `@unchecked Sendable` around a hand-rolled lock and would need rewriting
-// before `complete` passes.
-//
-// Note that `minimal` does not mean "no actor checking". Basic isolation
-// violations are diagnosed at every level; the setting governs how much
-// *Sendable* checking happens on top. Raising it will surface more, not
-// different, work.
-SWIFT_VERSION = 5.9
-SWIFT_STRICT_CONCURRENCY = minimal
+// Swift 6 language mode with complete concurrency checking. Shared callback
+// and trust state use compiler-known synchronization, while UIKit and refresh
+// bookkeeping stay explicitly on the main actor. Release builds treat any
+// future warning as an error above.
+SWIFT_VERSION = 6.0
+SWIFT_STRICT_CONCURRENCY = complete
 
 // No analytics or crash-reporting SDK is linked, so symbols stay local and
 // crashes are triaged from a device log rather than a service.

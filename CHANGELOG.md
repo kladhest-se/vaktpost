@@ -1,5 +1,45 @@
 # Changelog
 
+## Quick Block theme, honest diagnostics and visible blocks
+
+- Quick Block now uses the active Catppuccin background, cards, fields,
+  accent and semantic colours instead of an unthemed system form. The shared
+  write confirmation follows the same palette.
+- Diagnostics now reports the number of current issues without presenting all
+  36 lazy/on-demand features as if every one had been attempted. Performance
+  history counts only sections that were actually attempted and failed.
+- A pfSense build without a safe live-table PHP accessor is shown as a
+  capability limitation on the System screen, not as a permanent failed
+  Diagnostics section.
+- Enabled literal-source block rules—including rules created by Quick
+  Block—are now shown under Blocked hosts. Quick Block forces a ruleset reload
+  after verification so its new rule appears immediately.
+
+## Administration enablement without biometrics
+
+- A defined firewall can now be switched from monitor-only to administration
+  after its explicit risk confirmation, without Face ID or Touch ID.
+- The setting remains scoped to one firewall, remains off by default, and does
+  not take effect until that firewall profile is saved.
+- Biometric protection is unchanged for revealing or replacing a stored
+  administrator-equivalent password and for the optional whole-app lock.
+
+## Swift 6 concurrency safety
+
+- The app now builds in Swift 6 language mode with complete concurrency
+  checking instead of Swift 5.9 with minimal checking.
+- Certificate trust state and one-shot callbacks use compiler-recognized
+  locked storage; the remaining `@unchecked Sendable` declarations are gone.
+- Certificate prompts, UIKit feedback and app-icon access are explicitly
+  confined to the main actor, while history values must be safe to transfer
+  between tasks.
+- Concurrent dashboard refresh bookkeeping now has a main-actor owner. The
+  independent network waits still overlap, but their shared success and error
+  state can no longer be accessed outside its serialized boundary.
+- Tests use synchronized counters where callbacks can run concurrently, and
+  both the production module and the complete test source set pass a Swift 6
+  compiler check without diagnostics.
+
 ## Searchable, type-aware alias selection
 
 - Rule and port-forward editors now receive the complete alias catalogue

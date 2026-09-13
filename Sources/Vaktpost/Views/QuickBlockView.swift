@@ -20,23 +20,30 @@ struct QuickBlockView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                sectionHeader("Target")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    GroupHeading(text: "Target")
+                    Slab(rail: .info) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            interfacePicker
+                            addressField
+                            descriptionField
+                        }
+                    }
 
-                interfacePicker
+                    GroupHeading(text: "Mode")
+                    AdministrationModeNotice()
 
-                addressField
-
-                descriptionField
-
-                sectionHeader("Mode")
-
-                AdministrationModeNotice()
-
-                sectionHeader("Action")
-
-                executeButton
+                    GroupHeading(text: "Action")
+                    Slab(rail: .bad) { executeButton }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
+                .readableWidth()
             }
+            .background(theme.bg.ignoresSafeArea())
+            .tint(theme.accentColor)
             .navigationTitle("Quick Block")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -72,53 +79,59 @@ struct QuickBlockView: View {
     // MARK: - Form fields
 
     private var interfacePicker: some View {
-        LabeledContent("Interface") {
-            Picker("", selection: Binding(
-                get: { selectedInterface?.internalName ?? "" },
-                set: { newValue in
-                    selectedInterface = store.overviewLayout.interfaces.first {
-                        $0.internalName == newValue
-                    }
-                }
-            )) {
-                Text("Select interface...").tag("")
+        VStack(alignment: .leading, spacing: 4) {
+            fieldLabel("Interface")
+            Menu {
                 ForEach(store.overviewLayout.interfaces) { iface in
                     if let key = iface.internalName {
-                        Text("\(iface.name) (\(key))")
-                            .tag(key)
-                            .foregroundStyle(iface.isUp ? theme.label : theme.labelMuted)
+                        Button {
+                            selectedInterface = iface
+                        } label: {
+                            if selectedInterface?.internalName == key {
+                                Label("\(iface.name) (\(key))", systemImage: "checkmark")
+                            } else {
+                                Text("\(iface.name) (\(key))")
+                            }
+                        }
                     }
                 }
+            } label: {
+                HStack(spacing: 8) {
+                    Text(selectedInterface.map {
+                        "\($0.name) (\($0.internalName ?? "unknown"))"
+                    } ?? "Select interface…")
+                        .scaledFont(14, design: .monospaced)
+                        .foregroundStyle(selectedInterface == nil ? theme.labelFaint : theme.label)
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down")
+                        .scaledFont(11, weight: .semibold)
+                        .foregroundStyle(theme.accentColor)
+                }
+                .padding(10)
+                .background(theme.cardRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            .pickerStyle(.menu)
-            .frame(maxWidth: .infinity)
+            .disabled(store.overviewLayout.interfaces.allSatisfy { $0.internalName == nil })
         }
     }
 
     private var addressField: some View {
         VStack(alignment: .leading, spacing: 5) {
-            LabeledContent("Address") {
-                TextField("IPv4, IPv6, or CIDR network", text: $address)
-                    .keyboardType(.asciiCapable)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .textFieldStyle(.roundedBorder)
-            }
+            LabelledField(title: "Address", text: $address,
+                          placeholder: "IPv4, IPv6, or CIDR network",
+                          keyboard: .asciiCapable, autocap: false)
             if let problem = addressProblem, !address.isEmpty {
                 Text(problem.message)
                     .scaledFont(11)
                     .foregroundStyle(theme.bad)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
 
     private var descriptionField: some View {
-        LabeledContent("Description") {
-            TextField("Blocked by Vaktpost", text: $description)
-                .autocorrectionDisabled()
-                .textFieldStyle(.roundedBorder)
-        }
+        LabelledField(title: "Description", text: $description,
+                      placeholder: "Blocked by Vaktpost")
     }
 
     private var executeButton: some View {
@@ -175,6 +188,10 @@ struct QuickBlockView: View {
 
         do {
             _ = try await store.writeCoordinator.execute(operation)
+            // Quick Block changes the ruleset. The ordinary lazy loader keeps
+            // its cached result, so force the new rule into every screen
+            // before this sheet closes.
+            await store.loadFirewallObjects(force: true)
             await store.refresh()
             dismiss()
         } catch {
@@ -184,13 +201,10 @@ struct QuickBlockView: View {
     }
 
 
-    // MARK: - Helpers
-
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .scaledFont(12, weight: .semibold)
+    private func fieldLabel(_ title: String) -> some View {
+        Text(title.uppercased())
+            .scaledFont(11, weight: .semibold)
+            .tracking(0.8)
             .foregroundStyle(theme.labelFaint)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 8)
     }
 }

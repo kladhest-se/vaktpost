@@ -17,8 +17,8 @@ administrator-equivalent.
 
 Every firewall starts in **monitor-only mode**. In that mode the client blocks
 all mutation methods before any request is sent. Administration is enabled per
-firewall from its edit screen only after a risk acknowledgement and a fresh
-Face ID or Touch ID check.
+firewall from its edit screen after an explicit risk acknowledgement. Enabling
+it does not require Face ID or Touch ID.
 
 When administration is enabled, every change follows one transaction path:
 the app shows the exact target, captures the current state, commits an
@@ -131,8 +131,8 @@ an exact lab-host confirmation and explicit state-loss acknowledgement. See
 4. In Vaktpost, enter the firewall address, that username and its password.
 5. Connect once, then **Pin last seen certificate** in the firewall's settings.
 6. Leave the profile in monitor-only mode unless you need administration. To
-   enable writes, edit that firewall, review the warning, and authenticate
-   with Face ID or Touch ID.
+   enable writes, edit that firewall, review the warning, enable administrative
+   actions, and save the profile.
 
 ## What it runs
 

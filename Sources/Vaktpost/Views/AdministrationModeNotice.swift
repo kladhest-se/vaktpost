@@ -17,7 +17,7 @@ struct AdministrationModeNotice: View {
                     Text("Monitor-only mode")
                         .scaledFont(13, weight: .semibold)
                         .foregroundStyle(theme.label)
-                    Text("No firewall change can be sent. To enable administration, open Firewalls, edit this firewall, and authenticate with Face ID or Touch ID.")
+                    Text("No firewall change can be sent. To enable administration, open Firewalls, edit this firewall, review the risk warning, and save the change.")
                         .scaledFont(11)
                         .foregroundStyle(theme.labelMuted)
                         .fixedSize(horizontal: false, vertical: true)

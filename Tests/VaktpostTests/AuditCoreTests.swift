@@ -1,5 +1,6 @@
 import XCTest
 import Security
+import os
 @testable import Vaktpost
 
 final class AuditCoreTests: XCTestCase {
@@ -74,23 +75,22 @@ final class AuditCoreTests: XCTestCase {
     }
 
     func testCompetingPromptDecisionsCompleteOnlyOnce() {
-        let lock = NSLock()
-        var calls = 0
+        let calls = OSAllocatedUnfairLock(initialState: 0)
         let once = Once<Int> { _ in
-            lock.lock()
-            calls += 1
-            lock.unlock()
+            calls.withLock { $0 += 1 }
         }
         DispatchQueue.concurrentPerform(iterations: 100) { once.resolve($0) }
-        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(calls.withLock { $0 }, 1)
     }
 
     func testCancelledPromptCannotLaterTrust() {
-        var decisions: [String] = []
-        let once = Once<String> { decisions.append($0) }
+        let decisions = OSAllocatedUnfairLock(initialState: [String]())
+        let once = Once<String> { decision in
+            decisions.withLock { $0.append(decision) }
+        }
         once.resolve("cancel")
         once.resolve("trust")
-        XCTAssertEqual(decisions, ["cancel"])
+        XCTAssertEqual(decisions.withLock { $0 }, ["cancel"])
     }
 
     func testPinSurvivesRegistryReload() async {

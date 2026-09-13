@@ -251,7 +251,7 @@ final class TopTalkerTests: XCTestCase {
         let interfaces = ["lan", "opt1", "opt2", "opt3", "opt4", "opt5", "opt6", "opt7", "opt8", "opt9"]
         // Record 650 unique hourly buckets all within a 6-day retention window
         while count < TopTalkerRecorder.maxHours + 50 {
-            for (ifaceIndex, iface) in interfaces.enumerated() {
+            for iface in interfaces {
                 if count >= TopTalkerRecorder.maxHours + 50 { break }
                 // Cycle through hours within a 6-day window (all within 7-day retention)
                 let hourInDay = count % 144
