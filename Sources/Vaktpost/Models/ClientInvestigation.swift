@@ -7,6 +7,14 @@ struct ClientInvestigation {
     let addresses: [String]
     let names: [String]
 
+    /// nil for a hostname that carries no real information: absent, blank
+    /// after trimming, or pfSense's own "?" placeholder for "unknown".
+    private static func meaningfulHostname(_ hostname: String?) -> String? {
+        guard let trimmed = hostname?.trimmingCharacters(in: .whitespaces),
+              !trimmed.isEmpty, trimmed != "?" else { return nil }
+        return trimmed
+    }
+
     init(client: NetworkClient, leases: [DHCPLease], arp: [ARPEntry],
          mappings: [StaticMapping], overrides: [HostOverride], aliases: [FirewallAliasEntry]) {
         func belongs(_ mac: String, _ ip: String) -> Bool {
@@ -23,9 +31,13 @@ struct ClientInvestigation {
             }
         let keys = Set(addresses.compactMap(ClientAddress.key))
         var labels = client.knownNames.map { "\($0.source): \($0.value)" }
-        labels += self.leases.compactMap { $0.hostname.map { "DHCP: \($0)" } }
-        labels += neighbors.compactMap { $0.hostname.map { "ARP: \($0)" } }
-        labels += self.mappings.compactMap { $0.hostname.map { "Static mapping: \($0)" } }
+        labels += self.leases.compactMap { Self.meaningfulHostname($0.hostname).map { "DHCP: \($0)" } }
+        // pfSense's own arp table prints a literal "?" rather than leaving the
+        // field empty when it has no hostname for an entry — passed through
+        // unfiltered this became a label reading "ARP: ?", which tells nobody
+        // anything they didn't already know from the "in ARP" pill above.
+        labels += neighbors.compactMap { Self.meaningfulHostname($0.hostname).map { "ARP: \($0)" } }
+        labels += self.mappings.compactMap { Self.meaningfulHostname($0.hostname).map { "Static mapping: \($0)" } }
         labels += overrides.filter { ClientAddress.key($0.ip).map(keys.contains) == true }
             .map { "DNS override: \($0.fqdn)" }
         labels += aliases.filter { alias in

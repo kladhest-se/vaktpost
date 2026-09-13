@@ -30,4 +30,21 @@ final class ClientInvestigationTests: XCTestCase {
         XCTAssertEqual(result.addresses, ["10.0.0.1", "10.0.0.2"])
         XCTAssertEqual(result.neighbors.count, 2)
     }
+
+    // pfSense's own arp table prints a literal "?" for an entry with no known
+    // hostname rather than omitting the field. Passed straight through, that
+    // became a name label reading "ARP: ?" — real text, on screen, saying
+    // nothing. A blank-after-trim hostname is the same non-answer and gets
+    // the same treatment.
+    func testUnknownArpHostnameIsNotShownAsALabel() {
+        let known = ARPEntry(dict(["ip": "10.0.0.1", "mac": "aa:bb:cc:dd:ee:ff", "hostname": "?"]))
+        let blank = ARPEntry(dict(["ip": "10.0.0.2", "mac": "aa:bb:cc:dd:ee:ff", "hostname": "  "]))
+        let real = ARPEntry(dict(["ip": "10.0.0.3", "mac": "aa:bb:cc:dd:ee:ff", "hostname": "nas001"]))
+        let client = NetworkClient.merge(leases: [], arp: [known], statics: [])[0]
+        let result = ClientInvestigation(client: client, leases: [], arp: [known, blank, real],
+                                          mappings: [], overrides: [], aliases: [])
+        XCTAssertFalse(result.names.contains("ARP: ?"))
+        XCTAssertFalse(result.names.contains(where: { $0.hasPrefix("ARP:") && $0.hasSuffix(": ") }))
+        XCTAssertTrue(result.names.contains("ARP: nas001"))
+    }
 }

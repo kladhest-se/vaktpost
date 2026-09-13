@@ -291,7 +291,9 @@ struct WireGuardCard: View {
 
     private var peerSummary: String {
         if peers.isEmpty { return "No peers configured" }
-        if connected == 0 { return "\(peers.count) peers, none connected" }
+        if connected == 0 {
+            return peers.count == 1 ? "1 peer, none connected" : "\(peers.count) peers, none connected"
+        }
         return "\(connected) of \(peers.count) connected"
     }
 }

@@ -172,6 +172,9 @@ struct InterfaceCard: View {
     let iface: InterfaceStat
 
     var body: some View {
+        NavigationLink {
+            InterfaceDetailView(iface: iface)
+        } label: {
         Slab(rail: iface.health) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
@@ -260,17 +263,19 @@ struct InterfaceCard: View {
 
                     Spacer()
 
-                    NavigationLink {
-                        InterfaceDetailView(iface: iface)
-                    } label: {
-                        Label("Details", systemImage: "chevron.right")
-                            .scaledFont(11, weight: .medium)
-                    }
-                    .buttonStyle(.plain)
+                    // The whole card is now the navigation target (wrapped
+                    // above), so this is a plain trailing indicator, not its
+                    // own link -- a second, nested NavigationLink to the same
+                    // destination would be redundant and re-narrow the tap
+                    // target back down to just this label.
+                    Label("Details", systemImage: "chevron.right")
+                        .scaledFont(11, weight: .medium)
                 }
                 .foregroundStyle(theme.labelMuted)
             }
         }
+        }
+        .buttonStyle(.plain)
         .sheet(isPresented: $showQuickBlock) {
             NavigationStack {
                 QuickBlockView()

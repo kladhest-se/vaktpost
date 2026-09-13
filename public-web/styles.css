@@ -412,19 +412,59 @@ footer p { max-width: 62ch; margin: 0 0 .6rem; }
 .reorder-row .slab { flex: 1; margin-bottom: 0; }
 
 /* The flat, coloured grouping bar pfSense itself draws between rules — no
-   rail, no protocol line, just a label the way the real one reads. Higher
-   opacity than a slab tint needs: this has no rail of its own to carry the
-   colour, so the fill is what has to read as a separator at a glance. */
+   rail, no protocol line, just a label the way the real one reads. The app's
+   own SeparatorBar tints its background at 18% opacity over the surface
+   colour, not a bolder fill, so this matches that exactly rather than
+   guessing at something more legible-looking but wrong. */
 .separator {
   flex: 1;
   display: flex;
   align-items: center;
-  min-height: 34px;
-  padding: 0 11px;
-  border-radius: 8px;
+  min-height: 28px;
+  padding: 6px 10px;
+  border-radius: 6px;
   font: 600 12px/1 var(--sans);
   color: var(--text);
 }
+
+/* A rule card's labelled fields — FROM/TO/PORT/DESC — a fixed-width caption
+   column followed by the value, matching RuleRow's own field() layout. */
+.rulecard__head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.rulecard__proto { font: 600 10px/1 var(--mono); color: var(--overlay1); }
+.rulecard__iface { margin-left: auto; font: 500 10px/1 var(--sans); color: var(--overlay1); }
+.rulecard__chevron { color: var(--overlay1); font-size: 11px; }
+.rfield { display: flex; align-items: baseline; margin-top: 4px; }
+.rfield b {
+  flex: none; display: inline-block; min-width: 34px; margin-right: 8px;
+  font: 600 9px/1 var(--sans); letter-spacing: .04em;
+  color: var(--overlay1);
+}
+.rfield span { font: 500 12px/1.3 var(--mono); color: var(--text); }
+.rfield span.prose { font-family: var(--sans); font-weight: 400; color: var(--subtext0); }
+
+/* Three small stat columns — CPU / Memory / Disk — for the All-firewalls
+   fleet card. Plain numbers, not meters: at this size a bar for three values
+   side by side reads as noise, and the number alone is what's being scanned.
+   Block-stacked label-over-value rather than a nested flex column: nested
+   flex containers render inconsistently in some engines, block display does
+   not. */
+.statrow { display: flex; margin: 7px 0; }
+.statrow > div { margin-right: 22px; }
+.statrow > div:last-child { margin-right: 0; }
+.statrow b { display: block; font: 600 9px/1 var(--sans); letter-spacing: .05em; color: var(--overlay1); margin-bottom: 3px; }
+.statrow span { display: block; font: 600 13px/1 var(--mono); color: var(--text); }
+
+/* ── Incident timeline rendering ──────────────────────────────────────── */
+.tl-row { display: flex; gap: 10px; }
+.tl-rail { display: flex; flex-direction: column; align-items: center; flex: none; width: 10px; padding-top: 3px; }
+.tl-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.tl-line { flex: 1; width: 1px; background: var(--surface2); margin-top: 3px; min-height: 30px; }
+.tl-row:last-child .tl-line { display: none; }
+.tl-body { flex: 1; padding-bottom: 12px; min-width: 0; }
+.tl-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.tl-source { font: 600 10px/1 var(--sans); color: var(--subtext0); }
+.tl-msg { font: 500 11px/1.4 var(--mono); color: var(--text); }
+.tl-time { font: 400 10px/1 var(--mono); color: var(--overlay1); margin-top: 3px; }
 
 /* ── Pending-change rendering ──────────────────────────────────────────── */
 .pending {
@@ -469,11 +509,3 @@ footer p { max-width: 62ch; margin: 0 0 .6rem; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* ── Log line rendering ───────────────────────────────────────────────── */
-.logline { display: flex; gap: 8px; margin-bottom: 9px; }
-.logline:last-child { margin-bottom: 0; }
-.logline__rail { flex: none; width: 2px; border-radius: 2px; }
-.logline__head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
-.logline__iface { font: 600 10px/1 var(--mono); color: var(--overlay1); }
-.logline__time { margin-left: auto; font: 400 10px/1 var(--mono); color: var(--overlay1); }
-.logline__text { font: 400 11px/1.4 var(--mono); color: var(--subtext1); }

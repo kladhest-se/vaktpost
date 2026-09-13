@@ -19,12 +19,8 @@ struct SystemView: View {
                 GroupHeading(text: "Blocked hosts")
                 blockedSlab.sectionFreshness([.tables])
 
-                GroupHeading(text: "Firmware")
-                firmwareSlab.sectionFreshness([.version])
-
-                GroupHeading(text: "Packages")
-                packageCheckSlab.sectionFreshness([.packageUpdates])
-                packagesSlab.sectionFreshness([.packages])
+                GroupHeading(text: "Updates")
+                updatesLinkSlab.sectionFreshness([.version, .packageUpdates, .packages])
 
                 GroupHeading(text: "Config history")
                 configHistorySlab.sectionFreshness([.configHistory])
@@ -196,113 +192,42 @@ struct SystemView: View {
         return "This pfSense build does not expose live pf-table entries to PHP. \(configured) Login Protection and IDS tables require Diagnostics → Tables in the webConfigurator."
     }
 
-    /// The check is a button rather than automatic.
-    ///
-    /// It reaches the package repository over the network and takes seconds,
-    /// which is fine when somebody asks and wrong on a thirty-second timer.
-    /// Firmware, checked on demand like packages.
-    ///
-    /// The version comparison comes back with every refresh, but a person
-    /// looking at this screen wants to know it is current *now*, not as of the
-    /// last cycle — so the button forces a fresh read and says what it found.
+    /// A single row summarising both update surfaces, linking to the
+    /// combined page. The status logic mirrors Overview's Updates tile
+    /// exactly, so the two never disagree about what "up to date" means.
     @ViewBuilder
-    private var firmwareSlab: some View {
-        Slab(rail: store.version?.updateAvailable == true ? .warn : .ok, title: "pfSense") {
-            VStack(alignment: .leading, spacing: 8) {
+    private var updatesLinkSlab: some View {
+        NavigationLink {
+            UpdatesView()
+        } label: {
+            Slab(rail: (store.version?.updateAvailable == true || !store.packagesNeedingUpdate.isEmpty) ? .warn : .ok) {
                 HStack {
-                    Text(store.version?.current ?? "unknown version")
-                        .scaledFont(14, weight: .semibold)
-                        .foregroundStyle(theme.label)
-                    Spacer()
-                    if store.isCheckingFirmware {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("Check") {
-                            Task { await store.checkFirmware() }
+                    VStack(alignment: .leading, spacing: 4) {
+                        if store.version?.updateAvailable == true, let latest = store.version?.latest {
+                            Text("pfSense \(latest) available")
+                                .scaledFont(14, weight: .semibold)
+                                .foregroundStyle(theme.warn)
+                        } else if !store.packagesNeedingUpdate.isEmpty {
+                            Text("\(store.packagesNeedingUpdate.count) package update\(store.packagesNeedingUpdate.count > 1 ? "s" : "") available")
+                                .scaledFont(14, weight: .semibold)
+                                .foregroundStyle(theme.warn)
+                        } else {
+                            Text("Up to date")
+                                .scaledFont(14, weight: .semibold)
+                                .foregroundStyle(theme.ok)
                         }
-                        .scaledFont(13, weight: .semibold)
-                        .foregroundStyle(theme.accentColor)
+                        Text("pfSense firmware and \(store.packages.count) package\(store.packages.count == 1 ? "" : "s")")
+                            .scaledFont(11)
+                            .foregroundStyle(theme.labelFaint)
                     }
-                }
-                if store.version?.updateAvailable == true, let latest = store.version?.latest {
-                    Text("\(latest) is available.")
-                        .scaledFont(12)
-                        .foregroundStyle(theme.warn)
-                } else {
-                    Text(store.firmwareCheckResult ?? "Up to date as of the last refresh.")
-                        .scaledFont(11)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .scaledFont(12, weight: .semibold)
                         .foregroundStyle(theme.labelFaint)
                 }
             }
         }
-    }
-
-    @ViewBuilder
-    private var packageCheckSlab: some View {
-        Slab(rail: .info) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Check against the repository")
-                        .scaledFont(13)
-                        .foregroundStyle(theme.label)
-                    Spacer()
-                    if store.isCheckingPackages {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("Check") {
-                            Task { await store.checkPackageUpdates() }
-                        }
-                        .scaledFont(13, weight: .semibold)
-                        .foregroundStyle(theme.accentColor)
-                    }
-                }
-                // The age of the answer matters as much as the answer: "no
-                // updates" from a week ago is a different claim from "no
-                // updates" from this morning.
-                Text(store.packageCheckResult
-                     ?? store.packageCheckAge.map { "Last checked \($0)." }
-                     ?? "Not checked yet. Versions here come from the configuration; checking asks the repository and takes a few seconds.")
-                    .scaledFont(11)
-                    .foregroundStyle(theme.labelFaint)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var packagesSlab: some View {
-        if store.packages.isEmpty {
-            Slab(rail: .idle) {
-                Text(store.errors[.packages] ?? "No packages installed.")
-                    .scaledFont(12)
-                    .foregroundStyle(theme.labelMuted)
-            }
-        } else {
-            let sorted = store.packages.sorted {
-                if $0.updateAvailable != $1.updateAvailable { return $0.updateAvailable }
-                return $0.shortName.localizedCaseInsensitiveCompare($1.shortName) == .orderedAscending
-            }
-            ForEach(sorted) { pkg in
-                Slab(rail: pkg.health) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(pkg.shortName)
-                                .scaledFont(14, weight: .semibold)
-                                .foregroundStyle(theme.label)
-                            Spacer()
-                            Text(pkg.versionLine)
-                                .scaledFont(12, design: .monospaced)
-                                .foregroundStyle(pkg.updateAvailable ? theme.warn : theme.labelMuted)
-                        }
-                        if let d = pkg.descr, !d.isEmpty {
-                            Text(d)
-                                .scaledFont(11)
-                                .foregroundStyle(theme.labelFaint)
-                                .lineLimit(2)
-                        }
-                    }
-                }
-            }
-        }
+        .buttonStyle(.plain)
     }
 
     /// pfSense's own notices — the bell icon in the webConfigurator.

@@ -217,30 +217,49 @@ $releaseStatus = 'preparing for its first public release';
       </div>
 
       <div class="feature">
-        <div class="device device--small" role="img" aria-label="The Logs screen: source tabs for Filter, System, Auth, DHCP and VPN, with colour-coded, monospaced log lines.">
+        <div class="device device--small" role="img" aria-label="The incident timeline: firewall, VPN and system events from separate logs merged into one prioritised, connected list with severity pills.">
           <div class="screen">
-            <div class="screen__head"><span class="screen__title">Logs</span><span class="screen__time">14:02</span></div>
-            <div class="segments"><span class="is-on">Filter</span><span>System</span><span>Auth</span><span>DHCP</span><span>VPN</span></div>
-            <div class="logline">
-              <span class="logline__rail" style="background:var(--red)"></span>
-              <div>
-                <div class="logline__head">
-                  <span class="pill" style="color:var(--red);background:color-mix(in srgb,var(--red) 18%,transparent)">BLOCK</span>
-                  <span class="logline__iface">WAN_1</span>
-                  <span class="logline__time">14:01:52</span>
+            <div class="screen__head"><span class="screen__title">Incident timeline</span><span class="screen__time">14:02</span></div>
+            <div class="segments"><span class="is-on">Incidents</span><span>Attention</span><span>All</span></div>
+            <div class="tl-row">
+              <div class="tl-rail">
+                <span class="tl-dot" style="background:var(--red)"></span>
+                <span class="tl-line"></span>
+              </div>
+              <div class="tl-body">
+                <div class="tl-head">
+                  <span class="tl-source">Firewall</span>
+                  <span class="pill" style="color:var(--red);background:color-mix(in srgb,var(--red) 18%,transparent)">ATTENTION</span>
                 </div>
-                <div class="logline__text">203.0.113.44:51422 → 172.16.1.1:22 tcp</div>
+                <div class="tl-msg">block,in,4,,tcp,60,GUEST,any,44122,22801</div>
+                <div class="tl-time">Sep 13 19:51 · 2 hrs ago</div>
               </div>
             </div>
-            <div class="logline">
-              <span class="logline__rail" style="background:var(--green)"></span>
-              <div>
-                <div class="logline__head">
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">PASS</span>
-                  <span class="logline__iface">LAN</span>
-                  <span class="logline__time">14:01:47</span>
+            <div class="tl-row">
+              <div class="tl-rail">
+                <span class="tl-dot" style="background:var(--peach)"></span>
+                <span class="tl-line"></span>
+              </div>
+              <div class="tl-body">
+                <div class="tl-head">
+                  <span class="tl-source">VPN</span>
+                  <span class="pill" style="color:var(--peach);background:color-mix(in srgb,var(--peach) 18%,transparent)">ATTENTION</span>
                 </div>
-                <div class="logline__text">172.16.1.31:60011 → 1.1.1.1:443 tcp</div>
+                <div class="tl-msg">TLS Error: cannot locate HMAC in packet</div>
+                <div class="tl-time">Sep 13 19:20 · 2 hrs ago</div>
+              </div>
+            </div>
+            <div class="tl-row">
+              <div class="tl-rail">
+                <span class="tl-dot" style="background:var(--yellow)"></span>
+              </div>
+              <div class="tl-body">
+                <div class="tl-head">
+                  <span class="tl-source">System</span>
+                  <span class="pill" style="color:var(--yellow);background:color-mix(in srgb,var(--yellow) 18%,transparent)">WARNING</span>
+                </div>
+                <div class="tl-msg">config warning: invalid path</div>
+                <div class="tl-time">Sep 13 20:23 · 1 hr ago</div>
               </div>
             </div>
           </div>
@@ -285,7 +304,7 @@ $releaseStatus = 'preparing for its first public release';
       </div>
 
       <div class="feature">
-        <div class="device device--small" role="img" aria-label="The Firewall rules screen for one interface, showing a drag handle beside each rule, a coloured separator between two of them, and a caption explaining where the ordering comes from.">
+        <div class="device device--small" role="img" aria-label="The Firewall rules screen for one interface, showing a drag handle beside each rule, labelled FROM/TO/PORT/DESC fields, a coloured separator between two rules, and a caption explaining where the ordering comes from.">
           <div class="screen">
             <div class="screen__head"><span class="screen__title">Firewall</span><span class="screen__time">14:02</span></div>
             <div class="segments"><span>All</span><span class="is-on">LAN</span><span>GUEST</span></div>
@@ -295,32 +314,36 @@ $releaseStatus = 'preparing for its first public release';
               <div class="slab">
                 <div class="slab__rail" style="background:var(--green)"></div>
                 <div class="slab__body">
-                  <div class="gw">
-                    <div>
-                      <div class="gw__name">Allow NAS backup</div>
-                      <div class="gw__stat">to alias_host_nas002</div>
-                    </div>
+                  <div class="rulecard__head">
                     <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">PASS</span>
+                    <span class="rulecard__proto">TCP</span>
+                    <span class="rulecard__iface">LAN</span>
+                    <span class="rulecard__chevron">›</span>
                   </div>
+                  <div class="rfield"><b>FROM</b><span>any</span></div>
+                  <div class="rfield"><b>TO</b><span>alias_host_nas002</span></div>
+                  <div class="rfield"><b>DESC</b><span class="prose">Allow NAS backup</span></div>
                 </div>
               </div>
             </div>
             <div class="reorder-row">
               <span class="draghandle">≡</span>
-              <div class="separator" style="background:color-mix(in srgb,var(--teal) 38%,transparent)">Guest devices</div>
+              <div class="separator" style="background:color-mix(in srgb,var(--teal) 18%,transparent)">Guest devices</div>
             </div>
             <div class="reorder-row" style="margin-bottom:0">
               <span class="draghandle">≡</span>
               <div class="slab" style="margin-bottom:0">
                 <div class="slab__rail" style="background:var(--red)"></div>
                 <div class="slab__body">
-                  <div class="gw">
-                    <div>
-                      <div class="gw__name">Block unapproved networks</div>
-                      <div class="gw__stat">from GUEST, any</div>
-                    </div>
+                  <div class="rulecard__head">
                     <span class="pill" style="color:var(--red);background:color-mix(in srgb,var(--red) 18%,transparent)">REJECT</span>
+                    <span class="rulecard__proto">ANY</span>
+                    <span class="rulecard__iface">GUEST</span>
+                    <span class="rulecard__chevron">›</span>
                   </div>
+                  <div class="rfield"><b>FROM</b><span>GUEST net</span></div>
+                  <div class="rfield"><b>TO</b><span>any</span></div>
+                  <div class="rfield"><b>DESC</b><span class="prose">Block unapproved networks</span></div>
                 </div>
               </div>
             </div>
@@ -395,23 +418,26 @@ $releaseStatus = 'preparing for its first public release';
       </div>
 
       <div class="feature">
-        <div class="device device--small" role="img" aria-label="The firewalls list: each profile with its name, address, and whether administration is enabled or it is monitor only.">
+        <div class="device device--small" role="img" aria-label="The All firewalls screen: a connected profile showing CPU, memory and disk, uptime, gateway and service health, and certificate status.">
           <div class="screen">
-            <div class="screen__head"><span class="screen__title">Firewalls</span><span class="screen__time">14:02</span></div>
-            <div class="slab">
-              <div class="slab__rail" style="background:var(--yellow)"></div>
-              <div class="slab__body">
-                <div class="gw__name">fw01 — Stockholm</div>
-                <div class="gw__stat">https://172.16.1.1:2443</div>
-                <div style="font:500 11px/1 var(--sans);color:var(--yellow);margin-top:5px">Administration enabled</div>
-              </div>
-            </div>
+            <div class="screen__head"><span class="screen__title">All firewalls</span><span class="screen__time">14:02</span></div>
             <div class="slab" style="margin-bottom:0">
               <div class="slab__rail" style="background:var(--green)"></div>
               <div class="slab__body">
-                <div class="gw__name">fw02 — Backup site</div>
-                <div class="gw__stat">https://10.20.0.1:2443</div>
-                <div style="font:500 11px/1 var(--sans);color:var(--green);margin-top:5px">Monitor only</div>
+                <div class="gw">
+                  <div class="gw__name">fw01 — Stockholm</div>
+                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">CONNECTED</span>
+                </div>
+                <div class="gw__stat" style="margin-top:2px">https://10.10.20.1:2443</div>
+                <div class="statrow">
+                  <div><b>CPU</b><span>5%</span></div>
+                  <div><b>MEMORY</b><span>9%</span></div>
+                  <div><b>DISK</b><span>5%</span></div>
+                </div>
+                <div class="gw__stat">Uptime: 5d 0h 11m</div>
+                <div class="gw__stat" style="margin-top:6px">0 gateway issues · 0 stopped services</div>
+                <div class="gw__stat">0 certificates expired or due within 30 days</div>
+                <div class="gw__stat" style="margin-top:6px;color:var(--overlay1)">Updated 6 secs ago</div>
               </div>
             </div>
           </div>
