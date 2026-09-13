@@ -122,6 +122,15 @@ final class FieldValidatorTests: XCTestCase {
         XCTAssertNil(problem("10.0.0.1/32", .address))
     }
 
+    func testQuickBlockAcceptsOnlyLiteralHostsAndNetworks() {
+        for value in ["192.0.2.7", "192.0.2.0/24", "2001:db8::7", "2001:db8::/64"] {
+            XCTAssertNil(FieldValidator.quickBlockProblem(in: value), value)
+        }
+        for value in ["", "any", "self", "SERVERS", "192.0.2.256", "2001:db8::/129"] {
+            XCTAssertNotNil(FieldValidator.quickBlockProblem(in: value), value)
+        }
+    }
+
     func testAnEmptyAddressIsRejectedRatherThanTreatedAsAny() {
         // pfSense would take it and the rule would not do what was meant.
         XCTAssertNotNil(problem("", .address))
@@ -334,5 +343,40 @@ final class FieldValidatorTests: XCTestCase {
         XCTAssertTrue(FieldValidator.problems(
             inForward: forward(destinationPort: "8000-8100", localPort: "9000"),
             aliases: aliases).isEmpty)
+    }
+}
+
+final class FirewallAliasPickerTests: XCTestCase {
+
+    private func alias(_ name: String, type: String, description: String = "",
+                       members: String = "", details: String = "") -> FirewallAliasEntry {
+        FirewallAliasEntry(JSONDict([
+            "name": .string(name), "type": .string(type),
+            "descr": .string(description), "address": .string(members),
+            "detail": .string(details)
+        ]))
+    }
+
+    func testPortAliasesAreNotOfferedAsAddresses() {
+        for type in ["port", "url_ports", "urltable_ports"] {
+            let item = alias("WEB_PORTS", type: type)
+            XCTAssertTrue(item.isPortAlias, type)
+            XCTAssertFalse(item.isAddressAlias, type)
+        }
+
+        for type in ["host", "network", "url", "urltable", "geoip"] {
+            let item = alias("NETWORKS", type: type)
+            XCTAssertFalse(item.isPortAlias, type)
+            XCTAssertTrue(item.isAddressAlias, type)
+        }
+    }
+
+    func testAliasSearchCoversMetadataAndMembers() {
+        let item = alias("PROD_SERVERS", type: "host", description: "Production web",
+                         members: "192.0.2.10 192.0.2.11", details: "primary||standby")
+        for query in ["prod", "HOST", "web", "192.0.2.11", "standby"] {
+            XCTAssertTrue(item.matches(search: query), query)
+        }
+        XCTAssertFalse(item.matches(search: "database"))
     }
 }

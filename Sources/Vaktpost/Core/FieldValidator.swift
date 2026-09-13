@@ -188,6 +188,20 @@ enum FieldValidator {
         }
     }
 
+    /// Quick Block deliberately accepts only a literal host or CIDR. An alias
+    /// can change underneath a one-tap emergency block, while `any` or a
+    /// pfSense system selector would make the rule far broader than the person
+    /// confirmed.
+    static func quickBlockProblem(in raw: String, field: String = "Address") -> Problem? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty {
+            return Problem(field: field, message: "Enter an IPv4 or IPv6 address or network.")
+        }
+        if isAddress(text) || isCIDR(text) { return nil }
+        return Problem(field: field,
+                       message: "Quick Block needs a literal IPv4 or IPv6 address or CIDR network.")
+    }
+
     // MARK: Whole forms
 
     static func problems(inRule form: RuleEditForm, aliases: Set<String>,

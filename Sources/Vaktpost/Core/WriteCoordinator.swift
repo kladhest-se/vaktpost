@@ -97,18 +97,32 @@ enum AdministrativeWrite: Sendable {
     }
 
     private static func ruleDescription(_ rule: JSONDict) -> String {
-        let source = rule.dict("source")?.string("address") ?? "any"
-        let destination = rule.dict("destination")?.string("address") ?? "any"
+        let source = addressDescription(rule.value("source"), fallback: "any")
+        let destination = addressDescription(rule.value("destination"), fallback: "any")
         let port = rule.string("destination_port").map { ":\($0)" } ?? ""
         return "\((rule.string("type") ?? "pass").uppercased()) \(source) → \(destination)\(port) on \(rule.string("interface") ?? "unknown interface")"
     }
 
     private static func natDescription(_ rule: JSONDict) -> String {
-        let destination = rule.dict("destination")?.string("address") ?? "interface address"
+        let destination = addressDescription(rule.value("destination"),
+                                             fallback: "interface address")
         let destinationPort = rule.string("destination_port").map { ":\($0)" } ?? ""
         let target = rule.string("target") ?? "unknown target"
         let localPort = rule.string("local_port").map { ":\($0)" } ?? ""
         return "\(destination)\(destinationPort) → \(target)\(localPort) on \(rule.string("interface") ?? "unknown interface")"
+    }
+
+    private static func addressDescription(_ value: JSONValue?, fallback: String) -> String {
+        guard value != nil else { return fallback }
+        let side = FilterAddress(value)
+        switch side.storageKind {
+        case .any:
+            return "any"
+        case .network:
+            return "\(side.address) (system selector)"
+        case .address:
+            return side.address
+        }
     }
 
     private static func isCreate(_ rule: JSONDict) -> Bool {
@@ -317,8 +331,11 @@ final class WriteCoordinator {
         case .restartService(let name, _):
             guard !name.isEmpty else { throw WriteCoordinatorError.invalidOperation("service name is empty") }
         case .quickBlock(let interface, let address, _):
-            guard !interface.isEmpty, !address.isEmpty else {
-                throw WriteCoordinatorError.invalidOperation("interface and address are required")
+            guard !interface.isEmpty else {
+                throw WriteCoordinatorError.invalidOperation("an internal interface is required")
+            }
+            if let problem = FieldValidator.quickBlockProblem(in: address) {
+                throw WriteCoordinatorError.invalidOperation(problem.message)
             }
         case .deleteRule(let tracker, _), .deleteNatRule(let tracker, _):
             guard !tracker.isEmpty else { throw WriteCoordinatorError.invalidOperation("a stable tracker ID is required") }
@@ -392,8 +409,16 @@ final class WriteCoordinator {
 
     private func snapshotBefore(_ operation: AdministrativeWrite) async throws -> String? {
         switch operation {
-        case .reloadFirewall, .quickBlock:
+        case .reloadFirewall:
             return "rules=\((try await client.firewallRules()).count)"
+        case .quickBlock(let interface, _, _):
+            let interfaces = try await client.interfaces()
+            guard interfaces.contains(where: { $0.internalName == interface }) else {
+                throw WriteCoordinatorError.invalidOperation(
+                    "the selected interface is no longer configured"
+                )
+            }
+            return "rules=\((try await client.firewallRules()).count);interface=\(interface)"
         case .restartService(let name, _):
             guard let service = try await client.services().first(where: { $0.name == name }) else {
                 throw WriteCoordinatorError.invalidOperation("the service is no longer present")
@@ -541,13 +566,16 @@ final class WriteCoordinator {
 
     private static func ruleSnapshot(_ rule: FirewallRule) -> String {
         [rule.tracker, rule.interfaceName, rule.type, rule.ipProtocol ?? "", rule.proto ?? "",
-         rule.source, rule.destination, rule.descr, String(rule.disabled), String(rule.logged)]
+         rule.sourceSide.storageKind.rawValue, rule.source,
+         rule.destinationSide.storageKind.rawValue, rule.destination,
+         rule.descr, String(rule.disabled), String(rule.logged)]
             .joined(separator: "|")
     }
 
     private static func natSnapshot(_ forward: PortForward) -> String {
         [forward.tracker, forward.interfaceName, forward.ipProtocol ?? "", forward.proto ?? "",
-         forward.sourceSide.text, forward.destinationSide.text, forward.target,
+         forward.sourceSide.storageKind.rawValue, forward.sourceSide.text,
+         forward.destinationSide.storageKind.rawValue, forward.destinationSide.text, forward.target,
          forward.localPort ?? "", forward.descr, String(forward.disabled)]
             .joined(separator: "|")
     }

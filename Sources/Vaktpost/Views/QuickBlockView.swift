@@ -60,12 +60,11 @@ struct QuickBlockView: View {
             )
             .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
             .onAppear {
-                if let firstUp = store.overviewLayout.interfaces.first(where: { $0.isUp }) {
+                if let firstUp = store.overviewLayout.interfaces.first(where: {
+                    $0.isUp && $0.internalName != nil
+                }) {
                     selectedInterface = firstUp
                 }
-            }
-            .onChange(of: address) { _, newValue in
-                address = sanitizeAddress(newValue)
             }
         }
     }
@@ -75,14 +74,20 @@ struct QuickBlockView: View {
     private var interfacePicker: some View {
         LabeledContent("Interface") {
             Picker("", selection: Binding(
-                get: { selectedInterface?.device ?? "" },
-                set: { newValue in selectedInterface = store.overviewLayout.interfaces.first(where: { $0.device == newValue }) }
+                get: { selectedInterface?.internalName ?? "" },
+                set: { newValue in
+                    selectedInterface = store.overviewLayout.interfaces.first {
+                        $0.internalName == newValue
+                    }
+                }
             )) {
                 Text("Select interface...").tag("")
                 ForEach(store.overviewLayout.interfaces) { iface in
-                    Text("\(iface.name) (\(iface.device))")
-                        .tag(iface.device)
-                        .foregroundStyle(iface.isUp ? theme.label : theme.labelMuted)
+                    if let key = iface.internalName {
+                        Text("\(iface.name) (\(key))")
+                            .tag(key)
+                            .foregroundStyle(iface.isUp ? theme.label : theme.labelMuted)
+                    }
                 }
             }
             .pickerStyle(.menu)
@@ -91,11 +96,20 @@ struct QuickBlockView: View {
     }
 
     private var addressField: some View {
-        LabeledContent("Address") {
-            TextField("192.168.1.100 or 10.0.0.0/24", text: $address)
-                .keyboardType(.numberPad)
-                .autocorrectionDisabled()
-                .textFieldStyle(.roundedBorder)
+        VStack(alignment: .leading, spacing: 5) {
+            LabeledContent("Address") {
+                TextField("IPv4, IPv6, or CIDR network", text: $address)
+                    .keyboardType(.asciiCapable)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+            }
+            if let problem = addressProblem, !address.isEmpty {
+                Text(problem.message)
+                    .scaledFont(11)
+                    .foregroundStyle(theme.bad)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
     }
 
@@ -110,7 +124,7 @@ struct QuickBlockView: View {
     private var executeButton: some View {
         Button {
             writeError = nil
-            guard !address.isEmpty, selectedInterface != nil else { return }
+            guard addressProblem == nil, selectedInterface?.internalName != nil else { return }
             showConfirmation = true
         } label: {
             HStack {
@@ -124,19 +138,28 @@ struct QuickBlockView: View {
             .padding(.vertical, 10)
             .background(theme.bad.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
         }
-        .disabled(!store.canAdminister || isExecuting)
-        .opacity(store.canAdminister ? 1 : 0.55)
+        .disabled(!store.canAdminister || isExecuting || addressProblem != nil
+                  || selectedInterface?.internalName == nil)
+        .opacity(store.canAdminister && addressProblem == nil
+                 && selectedInterface?.internalName != nil ? 1 : 0.55)
     }
 
     // MARK: - Confirmation handler
 
     private var pendingOperation: AdministrativeWrite? {
-        guard let iface = selectedInterface, !address.isEmpty else { return nil }
+        guard let interface = selectedInterface?.internalName,
+              addressProblem == nil else { return nil }
+        let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        let note = description.trimmingCharacters(in: .whitespacesAndNewlines)
         return .quickBlock(
-            interface: iface.device,
-            address: address,
-            description: description.isEmpty ? "Blocked by Vaktpost" : description
+            interface: interface,
+            address: value,
+            description: note.isEmpty ? "Blocked by Vaktpost" : note
         )
+    }
+
+    private var addressProblem: FieldValidator.Problem? {
+        FieldValidator.quickBlockProblem(in: address)
     }
 
     private func confirmBlock() async {
@@ -169,9 +192,5 @@ struct QuickBlockView: View {
             .foregroundStyle(theme.labelFaint)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 8)
-    }
-
-    private func sanitizeAddress(_ input: String) -> String {
-        input.filter { $0.isNumber || $0 == "." || $0 == "/" }
     }
 }

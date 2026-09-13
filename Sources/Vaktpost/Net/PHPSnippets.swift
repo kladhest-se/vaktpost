@@ -2699,11 +2699,23 @@ struct PHPSnippet: Sendable {
         $toreturn = [];
         $vaktpost_payload = "\(encoded)";
         \(decodePayload)
-        $vaktpost_if = strval($vaktpost_input["interface"] ?? "");
-        $vaktpost_addr = strval($vaktpost_input["address"] ?? "");
-        if ($vaktpost_if === "" || $vaktpost_addr === "") {
-          $toreturn["status"] = "invalid";
-          $toreturn["error"] = "Interface and address are required";
+        $vaktpost_if = trim(strval($vaktpost_input["interface"] ?? ""));
+        $vaktpost_addr = trim(strval($vaktpost_input["address"] ?? ""));
+        $vaktpost_direct = $vaktpost_addr;
+        $vaktpost_address_valid = is_ipaddrv4($vaktpost_addr) || is_ipaddrv6($vaktpost_addr);
+        if (!$vaktpost_address_valid && strpos($vaktpost_addr, "/") !== false) {
+          $vaktpost_cidr = explode("/", $vaktpost_addr, 2);
+          $vaktpost_direct = strval($vaktpost_cidr[0] ?? "");
+          $vaktpost_bits = strval($vaktpost_cidr[1] ?? "");
+          $vaktpost_address_valid = count($vaktpost_cidr) === 2
+            && preg_match('/^[0-9]+$/', $vaktpost_bits) === 1
+            && ((is_ipaddrv4($vaktpost_direct) && intval($vaktpost_bits) <= 32)
+              || (is_ipaddrv6($vaktpost_direct) && intval($vaktpost_bits) <= 128));
+        }
+        if (!array_key_exists($vaktpost_if, get_configured_interface_with_descr())
+            || !$vaktpost_address_valid) {
+          $toreturn["status"] = "validation_failed";
+          $toreturn["error"] = "The interface or literal IP address/network is invalid";
         } else {
           $section = $config["filter"];
           $vaktpost_rules = (is_array($section) && is_iterable($section["rule"])) ? $section["rule"] : [];
@@ -2719,16 +2731,16 @@ struct PHPSnippet: Sendable {
               }
             }
           }
-          $vaktpost_source = (strpos($vaktpost_addr, "/") !== false)
-            ? ["network" => $vaktpost_addr]
-            : ["address" => $vaktpost_addr];
           $block_rule = [
             'type' => 'block',
             'interface' => $vaktpost_if,
             'descr' => strval($vaktpost_input["descr"] ?? ""),
-            'ipprotocol' => (strpos($vaktpost_addr, ":") !== false) ? 'inet6' : 'inet',
+            'ipprotocol' => is_ipaddrv6($vaktpost_direct) ? 'inet6' : 'inet',
             'protocol' => 'any',
-            'source' => $vaktpost_source,
+            // Literal hosts and CIDRs both use the native address key.
+            // `network` is reserved for pfSense system selectors such as
+            // `wanip`, `lan` and `self`.
+            'source' => ['address' => $vaktpost_addr],
             'destination' => ['any' => true],
             'tracker' => $vaktpost_tracker,
           ];
@@ -2753,15 +2765,19 @@ struct PHPSnippet: Sendable {
         $toreturn = [];
         $vaktpost_payload = "\(encoded)";
         \(decodePayload)
-        $vaktpost_if = strval($vaktpost_input["interface"] ?? "");
+        $vaktpost_if = trim(strval($vaktpost_input["interface"] ?? ""));
         if ($vaktpost_if === "") {
           pfctl_clear_states();
           $toreturn["scope"] = "all";
+          $toreturn["status"] = "ok";
+        } elseif (!does_interface_exist($vaktpost_if)) {
+          $toreturn["status"] = "validation_failed";
+          $toreturn["error"] = "The selected interface device is unavailable";
         } else {
           pfctl_clear_states_by_if($vaktpost_if);
           $toreturn["scope"] = $vaktpost_if;
+          $toreturn["status"] = "ok";
         }
-        $toreturn["status"] = "ok";
         """)
     }
 

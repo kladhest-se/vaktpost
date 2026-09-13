@@ -1,5 +1,32 @@
 # Changelog
 
+## Searchable, type-aware alias selection
+
+- Rule and port-forward editors now receive the complete alias catalogue
+  already fetched for the active firewall rather than only a set of names.
+- Address and target fields offer address-capable aliases; source,
+  destination and local port fields offer port aliases. Incompatible alias
+  types are not mixed into the wrong picker.
+- The alias sheet searches name, type, description, member values and member
+  notes, and shows type, description and member count before selection.
+- Choosing an alias fills the existing editable field using its exact name.
+  Literal IPv4, IPv6, CIDR and port values remain available as free text, and
+  opening an existing rule never rewrites its value.
+
+## Quick Block and administrative confirmation hardening
+
+- Quick Block now writes the pfSense internal interface key (`wan`, `lan`,
+  `optN`) rather than the physical device name used for traffic counters.
+- IPv4, IPv6 and CIDR input is preserved and validated locally and again on
+  the firewall. Literal networks use the native `address` shape; the
+  `network` shape remains reserved for pfSense system selectors.
+- Unknown interfaces, malformed addresses and invalid prefix lengths are
+  rejected before configuration changes. Scoped state flushing also rejects a
+  device which is no longer available instead of reporting a successful no-op.
+- Administrative confirmations now name native system selectors explicitly,
+  and audit snapshots include address storage types as well as their displayed
+  values.
+
 ## Native pfSense address editing and validation
 
 - Rule and port-forward editors now separate Any, literal addresses/networks,

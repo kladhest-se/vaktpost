@@ -97,6 +97,17 @@ final class WriteSafetyTests: XCTestCase {
         XCTAssertEqual(AdministrativeWrite.saveNatRule(rule: edit, displayName: "old").action, .editPortForward)
     }
 
+    func testAdministrativePreviewNamesNativeSystemSelectors() {
+        let rule = JSONDict([
+            "interface": .string("wan"), "type": .string("block"),
+            "source": .object(["network": .string("wanip")]),
+            "destination": .object(["network": .string("lan")])
+        ])
+        let preview = AdministrativeWrite.saveRule(rule: rule, displayName: "test").preview
+        XCTAssertTrue(preview.contains("wanip (system selector)"))
+        XCTAssertTrue(preview.contains("lan (system selector)"))
+    }
+
     func testRuleEditReplacesOriginalSlotInsteadOfDroppingIt() {
         let body = PHPSnippet.saveRule(rule: JSONDict([:])).body
         XCTAssertTrue(body.contains("$rules[$vaktpost_index] = $rule;"))
@@ -128,9 +139,20 @@ final class WriteSafetyTests: XCTestCase {
     func testQuickBlockWritesNativeFilterRuleShape() {
         let body = PHPSnippet.quickBlock(interface: "wan", address: "192.0.2.7", description: "test").body
         XCTAssertTrue(body.contains("$config['filter']['rule']"))
+        XCTAssertTrue(body.contains("get_configured_interface_with_descr()"))
+        XCTAssertTrue(body.contains("is_ipaddrv4("))
+        XCTAssertTrue(body.contains("is_ipaddrv6("))
+        XCTAssertTrue(body.contains("'source' => ['address' => $vaktpost_addr]"))
         XCTAssertTrue(body.contains("'destination' => ['any' => true]"))
         XCTAssertTrue(body.contains("'tracker' => $vaktpost_tracker"))
+        XCTAssertFalse(body.contains("[\"network\" => $vaktpost_addr]"))
         XCTAssertFalse(body.contains("$config['rules']"))
+    }
+
+    func testInterfaceStateFlushFailsClosedForAnUnknownDevice() {
+        let body = PHPSnippet.flushStates(interface: "igb0").body
+        XCTAssertTrue(body.contains("does_interface_exist($vaktpost_if)"))
+        XCTAssertTrue(body.contains("validation_failed"))
     }
 
     func testCreatedLabFixturesKeepTheirSuppliedTracker() {

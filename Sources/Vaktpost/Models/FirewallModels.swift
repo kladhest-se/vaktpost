@@ -163,6 +163,24 @@ struct FirewallAliasEntry: Identifiable {
         details = Self.detailList(d.value("detail"))
     }
 
+    /// pfSense's port-bearing alias types are named `port`, `url_ports` or
+    /// `urltable_ports`. Everything else is an address-side alias, including
+    /// host, network, URL table and GeoIP aliases. Keeping the distinction in
+    /// one place prevents a port alias being offered in an address field where
+    /// the firewall will reject it.
+    var isPortAlias: Bool { type.lowercased().contains("port") }
+    var isAddressAlias: Bool { !isPortAlias }
+
+    func matches(search raw: String) -> Bool {
+        let query = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return true }
+        return name.lowercased().contains(query)
+            || type.lowercased().contains(query)
+            || (descr ?? "").lowercased().contains(query)
+            || addresses.contains { $0.lowercased().contains(query) }
+            || details.contains { $0.lowercased().contains(query) }
+    }
+
     /// The members of an alias, however this transport spells them.
     ///
     /// In `config.xml` an alias stores its members as one space-separated

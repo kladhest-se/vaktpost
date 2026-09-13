@@ -105,6 +105,7 @@ struct EditAddress: View {
     @Binding var text: String
     @Binding var storageKind: FilterAddress.StorageKind
     let interfaces: [InterfaceStat]
+    let aliases: [FirewallAliasEntry]
 
     private enum Choice: Hashable {
         case any
@@ -124,6 +125,10 @@ struct EditAddress: View {
             values.insert("\(key.lowercased())ip")
         }
         return values
+    }
+
+    private var addressAliases: [FirewallAliasEntry] {
+        aliases.filter(\.isAddressAlias)
     }
 
     private var selectedChoice: Choice {
@@ -210,6 +215,165 @@ struct EditAddress: View {
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                             .stroke(theme.hairline, lineWidth: 1)
                     )
+            }
+
+            if selectedChoice == .address && !addressAliases.isEmpty {
+                AliasPickerButton(
+                    title: "Choose address alias",
+                    aliases: addressAliases,
+                    selection: text
+                ) { alias in
+                    text = alias.name
+                    storageKind = .address
+                }
+            }
+        }
+    }
+}
+
+/// Free text with an optional searchable alias catalogue underneath. Literal
+/// values remain editable; choosing an alias fills the same field rather than
+/// introducing a second source of truth.
+struct EditAliasField: View {
+    let label: String
+    @Binding var text: String
+    var prompt = ""
+    var mono = true
+    var keyboard: UIKeyboardType = .default
+    let aliases: [FirewallAliasEntry]
+    var aliasButtonTitle = "Choose alias"
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            EditField(label: label, text: $text, prompt: prompt,
+                      mono: mono, keyboard: keyboard)
+            if !aliases.isEmpty {
+                AliasPickerButton(title: aliasButtonTitle,
+                                  aliases: aliases,
+                                  selection: text) { alias in
+                    text = alias.name
+                }
+            }
+        }
+    }
+}
+
+/// Opens a searchable list without forcing every alias into a menu. A large
+/// firewall can have hundreds of aliases; a menu that tall is effectively not
+/// a picker at all.
+struct AliasPickerButton: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+
+    let title: String
+    let aliases: [FirewallAliasEntry]
+    let selection: String
+    let onSelect: (FirewallAliasEntry) -> Void
+
+    @State private var showingAliases = false
+
+    private var selectedAlias: FirewallAliasEntry? {
+        aliases.first { $0.name == selection }
+    }
+
+    var body: some View {
+        Button {
+            showingAliases = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "tag")
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .scaledFont(12, weight: .semibold)
+                    if let selectedAlias {
+                        Text("Selected: \(selectedAlias.name)")
+                            .scaledFont(10, design: .monospaced)
+                            .foregroundStyle(theme.labelFaint)
+                    }
+                }
+                Spacer()
+                Image(systemName: "magnifyingglass")
+            }
+            .foregroundStyle(theme.accentColor)
+            .padding(.vertical, 7)
+            .padding(.horizontal, 10)
+            .background(theme.accentColor.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showingAliases) {
+            AliasSelectionSheet(aliases: aliases, selectedName: selection) { alias in
+                onSelect(alias)
+                showingAliases = false
+            }
+        }
+    }
+}
+
+private struct AliasSelectionSheet: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dismiss) private var dismiss
+
+    let aliases: [FirewallAliasEntry]
+    let selectedName: String
+    let onSelect: (FirewallAliasEntry) -> Void
+
+    @State private var query = ""
+
+    private var matches: [FirewallAliasEntry] {
+        aliases.filter { $0.matches(search: query) }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if matches.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                        .listRowBackground(Color.clear)
+                } else {
+                    ForEach(matches) { alias in
+                        Button {
+                            onSelect(alias)
+                        } label: {
+                            HStack(alignment: .top, spacing: 10) {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(alias.name)
+                                        .scaledFont(14, weight: .semibold,
+                                                    design: .monospaced)
+                                        .foregroundStyle(theme.label)
+                                    HStack(spacing: 7) {
+                                        Text(alias.type.isEmpty ? "alias" : alias.type)
+                                        Text("\(alias.addresses.count) member\(alias.addresses.count == 1 ? "" : "s")")
+                                    }
+                                    .scaledFont(10, design: .monospaced)
+                                    .foregroundStyle(theme.labelFaint)
+                                    if let description = alias.descr, !description.isEmpty {
+                                        Text(description)
+                                            .scaledFont(11)
+                                            .foregroundStyle(theme.labelMuted)
+                                    }
+                                }
+                                Spacer()
+                                if alias.name == selectedName {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(theme.accentColor)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(theme.card)
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background(theme.bg.ignoresSafeArea())
+            .searchable(text: $query, prompt: "Name, type, description or member")
+            .navigationTitle("Choose alias")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
             }
         }
     }

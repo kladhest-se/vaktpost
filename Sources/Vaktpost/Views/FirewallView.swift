@@ -169,7 +169,7 @@ struct FirewallView: View {
         .sheet(item: $newRule) { form in
             RuleEditSheet(form: form,
                           interfaces: store.interfaces,
-                          aliases: Set(store.aliases.map(\.name)),
+                          aliases: store.aliases,
                           ruleset: store.rules,
                           subject: form.apply(to: FirewallRule(JSONDict([
                               "tracker": .string(""),
@@ -180,7 +180,7 @@ struct FirewallView: View {
         .sheet(item: $newForward) { form in
             PortForwardEditSheet(form: form,
                                  interfaces: store.interfaces,
-                                 aliases: Set(store.aliases.map(\.name)),
+                                 aliases: store.aliases,
                                  onSave: { saved in await createForward(saved) })
         }
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
@@ -692,7 +692,7 @@ struct RuleDetailView: View {
         .sheet(isPresented: $showEditSheet) {
             RuleEditSheet(form: editorForm ?? RuleEditForm(from: rule),
                           interfaces: store.interfaces,
-                          aliases: Set(store.aliases.map(\.name)),
+                          aliases: store.aliases,
                           ruleset: store.rules,
                           subject: rule,
                           onSave: { saved in await save(changes: saved) })
@@ -922,7 +922,7 @@ struct PortForwardDetailView: View {
         .sheet(isPresented: $showEditSheet) {
             PortForwardEditSheet(form: editorForm ?? PortForwardEditForm(from: forward),
                                  interfaces: store.interfaces,
-                                 aliases: Set(store.aliases.map(\.name)),
+                                 aliases: store.aliases,
                                  onSave: { saved in await save(changes: saved) })
         }
         .confirmationSheet(
@@ -1162,9 +1162,9 @@ struct RuleEditSheet: View {
     /// Interface handles this firewall actually has, so the field cannot name
     /// one that does not exist.
     let interfaces: [InterfaceStat]
-    /// Alias names this firewall has, so a field naming one that does not
-    /// exist is caught here rather than by pfSense refusing to load the rule.
-    let aliases: Set<String>
+    /// Full alias metadata: validation uses the names, while the editor can
+    /// show type, description and member count in its searchable picker.
+    let aliases: [FirewallAliasEntry]
     /// The ruleset this rule lives in, for working out where it sits and what
     /// above it already catches the same traffic.
     let ruleset: [FirewallRule]
@@ -1177,7 +1177,7 @@ struct RuleEditSheet: View {
     @State private var isSaving = false
     @State private var showSaveConfirmation = false
 
-    init(form: RuleEditForm, interfaces: [InterfaceStat], aliases: Set<String>,
+    init(form: RuleEditForm, interfaces: [InterfaceStat], aliases: [FirewallAliasEntry],
          ruleset: [FirewallRule], subject: FirewallRule,
          onSave: @escaping (RuleEditForm) async -> Bool) {
         self.interfaces = interfaces
@@ -1190,7 +1190,7 @@ struct RuleEditSheet: View {
     }
 
     private var problems: [FieldValidator.Problem] {
-        FieldValidator.problems(inRule: edited, aliases: aliases,
+        FieldValidator.problems(inRule: edited, aliases: Set(aliases.map(\.name)),
                                 interfaces: Set(interfaceKeys))
     }
 
@@ -1271,9 +1271,12 @@ struct RuleEditSheet: View {
                         VStack(alignment: .leading, spacing: 12) {
                             EditAddress(label: "Address", text: $edited.sourceAddress,
                                         storageKind: $edited.sourceStorageKind,
-                                        interfaces: interfaces)
-                            EditField(label: "Port", text: $edited.sourcePort,
-                                      prompt: "blank for any")
+                                        interfaces: interfaces,
+                                        aliases: aliases)
+                            EditAliasField(label: "Port", text: $edited.sourcePort,
+                                           prompt: "blank for any",
+                                           aliases: aliases.filter(\.isPortAlias),
+                                           aliasButtonTitle: "Choose port alias")
                         }
                     }
 
@@ -1281,9 +1284,12 @@ struct RuleEditSheet: View {
                         VStack(alignment: .leading, spacing: 12) {
                             EditAddress(label: "Address", text: $edited.destinationAddress,
                                         storageKind: $edited.destinationStorageKind,
-                                        interfaces: interfaces)
-                            EditField(label: "Port", text: $edited.destinationPort,
-                                      prompt: "blank for any")
+                                        interfaces: interfaces,
+                                        aliases: aliases)
+                            EditAliasField(label: "Port", text: $edited.destinationPort,
+                                           prompt: "blank for any",
+                                           aliases: aliases.filter(\.isPortAlias),
+                                           aliasButtonTitle: "Choose port alias")
                         }
                     }
 
@@ -1669,7 +1675,7 @@ struct PortForwardEditSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let interfaces: [InterfaceStat]
-    let aliases: Set<String>
+    let aliases: [FirewallAliasEntry]
     let onSave: (PortForwardEditForm) async -> Bool
 
     @State private var edited: PortForwardEditForm
@@ -1680,7 +1686,8 @@ struct PortForwardEditSheet: View {
 
     private var isDirty: Bool { edited != original }
 
-    init(form: PortForwardEditForm, interfaces: [InterfaceStat], aliases: Set<String>,
+    init(form: PortForwardEditForm, interfaces: [InterfaceStat],
+         aliases: [FirewallAliasEntry],
          onSave: @escaping (PortForwardEditForm) async -> Bool) {
         self.interfaces = interfaces
         self.aliases = aliases
@@ -1690,7 +1697,7 @@ struct PortForwardEditSheet: View {
     }
 
     private var problems: [FieldValidator.Problem] {
-        FieldValidator.problems(inForward: edited, aliases: aliases,
+        FieldValidator.problems(inForward: edited, aliases: Set(aliases.map(\.name)),
                                 interfaces: Set(interfaceKeys))
     }
 
@@ -1720,23 +1727,32 @@ struct PortForwardEditSheet: View {
                         VStack(alignment: .leading, spacing: 12) {
                             EditAddress(label: "Source address", text: $edited.sourceAddress,
                                         storageKind: $edited.sourceStorageKind,
-                                        interfaces: interfaces)
+                                        interfaces: interfaces,
+                                        aliases: aliases)
                             EditAddress(label: "Destination address",
                                         text: $edited.destinationAddress,
                                         storageKind: $edited.destinationStorageKind,
-                                        interfaces: interfaces)
-                            EditField(label: "Destination port",
-                                      text: $edited.destinationPort,
-                                      prompt: "the port on the outside")
+                                        interfaces: interfaces,
+                                        aliases: aliases)
+                            EditAliasField(label: "Destination port",
+                                           text: $edited.destinationPort,
+                                           prompt: "the port on the outside",
+                                           aliases: aliases.filter(\.isPortAlias),
+                                           aliasButtonTitle: "Choose port alias")
                         }
                     }
 
                     Slab(rail: .info, title: "Sent to") {
                         VStack(alignment: .leading, spacing: 12) {
-                            EditField(label: "Target address", text: $edited.targetAddress,
-                                      prompt: "the host inside")
-                            EditField(label: "Local port", text: $edited.localPort,
-                                      prompt: "blank to keep the same port")
+                            EditAliasField(label: "Target address",
+                                           text: $edited.targetAddress,
+                                           prompt: "the host inside",
+                                           aliases: aliases.filter(\.isAddressAlias),
+                                           aliasButtonTitle: "Choose address alias")
+                            EditAliasField(label: "Local port", text: $edited.localPort,
+                                           prompt: "blank to keep the same port",
+                                           aliases: aliases.filter(\.isPortAlias),
+                                           aliasButtonTitle: "Choose port alias")
                         }
                     }
 
