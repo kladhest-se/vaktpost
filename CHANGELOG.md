@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Treat a short-lived updater as accepted or completed instead of reporting a
+  false launch failure merely because pfSense's WebUI PID file is absent.
+- Use pfSense's ordinary package-update flags rather than its forced reinstall
+  flag, while retaining explicit exit-code failure reporting.
+
 ## 0.1.0 — First public release
 
 ### Added
@@ -19,6 +26,9 @@
   VPNs, updates, and Dynamic DNS.
 - Views for system notices, certificates, ACME, Dynamic DNS, HAProxy,
   pfBlockerNG, packages, firmware, and CARP.
+- Confirmed, admin-only initiation of pfSense base-system and individual
+  package updates through pfSense's native background updater, with fresh
+  version checks, restore points, updater locking, and audit records.
 - Filter rule and NAT port-forward creation, editing, duplication, deletion,
   ordering, and detailed pfSense field display.
 - Filter and NAT separator creation, editing, deletion, colour selection, and

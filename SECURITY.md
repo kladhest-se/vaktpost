@@ -116,15 +116,20 @@ there:
   closed enum, a clamped integer, or a base64 payload, so every line of PHP
   that can reach a firewall is in the repository and has been reviewed.
 - A snippet may write **only** if its name is in `writeOperations`, and then
-  only through `write_config`, `filter_configure_sync`, `pfctl_clear_states`,
-  `pfctl_clear_states_by_if` and `restart_service`. The check runs in both
-  directions: a snippet that writes without being named fails, and a name whose
-  snippet no longer writes fails too, so the list can neither grow quietly nor
-  rot into permissions nothing uses.
-- No snippet, including the write ones, may contain `mwexec`, `exec`,
-  `shell_exec`, `system`, `passthru`, `popen`, `proc_open`, `unlink`,
+  only through the operation-specific allowlist. Configuration writes use
+  `write_config`, `filter_configure_sync`, `pfctl_clear_states`,
+  `pfctl_clear_states_by_if` and `restart_service`; `start_update` alone may
+  call `mwexec_bg` and remove the updater's fixed pid/socket/log files. The
+  check runs in both directions: a snippet that writes without being named
+  fails, and a name whose snippet no longer writes fails too, so the list can
+  neither grow quietly nor rot into permissions nothing uses.
+- No snippet other than the narrowly audited `start_update` operation may
+  contain `mwexec`, `exec`, `shell_exec`, `system`, `passthru`, `popen`,
+  `proc_open`, `unlink`,
   `file_put_contents`, `rename`, `mkdir`, `rmdir`, `chmod`, `chown` or `eval`.
-  A write snippet may change the configuration; none may reach a shell.
+  `start_update` can launch only pfSense's product-named upgrade executable,
+  using fixed flags and a validated, shell-quoted package identifier when one
+  package is selected. It creates a pfSense configuration restore point first.
 - `unset` is allowed, because removing an element from a local array is how a
   rule is dropped from a copy before the copy is assigned back. Pointed at
   `$config` it is checked separately and refused.
@@ -156,13 +161,15 @@ differ from Swift's, and getting it wrong looks like working code.
 - Every PHP function called must appear on the allowlist in that file.
 - `pfsense.exec_php` is the only XML-RPC method used. pfSense also exposes
   `restore_config_section` and `merge_config_section`, which write.
-- Three snippets call pfSense functions that shell out internally —
+- Three read snippets call pfSense functions that shell out internally —
   `wg_get_status()` runs `wg show`, `get_pkg_info()` runs pkg, and
   `printBandwidth()` runs `/usr/local/bin/rate`. That is deliberate and worth
   stating: the rules forbid *this app* from sending `exec`, `mwexec` or a
-  shell, not pfSense from using one inside its own functions. What the rules
-  protect is that every line of PHP this app sends is reviewable, and that only
-  the named operations write, which holds for all three.
+  shell, not pfSense from using one inside its own functions. The separately
+  named `start_update` write is the single direct process-launch exception and
+  is constrained to pfSense's updater. What the rules protect is that every
+  line of PHP this app sends is reviewable, and that only the named operations
+  write.
 - `printBandwidth()` deserves its own paragraph, because it is the weakest
   entry on the allowlist and the only one that is not a value read. It is how
   `status_graph.php` fills its Host IP table, and there is no other source of

@@ -82,6 +82,40 @@ extension FirewallClient {
         return "ok"
     }
 
+    /// Starts the native pfSense base-system updater in the background.
+    func startFirmwareUpdate() async throws -> JSONDict {
+        try requireAdministration()
+        let dict = try await rpc.runObjectOnce(PHPSnippet.startUpdate(kind: "firmware"))
+        let result = try Self.validatedWriteResponse(dict, operation: "pfSense update")
+        guard result.bool("started") == true,
+              result.string("mode") == "firmware",
+              let phase = result.string("phase"),
+              ["accepted", "running", "completed"].contains(phase) else {
+            throw RPCError.fault(0, "pfSense did not confirm that its updater started.")
+        }
+        return result
+    }
+
+    /// Starts one native pfSense package update in the background.
+    func startPackageUpdate(identifier: String) async throws -> JSONDict {
+        try requireAdministration()
+        guard !identifier.isEmpty else {
+            throw RPCError.malformed("Package update requires an identifier.")
+        }
+        let dict = try await rpc.runObjectOnce(
+            PHPSnippet.startUpdate(kind: "package", packageIdentifier: identifier)
+        )
+        let result = try Self.validatedWriteResponse(dict, operation: "Package update")
+        guard result.bool("started") == true,
+              result.string("mode") == "package",
+              result.string("package") == identifier,
+              let phase = result.string("phase"),
+              ["accepted", "running", "completed"].contains(phase) else {
+            throw RPCError.fault(0, "pfSense did not confirm the requested package updater.")
+        }
+        return result
+    }
+
     /// Adds a quick-block rule to block an IP address.
     ///
     /// - Parameters:

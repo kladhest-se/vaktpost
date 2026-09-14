@@ -64,6 +64,10 @@ actor FirewallClient {
         return payload.list("data").compactMap { JSONDict($0) }.map(PackageInfo.init)
     }
 
+    func updateProcessStatus() async throws -> JSONDict {
+        try await rpc.runObject(.updateProcessStatus)
+    }
+
     func notices() async throws -> [SystemNotice] {
         try await rpc.runList(.notices).map(SystemNotice.init)
     }

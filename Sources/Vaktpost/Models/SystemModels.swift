@@ -208,51 +208,6 @@ struct PackageInfo: Identifiable {
     }
 }
 
-/// Exact destinations in pfSense's own update workflow.
-///
-/// The webConfigurator owns branch selection, its second confirmation, the
-/// pre-update restore point, progress reporting and reboot handling. Vaktpost
-/// opens those pages instead of recreating that privileged workflow through
-/// `exec_php`, where doing so would require weakening the no-shell boundary.
-enum PfSenseUpdateLink {
-    static func firmware(baseURL: String) -> URL? {
-        make(baseURL: baseURL, queryItems: [URLQueryItem(name: "id", value: "firmware")])
-    }
-
-    static func package(_ package: PackageInfo, baseURL: String) -> URL? {
-        guard package.updateAvailable, !package.updateIdentifier.isEmpty else { return nil }
-        var items = [
-            URLQueryItem(name: "mode", value: "reinstallpkg"),
-            URLQueryItem(name: "pkg", value: package.updateIdentifier)
-        ]
-        if let installed = package.installedVersion, !installed.isEmpty {
-            items.append(URLQueryItem(name: "from", value: installed))
-        }
-        if let latest = package.latestVersion, !latest.isEmpty {
-            items.append(URLQueryItem(name: "to", value: latest))
-        }
-        return make(baseURL: baseURL, queryItems: items)
-    }
-
-    private static func make(baseURL: String, queryItems: [URLQueryItem]) -> URL? {
-        guard var components = URLComponents(string: baseURL),
-              components.host != nil,
-              let scheme = components.scheme?.lowercased(),
-              scheme == "https" || scheme == "http" else { return nil }
-        components.scheme = scheme
-        // A profile should never contain credentials in its URL, but do not
-        // carry them into another app if an imported profile does.
-        components.user = nil
-        components.password = nil
-        var path = components.path
-        if !path.hasSuffix("/") { path += "/" }
-        components.path = path + "pkg_mgr_install.php"
-        components.queryItems = queryItems
-        components.fragment = nil
-        return components.url
-    }
-}
-
 // MARK: - pf tables
 
 /// A pf table and its contents (`diagnostics/tables`).

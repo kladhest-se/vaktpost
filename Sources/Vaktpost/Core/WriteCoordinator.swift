@@ -9,6 +9,9 @@ import Observation
 enum AdministrativeWrite: Sendable {
     case reloadFirewall
     case restartService(name: String, displayName: String)
+    case startFirmwareUpdate(current: String, target: String)
+    case startPackageUpdate(identifier: String, displayName: String,
+                            installed: String, target: String)
     case quickBlock(interface: String, address: String, description: String)
     case flushStates(interface: String)
     case deleteRule(tracker: String, displayName: String)
@@ -28,6 +31,8 @@ enum AdministrativeWrite: Sendable {
         switch self {
         case .reloadFirewall: return .reloadFirewall
         case .restartService: return .restartService
+        case .startFirmwareUpdate: return .updateFirmware
+        case .startPackageUpdate: return .updatePackage
         case .quickBlock: return .quickBlock
         case .flushStates: return .flushStates
         case .deleteRule: return .deleteRule
@@ -53,6 +58,8 @@ enum AdministrativeWrite: Sendable {
         switch self {
         case .reloadFirewall: return nil
         case .restartService(let name, _): return name
+        case .startFirmwareUpdate: return "pfSense base system"
+        case .startPackageUpdate(_, let displayName, _, _): return displayName
         case .quickBlock(let interface, _, _): return interface
         case .flushStates(let interface): return interface.isEmpty ? "all interfaces" : interface
         case .deleteRule(_, let displayName), .saveRule(_, let displayName),
@@ -77,6 +84,10 @@ enum AdministrativeWrite: Sendable {
             return "Apply pending firewall changes"
         case .restartService(_, let displayName):
             return "Restart service \(displayName)"
+        case .startFirmwareUpdate(let current, let target):
+            return "Update pfSense from \(current) to \(target)"
+        case .startPackageUpdate(_, let displayName, let installed, let target):
+            return "Update package \(displayName) from \(installed) to \(target)"
         case .quickBlock(let interface, let address, _):
             return "Block \(address) on \(interface)"
         case .flushStates(let interface):
@@ -125,6 +136,14 @@ enum AdministrativeWrite: Sendable {
                 + "including changes made in the web UI or by another administrator. Existing connections may be briefly interrupted."
         case .restartService(_, let displayName):
             return "Restart \(displayName). The service will be temporarily unavailable."
+        case .startFirmwareUpdate(let current, let target):
+            return "Start the pfSense base-system update from \(current) to \(target) on the configured release branch. "
+                + "pfSense will create a restore point, run the update in the background, and may reboot. "
+                + "Traffic and management access can be interrupted for several minutes."
+        case .startPackageUpdate(_, let displayName, let installed, let target):
+            return "Start the update of package “\(displayName)” from \(installed) to \(target). "
+                + "pfSense will create a restore point and run the package update in the background. "
+                + "Services provided by this package may restart or be temporarily unavailable."
         case .quickBlock(let interface, let address, let description):
             return "Add a block rule on \(interface) for \(address), described as “\(description)”."
         case .flushStates(let interface):
@@ -415,6 +434,10 @@ final class WriteCoordinator {
         switch operation {
         case .restartService(let name, _):
             try Self.validateRestartService(name: name)
+        case .startFirmwareUpdate(let current, let target):
+            try Self.validateFirmwareUpdate(current: current, target: target)
+        case .startPackageUpdate(let identifier, _, let installed, let target):
+            try Self.validatePackageUpdate(identifier: identifier, installed: installed, target: target)
         case .quickBlock(let interface, let address, _):
             try Self.validateQuickBlock(interface: interface, address: address)
         case .deleteRule(let tracker, _), .deleteNatRule(let tracker, _):
@@ -447,6 +470,13 @@ final class WriteCoordinator {
     struct Receipt {
         let status: String
         let tracker: String?
+        let updatePhase: String?
+
+        init(status: String, tracker: String?, updatePhase: String? = nil) {
+            self.status = status
+            self.tracker = tracker
+            self.updatePhase = updatePhase
+        }
     }
 
     private func perform(_ operation: AdministrativeWrite) async throws -> Receipt {
@@ -455,6 +485,14 @@ final class WriteCoordinator {
             return Receipt(status: try await client.reloadFirewall(), tracker: nil)
         case .restartService(let name, _):
             return Receipt(status: try await client.restartService(named: name), tracker: nil)
+        case .startFirmwareUpdate:
+            let result = try await client.startFirmwareUpdate()
+            return Receipt(status: result.string("status") ?? "ok", tracker: "firmware",
+                           updatePhase: result.string("phase"))
+        case .startPackageUpdate(let identifier, _, _, _):
+            let result = try await client.startPackageUpdate(identifier: identifier)
+            return Receipt(status: result.string("status") ?? "ok", tracker: identifier,
+                           updatePhase: result.string("phase"))
         case .quickBlock(let interface, let address, let description):
             let result = try await client.quickBlock(
                 interface: interface,

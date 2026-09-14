@@ -12,17 +12,23 @@ struct UpdatesView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
 
+    @State private var pendingOperation: AdministrativeWrite?
+    @State private var showUpdateConfirmation = false
+    @State private var isStartingUpdate = false
+    @State private var updateResult: String?
+    @State private var writeError: WriteError?
+    @State private var showErrorAlert = false
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 if hasAvailableUpdates {
-                    Notice(
-                        symbol: "arrow.up.circle",
-                        title: "Updates continue in pfSense",
-                        detail: "Each update opens the firewall's own review, confirmation, progress, and reboot flow. "
-                            + "You may be asked to sign in again.",
-                        health: .info
-                    )
+                    AdministrationModeNotice()
+                }
+
+                if let updateResult {
+                    Notice(symbol: "checkmark.circle", title: "Update accepted",
+                           detail: updateResult, health: .ok)
                 }
 
                 GroupHeading(text: "Firmware")
@@ -42,6 +48,18 @@ struct UpdatesView: View {
             await store.refresh()
         }
         .navigationTitle("Updates")
+        .confirmationSheet(
+            isPresented: $showUpdateConfirmation,
+            title: confirmationTitle,
+            message: pendingOperation.map { store.writeCoordinator.preview(for: $0) },
+            destructive: true,
+            destructiveLabel: "Start update",
+            confirmLabel: "Cancel",
+            onConfirm: startPendingUpdate
+        ) {
+            pendingOperation = nil
+        }
+        .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
     }
 
     private var hasAvailableUpdates: Bool {
@@ -76,8 +94,10 @@ struct UpdatesView: View {
                     Text("\(latest) is available.")
                         .scaledFont(12)
                         .foregroundStyle(theme.warn)
-                    if let url = PfSenseUpdateLink.firmware(baseURL: store.profile.baseURL) {
-                        updateLink("Review and start update", systemImage: "arrow.up.circle.fill", url: url)
+                    if let operation = firmwareOperation {
+                        updateButton("Update pfSense", systemImage: "arrow.up.circle.fill") {
+                            request(operation)
+                        }
                     }
                 } else {
                     Text(store.firmwareCheckResult ?? "Up to date as of the last refresh.")
@@ -150,8 +170,10 @@ struct UpdatesView: View {
                                 .foregroundStyle(theme.labelFaint)
                                 .lineLimit(2)
                         }
-                        if let url = PfSenseUpdateLink.package(pkg, baseURL: store.profile.baseURL) {
-                            updateLink("Update in pfSense", systemImage: "arrow.up.circle", url: url)
+                        if let operation = packageOperation(pkg) {
+                            updateButton("Update package", systemImage: "arrow.up.circle") {
+                                request(operation)
+                            }
                                 .padding(.top, 4)
                         }
                     }
@@ -160,8 +182,34 @@ struct UpdatesView: View {
         }
     }
 
-    private func updateLink(_ title: String, systemImage: String, url: URL) -> some View {
-        Link(destination: url) {
+    private var firmwareOperation: AdministrativeWrite? {
+        guard store.version?.updateAvailable == true,
+              let current = store.version?.current, !current.isEmpty,
+              let target = store.version?.latest, !target.isEmpty else { return nil }
+        return .startFirmwareUpdate(current: current, target: target)
+    }
+
+    private func packageOperation(_ package: PackageInfo) -> AdministrativeWrite? {
+        guard package.updateAvailable,
+              let installed = package.installedVersion, !installed.isEmpty,
+              let target = package.latestVersion, !target.isEmpty else { return nil }
+        return .startPackageUpdate(
+            identifier: package.updateIdentifier,
+            displayName: package.shortName,
+            installed: installed,
+            target: target
+        )
+    }
+
+    private var confirmationTitle: String {
+        guard let pendingOperation else { return "Start update" }
+        if case .startFirmwareUpdate = pendingOperation { return "Update pfSense" }
+        return "Update package"
+    }
+
+    private func updateButton(_ title: String, systemImage: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             Label(title, systemImage: systemImage)
                 .scaledFont(12, weight: .semibold)
                 .frame(maxWidth: .infinity)
@@ -169,6 +217,29 @@ struct UpdatesView: View {
         .buttonStyle(.bordered)
         .buttonBorderShape(.roundedRectangle(radius: 8))
         .tint(theme.accentColor)
-        .accessibilityHint("Opens the firewall's update confirmation page")
+        .disabled(!store.canAdminister || isStartingUpdate || store.writeCoordinator.isExecuting)
+        .accessibilityHint("Reviews and starts this update directly on the firewall")
+    }
+
+    private func request(_ operation: AdministrativeWrite) {
+        pendingOperation = operation
+        showUpdateConfirmation = true
+    }
+
+    private func startPendingUpdate() async {
+        guard let operation = pendingOperation else { return }
+        isStartingUpdate = true
+        defer {
+            isStartingUpdate = false
+            pendingOperation = nil
+        }
+        do {
+            let outcome = try await store.writeCoordinator.execute(operation)
+            updateResult = outcome.detail
+                + " Leave the firewall powered on and refresh this screen after the updater finishes."
+        } catch {
+            writeError = WriteError.from(error, operation: .other)
+            showErrorAlert = true
+        }
     }
 }

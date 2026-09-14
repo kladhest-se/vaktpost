@@ -18,6 +18,11 @@ extension WriteCoordinator {
             return try await snapshotQuickBlock(interface: interface)
         case .restartService(let name, _):
             return try await snapshotRestartService(name: name)
+        case .startFirmwareUpdate(let current, let target):
+            return try await snapshotFirmwareUpdate(current: current, target: target)
+        case .startPackageUpdate(let identifier, _, let installed, let target):
+            return try await snapshotPackageUpdate(
+                identifier: identifier, installed: installed, target: target)
         case .flushStates:
             return try await snapshotFlushStates()
         case .deleteRule:
@@ -68,6 +73,40 @@ extension WriteCoordinator {
             throw WriteCoordinatorError.invalidOperation("the service is no longer present")
         }
         return Self.serviceSnapshot(service)
+    }
+
+    private func snapshotFirmwareUpdate(current: String, target: String) async throws -> String? {
+        try await requireNoUpdateInProgress()
+        let version = try await client.systemVersion()
+        guard version.updateAvailable == true,
+              version.current == current,
+              version.latest == target else {
+            throw WriteCoordinatorError.invalidOperation(
+                "the available pfSense update changed; check for updates again")
+        }
+        return "firmware=\(current);target=\(target);updater=idle"
+    }
+
+    private func snapshotPackageUpdate(identifier: String, installed: String,
+                                       target: String) async throws -> String? {
+        try await requireNoUpdateInProgress()
+        guard let packages = try await client.packageUpdates(),
+              let package = packages.first(where: { $0.updateIdentifier == identifier }),
+              package.updateAvailable,
+              package.installedVersion == installed,
+              package.latestVersion == target else {
+            throw WriteCoordinatorError.invalidOperation(
+                "the available package update changed; check the repository again")
+        }
+        return "package=\(identifier);installed=\(installed);target=\(target);updater=idle"
+    }
+
+    private func requireNoUpdateInProgress() async throws {
+        let status = try await client.updateProcessStatus()
+        guard status.bool("running") != true else {
+            throw WriteCoordinatorError.invalidOperation(
+                "another pfSense firmware or package update is already running")
+        }
     }
 
     private func snapshotFlushStates() async throws -> String? {
@@ -290,6 +329,10 @@ extension WriteCoordinator {
             return try await verifyReloadFirewall()
         case .restartService(let name, _):
             return try await verifyRestartService(name: name)
+        case .startFirmwareUpdate:
+            return verifyUpdateAccepted(receipt: receipt)
+        case .startPackageUpdate(let identifier, _, _, _):
+            return verifyUpdateAccepted(receipt: receipt, identifier: identifier)
         case .quickBlock(let interface, let address, let description):
             return try await verifyQuickBlock(interface: interface, address: address,
                                               description: description, receipt: receipt)
@@ -339,6 +382,30 @@ extension WriteCoordinator {
             state: service.running ? .verified : .mismatch,
             detail: service.running ? "Service reports running after restart." : "Service does not report running after restart.",
             snapshot: snapshot
+        )
+    }
+
+    private func verifyUpdateAccepted(receipt: Receipt,
+                                      identifier: String? = nil) -> Verification {
+        let phase = receipt.updatePhase ?? "accepted"
+        let target = identifier ?? "pfSense base system"
+        let detail: String
+        let state: AuditVerification
+        switch phase {
+        case "completed":
+            detail = "The pfSense updater completed successfully for \(target)."
+            state = .verified
+        case "running":
+            detail = "The pfSense updater is running for \(target)."
+            state = .verified
+        default:
+            detail = "pfSense accepted the updater process for \(target); refresh to verify completion."
+            state = .readBack
+        }
+        return Verification(
+            state: state,
+            detail: detail,
+            snapshot: "phase=\(phase);target=\(target)"
         )
     }
 

@@ -17,7 +17,10 @@ import Foundation
 ///   2. A snippet may write **only** if its name appears in `writeOperations`
 ///      below, and then only through `write_config`, a pfSense dirty marker,
 ///      or the explicitly requested `filter_configure_sync` apply operation.
-///      Everything else that can change a box — `mwexec`, `exec(`,
+///      The sole process-launch exception is `start_update`, which may invoke
+///      only pfSense's own fixed background updater after validating its closed
+///      firmware/package mode and package identifier. Everything else that can
+///      change a box — `mwexec`, `exec(`,
 ///      `shell_exec`, `system(`, `passthru`, `popen`, `proc_open`, `unlink`,
 ///      `file_put_contents`, `rename`, `mkdir`, `rmdir`, `chmod`, `chown`,
 ///      `fopen` in a write mode, `eval` — is forbidden everywhere, including
@@ -81,7 +84,8 @@ struct PHPSnippet: Sendable {
         "save_nat_separator",   // creates or edits one flat NAT separator
         "delete_nat_separator", // removes one flat NAT separator
         "save_alias",           // creates or edits one inline firewall alias
-        "delete_alias"          // removes one unused firewall alias
+        "delete_alias",         // removes one unused firewall alias
+        "start_update"          // starts pfSense's own background updater
     ]
 
     // Earlier operations were not on this list when it was first written,
@@ -270,6 +274,12 @@ struct PHPSnippet: Sendable {
         "auth_get_authserver",
         "session_status", "session_start", "session_destroy", "is_subsystem_dirty",
         "restart_service",
+        // The only process launcher in the boundary. `write-boundary.sh`
+        // permits these only inside `start_update`, whose command path and
+        // flags are fixed and whose sole value argument passes both
+        // `pkg_valid_name` and `escapeshellarg`.
+        "g_get", "pkg_valid_name", "pkg_version_compare", "escapeshellarg",
+        "isvalidpid", "unlink_if_exists", "mwexec_bg", "posix_kill", "usleep",
     ]
 
     // MARK: - System
@@ -493,6 +503,148 @@ struct PHPSnippet: Sendable {
     }
 
     $toreturn = ["available" => $available, "data" => $rows];
+    """)
+
+    /// Starts the native pfSense updater for the base system or one package.
+    ///
+    /// This is deliberately the only snippet allowed to launch a process. It
+    /// mirrors `pkg_mgr_install.php`: the executable is pfSense's own updater,
+    /// the option vocabulary is fixed here, a package must pass pfSense's
+    /// validator and be confirmed outdated by a fresh repository read, and
+    /// every shell argument is quoted independently. No caller-provided text
+    /// can become a command, path, flag, or firmware branch.
+    static func startUpdate(kind: String, packageIdentifier: String = "") -> PHPSnippet {
+        let encoded = payload(JSONDict(["kind": .string(kind), "package": .string(packageIdentifier)]))
+        return PHPSnippet("start_update", """
+        ini_set('display_errors', 0);
+        require_once '/etc/inc/pkg-utils.inc';
+        require_once '/etc/inc/auth.inc';
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_kind = trim(strval($vaktpost_input["kind"] ?? ""));
+        $vaktpost_package = trim(strval($vaktpost_input["package"] ?? ""));
+        $vaktpost_product = trim(strval(g_get("product_name")));
+        $vaktpost_pidfile = strval(g_get("varrun_path")) . "/" . $vaktpost_product
+          . "-upgrade-GUI.pid";
+        $vaktpost_sock = strval(g_get("tmp_path")) . "/" . $vaktpost_product . "-upgrade.sock";
+        $vaktpost_target = ""; $vaktpost_ready = false;
+
+        if (($vaktpost_kind !== "firmware" && $vaktpost_kind !== "package")
+            || preg_match('/^[A-Za-z0-9_-]+$/D', $vaktpost_product) !== 1) {
+          $toreturn = ["status" => "validation_failed", "error" => "Invalid update mode"];
+        } else if (isvalidpid($vaktpost_pidfile)) {
+          $toreturn = ["status" => "busy", "error" => "Another update is already running"];
+        } else {
+          if ($vaktpost_kind === "firmware") {
+            $vaktpost_version = get_system_pkg_version();
+            $vaktpost_ready = is_array($vaktpost_version)
+              && strval($vaktpost_version["pkg_version_compare"] ?? "") === "<";
+            $vaktpost_target = strval($vaktpost_version["version"] ?? "");
+          } else if ($vaktpost_package !== "" && pkg_valid_name($vaktpost_package)) {
+            $vaktpost_info = get_pkg_info([$vaktpost_package], false, true);
+            if (is_array($vaktpost_info)) {
+              foreach ($vaktpost_info as $vaktpost_item) {
+                if (!is_array($vaktpost_item)
+                    || strval($vaktpost_item["name"] ?? "") !== $vaktpost_package) { continue; }
+                $vaktpost_installed = strval($vaktpost_item["installed_version"] ?? "");
+                $vaktpost_target = strval($vaktpost_item["version"] ?? "");
+                $vaktpost_ready = $vaktpost_installed !== "" && $vaktpost_target !== ""
+                  && pkg_version_compare($vaktpost_installed, $vaktpost_target) === "<";
+              }
+            }
+          }
+
+          if (!$vaktpost_ready) {
+            $toreturn = ["status" => "no_update",
+              "error" => "The requested update is no longer available"];
+          } else {
+            $vaktpost_log = strval(g_get("cf_conf_path")) . ($vaktpost_kind === "firmware"
+              ? "/upgrade_log" : "/pkg_log_" . $vaktpost_package);
+            unlink_if_exists($vaktpost_log . ".txt");
+            unlink_if_exists($vaktpost_log . ".json");
+            unlink_if_exists($vaktpost_sock);
+
+            $vaktpost_audit_session_started = false;
+            if (session_status() !== PHP_SESSION_ACTIVE) {
+              $vaktpost_audit_session_started = session_start(["use_cookies" => 0,
+                "use_only_cookies" => 0, "use_strict_mode" => 0]);
+            }
+            $vaktpost_authenticated_user = trim(strval($_SERVER["PHP_AUTH_USER"] ?? ""));
+            if ($vaktpost_authenticated_user !== "") {
+              $_SESSION["Username"] = $vaktpost_authenticated_user;
+              $vaktpost_authcfg = auth_get_authserver(config_get_path("system/webgui/authmode"));
+              if (is_array($vaktpost_authcfg)) {
+                $vaktpost_auth_type = trim(strval($vaktpost_authcfg["type"] ?? ""));
+                $vaktpost_auth_name = trim(strval($vaktpost_authcfg["name"] ?? ""));
+                if ($vaktpost_auth_type === "" || $vaktpost_auth_type === "Local Auth") {
+                  $_SESSION["authsource"] = "Local Database";
+                } else {
+                  $_SESSION["authsource"] = strtoupper($vaktpost_auth_type)
+                    . ($vaktpost_auth_name === "" ? "" : "/" . $vaktpost_auth_name);
+                }
+              }
+            }
+            write_config($vaktpost_kind === "firmware" ? "Vaktpost: restore point before pfSense update"
+              : "Vaktpost: restore point before package update " . $vaktpost_package);
+            if ($vaktpost_audit_session_started) {
+              if (session_status() !== PHP_SESSION_ACTIVE) {
+                session_start(["use_cookies" => 0, "use_only_cookies" => 0, "use_strict_mode" => 0]);
+              }
+              if (session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION = [];
+                session_destroy();
+              }
+            }
+
+            $vaktpost_upgrade = "/usr/local/sbin/" . $vaktpost_product . "-upgrade";
+            $vaktpost_command = escapeshellarg($vaktpost_upgrade) . " -y -l "
+              . escapeshellarg($vaktpost_log . ".txt")
+              . " -p " . escapeshellarg($vaktpost_sock);
+            if ($vaktpost_kind === "package") {
+              $vaktpost_command = $vaktpost_command
+                . " -i " . escapeshellarg($vaktpost_package);
+            }
+            $vaktpost_pid = intval(mwexec_bg($vaktpost_command));
+            $vaktpost_running = false; $vaktpost_exit = null;
+            for ($vaktpost_attempt = 0; $vaktpost_attempt < 10; $vaktpost_attempt++) {
+              $vaktpost_running = $vaktpost_pid > 0 && posix_kill($vaktpost_pid, 0);
+              $vaktpost_log_output = file_exists($vaktpost_log . ".txt") ?
+                strval(file_get_contents($vaktpost_log . ".txt")) : "";
+              $vaktpost_rc_match = [];
+              if (preg_match('/__RC=([0-9]+)/', $vaktpost_log_output, $vaktpost_rc_match) === 1) {
+                $vaktpost_exit = intval($vaktpost_rc_match[1]);
+                break;
+              }
+              if ($vaktpost_running) { break; }
+              usleep(100000);
+            }
+            if ($vaktpost_exit !== null && $vaktpost_exit !== 0) {
+              $toreturn = ["status" => "launch_failed", "started" => false,
+                "error" => "pfSense updater exited with status " . strval($vaktpost_exit)];
+            } else if ($vaktpost_pid > 0) {
+              $vaktpost_phase = $vaktpost_exit === 0 ? "completed"
+                : ($vaktpost_running ? "running" : "accepted");
+              $toreturn = ["status" => "ok", "started" => true,
+                "phase" => $vaktpost_phase, "mode" => $vaktpost_kind,
+                "package" => $vaktpost_package, "target" => $vaktpost_target];
+            } else {
+              $toreturn = ["status" => "launch_failed", "started" => false,
+                "error" => "pfSense did not accept the updater process"];
+            }
+          }
+        }
+        """)
+    }
+
+    /// Whether pfSense's native GUI updater process is currently active.
+    static let updateProcessStatus = PHPSnippet("update_process_status", """
+    require_once '/etc/inc/pkg-utils.inc';
+    $product = trim(strval(g_get("product_name")));
+    $pidfile = strval(g_get("varrun_path")) . "/" . $product . "-upgrade-GUI.pid";
+    $version = get_system_pkg_version(false);
+    $package_busy = is_array($version)
+      && strval($version["pkg_busy"] ?? "") === "1";
+    $toreturn = ["running" => isvalidpid($pidfile) || $package_busy];
     """)
 
     static let notices = PHPSnippet("notices", """
@@ -4927,7 +5079,8 @@ struct PHPSnippet: Sendable {
 
     /// Every snippet, for the publish check to audit and for tests to cover.
     static var all: [PHPSnippet] {
-        [telemetry, firmware, packages, packageUpdates, notices, interfaces, interfaceCounters, gateways, arpTable, dhcpLeases,
+        [telemetry, firmware, packages, packageUpdates, updateProcessStatus,
+         notices, interfaces, interfaceCounters, gateways, arpTable, dhcpLeases,
          staticMappings, hostOverrides, services, openvpnServers, openvpnClients, ipsecSAs,
          wireguard, pfTables, haproxy, acme, pfBlocker, dnsblStats, firewallRules, firewallAliases, portForwards,
          ruleSeparators, carp,

@@ -9,6 +9,23 @@ extension WriteCoordinator {
         guard !name.isEmpty else { throw WriteCoordinatorError.invalidOperation("service name is empty") }
     }
 
+    static func validateFirmwareUpdate(current: String, target: String) throws {
+        guard !current.isEmpty, !target.isEmpty, current != target else {
+            throw WriteCoordinatorError.invalidOperation(
+                "a newer pfSense version must be selected from a fresh update check")
+        }
+    }
+
+    static func validatePackageUpdate(identifier: String, installed: String, target: String) throws {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "+_.-"))
+        guard !identifier.isEmpty, identifier.count <= 128,
+              identifier.unicodeScalars.allSatisfy(allowed.contains),
+              !installed.isEmpty, !target.isEmpty, installed != target else {
+            throw WriteCoordinatorError.invalidOperation(
+                "a valid outdated package from a fresh repository check is required")
+        }
+    }
+
     static func validateQuickBlock(interface: String, address: String) throws {
         guard !interface.isEmpty else {
             throw WriteCoordinatorError.invalidOperation("an internal interface is required")

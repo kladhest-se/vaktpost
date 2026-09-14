@@ -31,6 +31,8 @@ enum AuditAction: String, Codable, Sendable {
     case restartService = "restart_service"
     case reloadFirewall = "reload_firewall"
     case flushStates = "flush_states"
+    case updateFirmware = "update_firmware"
+    case updatePackage = "update_package"
     case backupConfig = "backup_config"
     case restoreConfig = "restore_config"
     case quickBlock = "quick_block"
