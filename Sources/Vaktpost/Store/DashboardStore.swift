@@ -225,8 +225,22 @@ final class DashboardStore: Observable {
 
     var system: SystemStatus?
     var version: SystemVersion?
+    var isCheckingFirmware = false
+    var firmwareCheckResult: String?
     var states: StateTableSize?
     var interfaces: [InterfaceStat] = []
+    /// Interfaces pinned to the Overview.
+    ///
+    /// Fifteen interfaces is too many for a dashboard and one is too few — a
+    /// firewall with two WANs and a handful of VLANs has three or four worth
+    /// watching, and which three is a matter of what you run, not something
+    /// the app can work out. Stored by series key so a VLAN and its parent
+    /// lagg stay distinct.
+    var favouriteInterfaces: Set<String> = [] {
+        didSet {
+            UserDefaults.standard.set(Array(favouriteInterfaces), forKey: UDKey.favouriteInterfaces.rawValue)
+        }
+    }
     var services: [ServiceStatus] = []
     var leases: [DHCPLease] = []
     var arp: [ARPEntry] = []
@@ -237,6 +251,8 @@ final class DashboardStore: Observable {
     var authLog: [LogLine] = []
     var dhcpLog: [LogLine] = []
     var openvpnLog: [LogLine] = []
+    /// The four logs that are not the filter log are loaded only while needed.
+    private(set) var wantsSecondaryLogs = false
 
     var openvpnServers: [OpenVPNServerStatus] = []
     var openvpnClients: [OpenVPNServerStatus] = []
@@ -247,6 +263,14 @@ final class DashboardStore: Observable {
     var rules: [FirewallRule] = []
     var aliases: [FirewallAliasEntry] = []
     var portForwards: [PortForward] = []
+    /// Filter-rule separators, by interface. Position is inferred — see
+    /// `RuleSeparator.afterRuleIndex` — and shown as a best effort rather than
+    /// asserted as exact.
+    var filterSeparators: [RuleSeparator] = []
+    /// NAT separators. The storage path this reads was not confirmed against
+    /// pfSense source the way the filter path was; an empty array here may
+    /// mean there are none, or may mean the assumed path was wrong.
+    var natSeparators: [RuleSeparator] = []
     /// Mirrors pfSense's filter/natconf dirty markers. Saved changes are
     /// visible in the editor immediately but do not affect traffic until the
     /// user explicitly applies them.
@@ -256,9 +280,24 @@ final class DashboardStore: Observable {
     var configHistory: [ConfigRevision] = []
     var certificates: [CertificateInfo] = []
     var packages: [PackageInfo] = []
+    var isCheckingPackages = false
+    var packageCheckResult: String?
+    /// When the repository was last asked.
+    ///
+    /// Persisted so a relaunch does not repeat the check, and so the screen can
+    /// say how old the answer is — "no updates" from a week ago is not the same
+    /// claim as "no updates" from this morning.
+    private(set) var lastPackageCheck: Date? {
+        didSet {
+            defaults.set(lastPackageCheck?.timeIntervalSince1970 ?? 0,
+                         forKey: "packages.lastCheck")
+        }
+    }
     var notices: [SystemNotice] = []
     var filesystems: [Filesystem] = []
     var dyndns: [DyndnsEntry] = []
+    let rrdLoader = HistoryLoader<PHPSnippet.RRDWindow, RRDHistory>(lifetime: 300)
+    var widenedFromEmpty = false
 
     // HAProxy, loaded when its screen opens rather than on the timer: a
     // firewall running it has many backends, and none of it changes minute to
@@ -579,8 +618,11 @@ final class DashboardStore: Observable {
         wantsSecondaryLogs = false
         overviewLayout.sync(from: self)
     }
+}
 
-    // MARK: Refresh
+// MARK: - Refresh cycle
+
+extension DashboardStore {
 
     /// A manual refresh clears abandoned sections: the person asking is the
     /// signal that something may have changed.
@@ -600,145 +642,6 @@ final class DashboardStore: Observable {
         let refreshStartTime = Date()
 
         let cycle = RefreshCycle()
-
-        /// Set the moment a request fails at the transport level.
-        ///
-        /// Each request waits 30 seconds and retries once, and a refresh makes
-        /// five of them in sequence — so with the network gone, the app sat on
-        /// stale data for minutes before it concluded anything. There is
-        /// nothing to learn from the other four: if the firewall cannot be
-        /// reached, it cannot be reached.
-        ///
-        /// So the first transport failure ends the cycle and says so straight
-        /// away, rather than at the end of a queue of timeouts.
-        /// Runs one section and records whether it worked.
-        @discardableResult
-        @MainActor @Sendable
-        func run(_ section: Section, optional: Bool = false) async -> Bool {
-            guard isCurrent(binding), !cycle.networkDown else { return false }
-            // Retry a known-missing optional endpoint every 20th cycle only.
-            guard !optional || !missingEndpoints.contains(section) || refreshCount % 20 == 0 else { return false }
-            do {
-                try await fetchOne(section)
-                guard isCurrent(binding) else { return false }
-                missingEndpoints.remove(section)
-                cycle.succeeded += 1
-                cycle.succeededSections.insert(section)
-                return true
-            } catch let err as RPCError {
-                guard isCurrent(binding) else { return false }
-                recordError(err, for: section, optional: optional)
-            } catch {
-                guard isCurrent(binding) else { return false }
-                cycle.failedSections.insert(section)
-                cycle.freshErrors[section] = error.localizedDescription
-            }
-            return false
-        }
-
-        @MainActor
-        func recordError(_ err: RPCError, for section: Section, optional: Bool) {
-            if err != .cancelled { cycle.failedSections.insert(section) }
-            switch err {
-            case .cancelled:
-                break
-            case .transport, .offline:
-                cycle.fatal = err.localizedDescription
-                cycle.networkDown = true
-                connectionError = cycle.fatal
-            case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
-                cycle.fatal = err.localizedDescription
-            case .fault:
-                let count = (faultCounts[section] ?? 0) + 1
-                faultCounts[section] = count
-                if optional { missingEndpoints.insert(section) }
-                cycle.freshErrors[section] = count >= Self.faultLimit
-                    ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
-                    : err.localizedDescription
-            default:
-                cycle.freshErrors[section] = err.localizedDescription
-            }
-        }
-
-        @MainActor
-        func recordBatchError(_ err: RPCError, for sections: [Section]) {
-            if err != .cancelled { cycle.failedSections.formUnion(sections) }
-            switch err {
-            case .cancelled:
-                break
-            case .transport, .offline:
-                cycle.fatal = err.localizedDescription
-                cycle.networkDown = true
-                connectionError = cycle.fatal
-            case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
-                cycle.fatal = err.localizedDescription
-            case .fault:
-                for section in sections {
-                    let count = (faultCounts[section] ?? 0) + 1
-                    faultCounts[section] = count
-                    missingEndpoints.insert(section)
-                    cycle.freshErrors[section] = count >= Self.faultLimit
-                        ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
-                        : err.localizedDescription
-                }
-            default:
-                for section in sections { cycle.freshErrors[section] = err.localizedDescription }
-            }
-        }
-
-        guard isCurrent(binding) else { return }
-
-        /// Runs one grouped call and hands the sections to a decoder.
-        ///
-        /// Errors are recorded against every section in the group rather than
-        /// against the group. Somebody looking at an empty Gateways card wants
-        /// to know why that card is empty; "batch_core failed" is an
-        /// implementation detail leaking onto a screen, and would leave four
-        /// other cards blank with no explanation.
-        ///
-        /// The fault counting that stops retrying a section works unchanged,
-        /// because it keys on those same sections — and it matters more here,
-        /// since a fault in a grouped call writes one notice to the firewall
-        /// on behalf of five sections rather than one.
-        @discardableResult
-        @MainActor @Sendable
-        func runBatch(
-            _ group: BatchGroup,
-            sections: [Section],
-            decode: @MainActor (FirewallClient.Batch) -> Bool
-        ) async -> Bool {
-            // Skipped only when every section in it has been abandoned. One
-            // bad section should not stop the other four from loading.
-            guard isCurrent(binding), !cycle.networkDown else { return false }
-            let live = sections.filter { !missingEndpoints.contains($0) }
-            guard !live.isEmpty || refreshCount % 20 == 0 else { return false }
-
-            do {
-                let batch: FirewallClient.Batch
-                switch group {
-                case .core: batch = try await checked(binding, sections: sections) { try await client.batchCore() }
-                case .clients: batch = try await checked(binding, sections: sections) { try await client.batchClients() }
-                case .vpn: batch = try await checked(binding, sections: sections) { try await client.batchVPN() }
-                case .system: batch = try await checked(binding, sections: sections) { try await client.batchSystem() }
-                }
-                guard isCurrent(binding) else { return false }
-                let result = decode(batch)
-                for section in sections {
-                    missingEndpoints.remove(section)
-                    cycle.succeededSections.insert(section)
-                }
-                cycle.succeeded += 1
-                return result
-            } catch let err as RPCError {
-                guard isCurrent(binding) else { return false }
-                recordBatchError(err, for: sections)
-            } catch {
-                guard isCurrent(binding) else { return false }
-                cycle.failedSections.formUnion(sections)
-                for section in sections { cycle.freshErrors[section] = error.localizedDescription }
-            }
-            return false
-        }
         guard isCurrent(binding) else { return }
 
         // Core status, in one call.
@@ -750,7 +653,8 @@ final class DashboardStore: Observable {
         let interfacesLoaded = await runBatch(
             .core,
             sections: [.system, .version, .states, .interfaces, .gateways, .services,
-                       .filesystems]
+                       .filesystems],
+            binding: binding, client: client, cycle: cycle
         ) { batch in
             let telemetry = batch.object("telemetry")
             self.system = SystemStatus(telemetry)
@@ -766,27 +670,7 @@ final class DashboardStore: Observable {
             return !self.interfaces.isEmpty
         }
         guard isCurrent(binding) else { return }
-
-        if cycle.succeededSections.contains(.system) { deriveCPUUsage() }
-        seedFavouritesIfNeeded()
-        if cycle.succeededSections.contains(.states), let current = states?.current {
-            stateHistory.ingest(current: current)
-        }
-        for gw in gatewayManager.gateways where cycle.succeededSections.contains(.gateways) {
-            gatewayManager.ingest(
-                key: gw.name,
-                delayMS: gw.delayMS,
-                lossPercent: gw.lossPercent
-            )
-        }
-        // Only sample when this cycle actually fetched counters.
-        if interfacesLoaded { throughput.ingest(interfaces) }
-        if cycle.succeededSections.contains(.system), let sys = system {
-            if let cpu = sys.cpuUsage { systemMetrics.ingest(key: "cpu", value: cpu) }
-            if let mem = sys.memUsage { systemMetrics.ingest(key: "mem", value: mem) }
-            if let disk = sys.diskUsage { systemMetrics.ingest(key: "disk", value: disk) }
-            if let swap = sys.swapUsage { systemMetrics.ingest(key: "swap", value: swap) }
-        }
+        ingestCoreBatchMetrics(cycle: cycle, interfacesLoaded: interfacesLoaded)
         guard isCurrent(binding) else { return }
 
         // Fetch clients, logs, VPN, and system batches in parallel.
@@ -804,7 +688,8 @@ final class DashboardStore: Observable {
 
         async let clientsLoaded = runBatch(
             .clients,
-            sections: [.leases, .arp, .statics, .hostOverrides, .aliases]
+            sections: [.leases, .arp, .statics, .hostOverrides, .aliases],
+            binding: binding, client: client, cycle: cycle
         ) { batch in
             self.leases = batch.rows("dhcp_leases").map(DHCPLease.init)
             self.arp = batch.rows("arp_table").map(ARPEntry.init)
@@ -814,7 +699,7 @@ final class DashboardStore: Observable {
             return true
         }
 
-        async let firewallLogLoaded = run(.firewallLog)
+        async let firewallLogLoaded = run(.firewallLog, binding: binding, cycle: cycle)
 
         // Filter rules and port forwards were entirely absent from this
         // cycle — no batch listed them, no individual `run()` call requested
@@ -837,11 +722,12 @@ final class DashboardStore: Observable {
         // itself for no benefit. `.firewall` alone refreshes rules, port
         // forwards, and separators together, exactly as it does everywhere
         // else this function is called from.
-        async let firewallObjectsLoaded = run(.firewall)
+        async let firewallObjectsLoaded = run(.firewall, binding: binding, cycle: cycle)
 
         async let vpnLoaded = runBatch(
             .vpn,
-            sections: [.openvpn, .openvpnClients, .ipsec, .wireguard]
+            sections: [.openvpn, .openvpnClients, .ipsec, .wireguard],
+            binding: binding, client: client, cycle: cycle
         ) { batch in
             self.openvpnServers = batch.rows("openvpn_servers").map(OpenVPNServerStatus.init)
             self.openvpnClients = batch.rows("openvpn_clients").map(OpenVPNServerStatus.init)
@@ -856,7 +742,8 @@ final class DashboardStore: Observable {
 
         async let systemLoaded = runBatch(
             .system,
-            sections: [.carp, .certificates, .packages, .notices, .dyndns]
+            sections: [.carp, .certificates, .packages, .notices, .dyndns],
+            binding: binding, client: client, cycle: cycle
         ) { batch in
             self.carp = CARPStatus(batch.object("carp"))
             self.certificates = batch.rows("certificates").map { dict in
@@ -885,6 +772,53 @@ final class DashboardStore: Observable {
         guard isCurrent(binding) else { return }
 
         // Track VPN throughput from cumulative byte counters.
+        ingestVPNThroughput()
+        guard isCurrent(binding) else { return }
+
+        // Ask the repository at most every six hours, in the background.
+        //
+        // Not awaited: it takes seconds and the rest of the dashboard should
+        // not wait behind it. Without this there would be no package alert
+        // unless somebody remembered to press a button, which is not an alert.
+        if shouldCheckPackages {
+            Task {
+                guard self.isCurrent(binding) else { return }
+                await self.checkPackageUpdates()
+            }
+        }
+        guard isCurrent(binding) else { return }
+
+        finishRefreshCycle(cycle: cycle, refreshStartTime: refreshStartTime)
+    }
+
+    /// Feeds the core batch's results into every tracker that samples from
+    /// it, once per successful fetch of that batch.
+    private func ingestCoreBatchMetrics(cycle: RefreshCycle, interfacesLoaded: Bool) {
+        if cycle.succeededSections.contains(.system) { deriveCPUUsage() }
+        seedFavouritesIfNeeded()
+        if cycle.succeededSections.contains(.states), let current = states?.current {
+            stateHistory.ingest(current: current)
+        }
+        for gw in gatewayManager.gateways where cycle.succeededSections.contains(.gateways) {
+            gatewayManager.ingest(
+                key: gw.name,
+                delayMS: gw.delayMS,
+                lossPercent: gw.lossPercent
+            )
+        }
+        // Only sample when this cycle actually fetched counters.
+        if interfacesLoaded { throughput.ingest(interfaces) }
+        if cycle.succeededSections.contains(.system), let sys = system {
+            if let cpu = sys.cpuUsage { systemMetrics.ingest(key: "cpu", value: cpu) }
+            if let mem = sys.memUsage { systemMetrics.ingest(key: "mem", value: mem) }
+            if let disk = sys.diskUsage { systemMetrics.ingest(key: "disk", value: disk) }
+            if let swap = sys.swapUsage { systemMetrics.ingest(key: "swap", value: swap) }
+        }
+    }
+
+    /// Tracks VPN throughput from cumulative byte counters reported by each
+    /// connection.
+    private func ingestVPNThroughput() {
         for srv in openvpnServers {
             for conn in srv.connections {
                 if let rx = conn.bytesReceived, let tx = conn.bytesSent {
@@ -904,21 +838,12 @@ final class DashboardStore: Observable {
                 vpnThroughput.ingest(key: "wg:\(peer.publicKey)", inBytes: rx, outBytes: tx)
             }
         }
-        guard isCurrent(binding) else { return }
+    }
 
-        // Ask the repository at most every six hours, in the background.
-        //
-        // Not awaited: it takes seconds and the rest of the dashboard should
-        // not wait behind it. Without this there would be no package alert
-        // unless somebody remembered to press a button, which is not an alert.
-        if shouldCheckPackages {
-            Task {
-                guard self.isCurrent(binding) else { return }
-                await self.checkPackageUpdates()
-            }
-        }
-        guard isCurrent(binding) else { return }
-
+    /// Everything that happens once a refresh cycle's fetches are all done:
+    /// publishing errors, deciding the connection banner, and feeding every
+    /// downstream tracker and analyzer that runs once per refresh.
+    private func finishRefreshCycle(cycle: RefreshCycle, refreshStartTime: Date) {
         for section in cycle.succeededSections { errors[section] = nil }
         for (section, message) in cycle.freshErrors { errors[section] = message }
 
@@ -943,7 +868,7 @@ final class DashboardStore: Observable {
         overviewLayout.sync(from: self)
         interfaceErrors.record(interfaces)
         scheduleExpiryNotifications()
-        
+
         // Detect traffic anomalies
         let currentCounts = TrafficAnomalyDetector.TrafficCounts(
             blocked: overviewLayout.blockedRecently,
@@ -957,7 +882,7 @@ final class DashboardStore: Observable {
             passed: prevFirewallCounts.passed,
             timestamp: Date()
         ))
-        
+
         // Update client history
         clientHistory.update(
             leases: leases,
@@ -965,14 +890,14 @@ final class DashboardStore: Observable {
             statics: staticMappings,
             hostOverrides: hostOverrides
         )
-        
+
         // Take config snapshot
         diffViewer.snapshot(
             rules: rules,
             aliases: aliases,
             portForwards: portForwards
         )
-        
+
         performanceMetrics.recordRefresh(
             duration: Date().timeIntervalSince(refreshStartTime),
             sectionsCompleted: cycle.succeededSections.count,
@@ -983,6 +908,156 @@ final class DashboardStore: Observable {
         )
     }
 
+    /// Runs one section and records whether it worked.
+    ///
+    /// `binding` and `cycle` are threaded through explicitly rather than
+    /// captured, since this was extracted from inside `refresh()` where they
+    /// were local — `cycle` is the same `RefreshCycle` instance for the whole
+    /// call, so mutations here are visible to `refresh()` once it resumes.
+    @discardableResult
+    private func run(_ section: Section, optional: Bool = false, binding: UUID, cycle: RefreshCycle) async -> Bool {
+        guard isCurrent(binding), !cycle.networkDown else { return false }
+        // Retry a known-missing optional endpoint every 20th cycle only.
+        guard !optional || !missingEndpoints.contains(section) || refreshCount % 20 == 0 else { return false }
+        do {
+            try await fetchOne(section)
+            guard isCurrent(binding) else { return false }
+            missingEndpoints.remove(section)
+            cycle.succeeded += 1
+            cycle.succeededSections.insert(section)
+            return true
+        } catch let err as RPCError {
+            guard isCurrent(binding) else { return false }
+            recordError(err, for: section, optional: optional, cycle: cycle)
+        } catch {
+            guard isCurrent(binding) else { return false }
+            cycle.failedSections.insert(section)
+            cycle.freshErrors[section] = error.localizedDescription
+        }
+        return false
+    }
+
+    /// Set the moment a request fails at the transport level.
+    ///
+    /// Each request waits 30 seconds and retries once, and a refresh makes
+    /// five of them in sequence — so with the network gone, the app sat on
+    /// stale data for minutes before it concluded anything. There is
+    /// nothing to learn from the other four: if the firewall cannot be
+    /// reached, it cannot be reached.
+    ///
+    /// So the first transport failure ends the cycle and says so straight
+    /// away, rather than at the end of a queue of timeouts.
+    private func recordError(_ err: RPCError, for section: Section, optional: Bool, cycle: RefreshCycle) {
+        if err != .cancelled { cycle.failedSections.insert(section) }
+        switch err {
+        case .cancelled:
+            break
+        case .transport, .offline:
+            cycle.fatal = err.localizedDescription
+            cycle.networkDown = true
+            connectionError = cycle.fatal
+        case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
+            cycle.fatal = err.localizedDescription
+        case .fault:
+            let count = (faultCounts[section] ?? 0) + 1
+            faultCounts[section] = count
+            if optional { missingEndpoints.insert(section) }
+            cycle.freshErrors[section] = count >= Self.faultLimit
+                ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
+                : err.localizedDescription
+        default:
+            cycle.freshErrors[section] = err.localizedDescription
+        }
+    }
+
+    private func recordBatchError(_ err: RPCError, for sections: [Section], cycle: RefreshCycle) {
+        if err != .cancelled { cycle.failedSections.formUnion(sections) }
+        switch err {
+        case .cancelled:
+            break
+        case .transport, .offline:
+            cycle.fatal = err.localizedDescription
+            cycle.networkDown = true
+            connectionError = cycle.fatal
+        case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
+            cycle.fatal = err.localizedDescription
+        case .fault:
+            for section in sections {
+                let count = (faultCounts[section] ?? 0) + 1
+                faultCounts[section] = count
+                missingEndpoints.insert(section)
+                cycle.freshErrors[section] = count >= Self.faultLimit
+                    ? "\(err.localizedDescription) — stopped retrying, since each attempt writes a notice to the firewall. Pull to refresh to try again."
+                    : err.localizedDescription
+            }
+        default:
+            for section in sections { cycle.freshErrors[section] = err.localizedDescription }
+        }
+    }
+
+    /// Runs one grouped call and hands the sections to a decoder.
+    ///
+    /// Errors are recorded against every section in the group rather than
+    /// against the group. Somebody looking at an empty Gateways card wants
+    /// to know why that card is empty; "batch_core failed" is an
+    /// implementation detail leaking onto a screen, and would leave four
+    /// other cards blank with no explanation.
+    ///
+    /// The fault counting that stops retrying a section works unchanged,
+    /// because it keys on those same sections — and it matters more here,
+    /// since a fault in a grouped call writes one notice to the firewall
+    /// on behalf of five sections rather than one.
+    ///
+    /// `client` is threaded through explicitly rather than read from
+    /// `self.client`, matching `refresh()`'s own local `let client = client`
+    /// — the client captured once at the start of the cycle, so a server
+    /// switch mid-refresh cannot mix requests between two firewalls.
+    @discardableResult
+    private func runBatch(
+        _ group: BatchGroup,
+        sections: [Section],
+        binding: UUID,
+        client: FirewallClient,
+        cycle: RefreshCycle,
+        decode: @MainActor (FirewallClient.Batch) -> Bool
+    ) async -> Bool {
+        // Skipped only when every section in it has been abandoned. One
+        // bad section should not stop the other four from loading.
+        guard isCurrent(binding), !cycle.networkDown else { return false }
+        let live = sections.filter { !missingEndpoints.contains($0) }
+        guard !live.isEmpty || refreshCount % 20 == 0 else { return false }
+
+        do {
+            let batch: FirewallClient.Batch
+            switch group {
+            case .core: batch = try await checked(binding, sections: sections) { try await client.batchCore() }
+            case .clients: batch = try await checked(binding, sections: sections) { try await client.batchClients() }
+            case .vpn: batch = try await checked(binding, sections: sections) { try await client.batchVPN() }
+            case .system: batch = try await checked(binding, sections: sections) { try await client.batchSystem() }
+            }
+            guard isCurrent(binding) else { return false }
+            let result = decode(batch)
+            for section in sections {
+                missingEndpoints.remove(section)
+                cycle.succeededSections.insert(section)
+            }
+            cycle.succeeded += 1
+            return result
+        } catch let err as RPCError {
+            guard isCurrent(binding) else { return false }
+            recordBatchError(err, for: sections, cycle: cycle)
+        } catch {
+            guard isCurrent(binding) else { return false }
+            cycle.failedSections.formUnion(sections)
+            for section in sections { cycle.freshErrors[section] = error.localizedDescription }
+        }
+        return false
+    }
+}
+
+// MARK: - Section loading
+
+extension DashboardStore {
     /// Keep the pending expiry notifications in step with what was just read.
     ///
     /// On every refresh rather than only when the certificate list changes:
@@ -1075,6 +1150,27 @@ final class DashboardStore: Observable {
 
     private func fetchSection(_ binding: UUID, _ section: Section, client: FirewallClient) async throws {
         switch section {
+        case .system, .version, .states, .interfaces, .gateways, .services, .filesystems:
+            try await fetchCoreSection(binding, section, client: client)
+        case .leases, .arp, .statics, .hostOverrides, .aliases:
+            try await fetchClientSection(binding, section, client: client)
+        case .firewallLog, .systemLog, .authLog, .dhcpLog, .openvpnLog:
+            try await fetchLogSection(binding, section, client: client)
+        case .openvpn, .openvpnClients, .ipsec, .wireguard:
+            try await fetchVPNSection(binding, section, client: client)
+        case .firewall, .portForwards:
+            try await fetchFirewallObjectsSection(binding, section)
+        case .carp, .certificates, .packages, .notices, .dyndns:
+            try await fetchSystemSection(binding, section, client: client)
+        // Loaded when their own screen opens, not by section fetch. Retrying
+        // one of these from Diagnostics goes through its loader instead.
+        case .haproxy, .acme, .pfblocker, .dnsbl, .rrd, .configHistory, .tables, .packageUpdates:
+            break
+        }
+    }
+
+    private func fetchCoreSection(_ binding: UUID, _ section: Section, client: FirewallClient) async throws {
+        switch section {
         case .system:
             try await assign(binding, [section], fetcher: { try await client.systemStatus() }) { self.system = $0 }
         case .version:
@@ -1087,6 +1183,15 @@ final class DashboardStore: Observable {
             try await assign(binding, [section], fetcher: { try await client.gateways() }) { self.gatewayManager.gateways = $0 }
         case .services:
             try await assign(binding, [section], fetcher: { try await client.services() }) { self.services = $0 }
+        case .filesystems:
+            try await assign(binding, [section], fetcher: { try await client.filesystems() }) { self.filesystems = $0 }
+        default:
+            break
+        }
+    }
+
+    private func fetchClientSection(_ binding: UUID, _ section: Section, client: FirewallClient) async throws {
+        switch section {
         case .leases:
             try await assign(binding, [section], fetcher: { try await client.leases() }) { self.leases = $0 }
         case .arp:
@@ -1095,6 +1200,15 @@ final class DashboardStore: Observable {
             try await assign(binding, [section], fetcher: { try await client.staticMappings() }) { self.staticMappings = $0 }
         case .hostOverrides:
             try await assign(binding, [section], fetcher: { try await client.hostOverrides() }) { self.hostOverrides = $0 }
+        case .aliases:
+            try await assign(binding, [section], fetcher: { try await client.firewallAliases() }) { self.aliases = $0 }
+        default:
+            break
+        }
+    }
+
+    private func fetchLogSection(_ binding: UUID, _ section: Section, client: FirewallClient) async throws {
+        switch section {
         case .firewallLog:
             try await assign(binding, [section], fetcher: { try await client.firewallLog(limit: self.profile.logLimit) }) { self.firewallLog = $0 }
             capLogs()
@@ -1110,6 +1224,13 @@ final class DashboardStore: Observable {
         case .openvpnLog:
             try await assign(binding, [section], fetcher: { try await client.openvpnLog(limit: self.profile.logLimit) }) { self.openvpnLog = $0 }
             capLogs()
+        default:
+            break
+        }
+    }
+
+    private func fetchVPNSection(_ binding: UUID, _ section: Section, client: FirewallClient) async throws {
+        switch section {
         case .openvpn:
             try await assign(binding, [section], fetcher: { try await client.openvpnServers() }) { self.openvpnServers = $0 }
         case .openvpnClients:
@@ -1121,6 +1242,13 @@ final class DashboardStore: Observable {
             guard isCurrent(binding) else { throw RPCError.cancelled }
             wireguardTunnels = wg.tunnels
             wireguardPeers = wg.peers
+        default:
+            break
+        }
+    }
+
+    private func fetchFirewallObjectsSection(_ binding: UUID, _ section: Section) async throws {
+        switch section {
         case .firewall:
             // `force: true`, not the default. `loadFirewallObjects()` was
             // built to guard against repeating itself for a screen opening
@@ -1136,26 +1264,27 @@ final class DashboardStore: Observable {
             // that no longer exists and reports it as a mystery.
             await loadFirewallObjects(force: true)
             guard isCurrent(binding) else { throw RPCError.cancelled }
-        case .aliases:
-            try await assign(binding, [section], fetcher: { try await client.firewallAliases() }) { self.aliases = $0 }
         case .portForwards:
             await loadFirewallObjects(force: true)
             guard isCurrent(binding) else { throw RPCError.cancelled }
+        default:
+            break
+        }
+    }
+
+    private func fetchSystemSection(_ binding: UUID, _ section: Section, client: FirewallClient) async throws {
+        switch section {
         case .carp:
             try await assign(binding, [section], fetcher: { try await client.carp() }) { self.carp = $0 }
         case .certificates:
             try await assign(binding, [section], fetcher: { try await client.certificates() }) { self.certificates = $0 }
         case .packages:
             try await assign(binding, [section], fetcher: { try await client.packages() }) { self.packages = $0 }
-        case .filesystems:
-            try await assign(binding, [section], fetcher: { try await client.filesystems() }) { self.filesystems = $0 }
         case .notices:
             try await assign(binding, [section], fetcher: { try await client.notices() }) { self.notices = $0 }
         case .dyndns:
             try await assign(binding, [section], fetcher: { try await client.dyndns() }) { self.dyndns = $0 }
-        // Loaded when their own screen opens, not by section fetch. Retrying
-        // one of these from Diagnostics goes through its loader instead.
-        case .haproxy, .acme, .pfblocker, .dnsbl, .rrd, .configHistory, .tables, .packageUpdates:
+        default:
             break
         }
     }
@@ -1198,18 +1327,15 @@ final class DashboardStore: Observable {
         if dhcpLog.count > Self.maxLogLines { dhcpLog = Array(dhcpLog.prefix(Self.maxLogLines)) }
         if openvpnLog.count > Self.maxLogLines { openvpnLog = Array(openvpnLog.prefix(Self.maxLogLines)) }
     }
+}
 
-    /// Fetches firewall rules, NAT port forwards and aliases on first use.
-    ///
-    /// These payloads are large and relatively static. Most users never look
-    /// at them, so pulling them every refresh cycle wastes bandwidth and keeps
-    /// them in memory for the entire session.
+// MARK: - On-demand data
+
+extension DashboardStore {
     /// The four logs that are not the filter log.
     ///
     /// Loaded when the Logs tab appears and refreshed while it is visible,
     /// rather than on every cycle.
-    private(set) var wantsSecondaryLogs = false
-
     func beginSecondaryLogs() async {
         guard !wantsSecondaryLogs else { return }
         wantsSecondaryLogs = true
@@ -1502,33 +1628,12 @@ final class DashboardStore: Observable {
         await loadFirewallObjects(force: true)
     }
 
-    /// Filter-rule separators, by interface. Position is inferred — see
-    /// `RuleSeparator.afterRuleIndex` — and shown as a best effort rather than
-    /// asserted as exact.
-    var filterSeparators: [RuleSeparator] = []
-    /// NAT separators. The storage path this reads was not confirmed against
-    /// pfSense source the way the filter path was; an empty array here may
-    /// mean there are none, or may mean the assumed path was wrong.
-    var natSeparators: [RuleSeparator] = []
-
     var packagesNeedingUpdate: [PackageInfo] { packages.filter(\.updateAvailable) }
+}
 
-    // MARK: Package updates
+// MARK: - Update checks and history
 
-    var isCheckingPackages = false
-    var packageCheckResult: String?
-
-    /// When the repository was last asked.
-    ///
-    /// Persisted so a relaunch does not repeat the check, and so the screen can
-    /// say how old the answer is — "no updates" from a week ago is not the same
-    /// claim as "no updates" from this morning.
-    private(set) var lastPackageCheck: Date? {
-        didSet {
-            defaults.set(lastPackageCheck?.timeIntervalSince1970 ?? 0,
-                         forKey: "packages.lastCheck")
-        }
-    }
+extension DashboardStore {
 
     /// Six hours.
     ///
@@ -1600,11 +1705,9 @@ final class DashboardStore: Observable {
 
     // MARK: RRD history
 
-    let rrdLoader = HistoryLoader<PHPSnippet.RRDWindow, RRDHistory>(lifetime: 300)
     var rrdHistory: RRDHistory? { rrdLoader.value }
     var isLoadingRRD: Bool { rrdLoader.isLoading }
     var rrdWindow: PHPSnippet.RRDWindow { rrdLoader.key ?? .week }
-    var widenedFromEmpty = false
 
     /// Cache entries expire after five minutes. Changing range cancels the
     /// old request and clears its chart before the new range is displayed.
@@ -1655,9 +1758,6 @@ final class DashboardStore: Observable {
 
     // MARK: Firmware
 
-    var isCheckingFirmware = false
-    var firmwareCheckResult: String?
-
     /// Re-reads the firmware version comparison.
     ///
     /// Cheap — `get_system_pkg_version()` does not hit the network the way the
@@ -1684,21 +1784,12 @@ final class DashboardStore: Observable {
             errors[.version] = error.localizedDescription
         }
     }
+}
 
+// MARK: - Presentation helpers and automatic refresh
+
+extension DashboardStore {
     // MARK: Favourite interfaces
-
-    /// Interfaces pinned to the Overview.
-    ///
-    /// Fifteen interfaces is too many for a dashboard and one is too few — a
-    /// firewall with two WANs and a handful of VLANs has three or four worth
-    /// watching, and which three is a matter of what you run, not something
-    /// the app can work out. Stored by series key so a VLAN and its parent
-    /// lagg stay distinct.
-    var favouriteInterfaces: Set<String> = [] {
-        didSet {
-            UserDefaults.standard.set(Array(favouriteInterfaces), forKey: UDKey.favouriteInterfaces.rawValue)
-        }
-    }
 
     func toggleFavourite(_ iface: InterfaceStat) {
         if favouriteInterfaces.contains(iface.seriesKey) {
@@ -1739,187 +1830,6 @@ final class DashboardStore: Observable {
                 || name.hasPrefix("wan") || name.hasPrefix("lan")
         }
         favouriteInterfaces.formUnion(wanted.map(\.seriesKey))
-    }
-
-    /// What the firewall calls an interface.
-    ///
-    /// Clients, ARP entries and rules all identify their interface differently:
-    /// `lagg0.100` is the device, `opt7` is pfSense's internal handle, and
-    /// `VLAN_100` is what the administrator named it and what the
-    /// webConfigurator shows everywhere. Only the last is worth putting on
-    /// screen — the other two require a lookup table nobody carries in their
-    /// head.
-    ///
-    /// Falls back to the raw value, so an interface the app has not seen is
-    /// still identified rather than blank.
-    func interfaceLabel(for raw: String?) -> String? {
-        guard let raw, !raw.isEmpty else { return nil }
-
-        // A floating rule names every interface it applies to, comma
-        // separated: `opt5,opt6,opt7,lan,opt10…`. Passed through whole it
-        // matched nothing and printed the raw list, which is both unreadable
-        // and the one place the names matter most.
-        if raw.contains(",") {
-            let parts = raw.split(separator: ",").map {
-                interfaceLabel(for: String($0).trimmingCharacters(in: .whitespaces)) ?? String($0)
-            }
-            // Thirteen interfaces is the whole firewall; saying so is shorter
-            // and truer than listing them.
-            if parts.count >= interfaces.count, interfaces.count > 1 {
-                return "all interfaces"
-            }
-            if parts.count > 3 {
-                return "\(parts.prefix(2).joined(separator: ", ")) +\(parts.count - 2)"
-            }
-            return parts.joined(separator: ", ")
-        }
-
-        let lowered = raw.lowercased()
-        for iface in interfaces {
-            if iface.device.lowercased() == lowered { return iface.name }
-            if iface.internalName?.lowercased() == lowered { return iface.name }
-            if iface.name.lowercased() == lowered { return iface.name }
-        }
-        return raw
-    }
-
-    /// The client list's entry for an address, if it has one.
-    ///
-    /// A capture reports addresses; the client list is keyed by device. Most of
-    /// the time the address the capture saw is the one the client list shows
-    /// and a direct match is the answer.
-    ///
-    /// When it is not — a device holding several addresses, or one whose
-    /// client-list entry came from a lease while the capture caught it on a
-    /// second address — the ARP and DHCP tables know which MAC is behind the
-    /// address, and the MAC is what identifies a device. Matching that way
-    /// rather than giving up means a second address does not become a row that
-    /// mysteriously will not open.
-    ///
-    /// Nil for anything the firewall does not recognise as a client, which on
-    /// a WAN is most of what a capture returns.
-    func client(matching address: String) -> NetworkClient? {
-        guard let key = ClientAddress.key(address) else { return nil }
-
-        if let direct = overviewLayout.clients.first(where: { ClientAddress.key($0.ip) == key }) {
-            return direct
-        }
-
-        let mac = arp.first { ClientAddress.key($0.ip) == key }?.mac
-            ?? leases.first { ClientAddress.key($0.ip) == key }?.mac
-        guard let mac, !mac.isEmpty, mac != "—" else { return nil }
-        return overviewLayout.clients.first { $0.mac == mac }
-    }
-
-    /// Load the tables the investigation screen searches.
-    ///
-    /// Several of them load only when their own screen is first opened, which
-    /// made the search quietly incomplete: the answer to "which rules apply to
-    /// this device" was "none" until somebody had happened to visit the
-    /// Firewall screen first. A search screen that depends on where you have
-    /// been is worse than one that takes a moment to open.
-    ///
-    /// Each loader already guards against repeating itself, so this is cheap
-    /// on every open after the first. They run one after another rather than
-    /// together because pfSense serialises `exec_php` against its own web UI
-    /// anyway — starting three at once would not make them finish sooner, and
-    /// would take the webConfigurator down with them if they did.
-    ///
-    /// DNSBL is not forced. It is the only one that reads a megabyte of log,
-    /// and it declines by itself when pfBlockerNG is absent or its DNSBL
-    /// component is off — which on most firewalls is always.
-    func loadInvestigationData() async {
-        await loadFirewallObjects()
-        await loadDNSBLStats()
-    }
-
-    /// Interfaces reporting new errors since the last refresh.
-    var interfacesWithRisingErrors: [InterfaceStat] {
-        interfaceErrors.rising(among: interfaces)
-    }
-
-    /// How many contradictions the client tables currently hold.
-    ///
-    /// Only the ones that break traffic, so the badge on More means "something
-    /// is wrong now" rather than "there is a list to read". A duplicate
-    /// hostname is worth showing on the screen and is not worth a badge.
-    var conflictCount: Int {
-        ConflictDetector.find(arp: arp, leases: leases,
-                              staticMappings: staticMappings,
-                              hostOverrides: hostOverrides)
-            .filter { $0.kind.severity == .bad }
-            .count
-    }
-
-    /// Where an interface sits in the list the host-traffic sampler indexes.
-    ///
-    /// Matches the way `interfaceLabel` does — a device name, pfSense's
-    /// internal handle, or the description — because the hint arrives from
-    /// whichever table happened to know about the device. The ARP table spells
-    /// it `lagg0.100`; a DHCP lease spells the same interface `lan`.
-    ///
-    /// Nil when nothing matches, and the caller has to handle that rather than
-    /// fall back to a default. Sampling the wrong interface would attribute
-    /// one network's traffic to a device on another, which is a more
-    /// misleading answer than no answer.
-    func interfaceSlot(for raw: String?) -> Int? {
-        guard let raw, !raw.isEmpty, !raw.contains(",") else { return nil }
-        let lowered = raw.lowercased()
-        return interfaces.firstIndex { iface in
-            iface.device.lowercased() == lowered
-                || iface.internalName?.lowercased() == lowered
-                || iface.name.lowercased() == lowered
-        }
-    }
-
-    /// What an alias actually contains, with nested aliases flattened.
-    ///
-    /// A rule reading `alias_host_nas_hyperbackup → alias_port_hyper_backup`
-    /// is precise and tells you nothing about what it permits without opening
-    /// two other pages. Aliases can contain other aliases — that one holds
-    /// four — so this recurses, with a depth limit because pfSense does not
-    /// forbid a cycle and a stack overflow is a poor way to render a rule.
-    ///
-    /// Returns nil when the name is not an alias, so callers can tell "this is
-    /// a literal address" from "this is an alias that resolved to nothing".
-    func resolveAlias(_ name: String, depth: Int = 0) -> [String]? {
-        guard depth < 4 else { return [] }
-        guard let alias = aliases.first(where: { $0.name == name }) else { return nil }
-
-        var out: [String] = []
-        for member in alias.addresses {
-            if let nested = resolveAlias(member, depth: depth + 1) {
-                out.append(contentsOf: nested)
-            } else {
-                out.append(member)
-            }
-        }
-        // Order preserved, duplicates dropped: two nested aliases often share
-        // a host, and listing it twice reads as a mistake.
-        var seen = Set<String>()
-        return out.filter { seen.insert($0).inserted }
-    }
-
-    /// A rule field expanded for display, or nil if it is not an alias.
-    ///
-    /// Capped: an alias holding a subnet list runs to hundreds, and a rule row
-    /// is not the place to print them. The count is kept honest.
-    func expandedAlias(_ name: String, limit: Int = 6) -> String? {
-        guard let members = resolveAlias(name), !members.isEmpty else { return nil }
-        if members.count <= limit { return members.joined(separator: ", ") }
-        let shown = members.prefix(limit).joined(separator: ", ")
-        return "\(shown) +\(members.count - limit) more"
-    }
-
-    /// The best name the firewall has for an address, or nil.
-    ///
-    /// Shared by the Clients list and the ARP table so one device is not
-    /// called two different things on two screens.
-    func nameForAddress(_ ip: String) -> String? {
-        if let client = overviewLayout.clients.first(where: { $0.ip == ip }), client.name != ip {
-            return client.name
-        }
-        return nil
     }
 
     /// Turns cumulative CPU ticks into a percentage.
