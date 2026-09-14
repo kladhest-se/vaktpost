@@ -87,7 +87,9 @@ extension FirewallView {
         } else {
             countLine("\(filteredForwards.count) port forwards")
             if canReorderNatRules {
-                Text("Drag \(Image(systemName: "line.3.horizontal")) to reorder port forwards and separators in pfSense's flat NAT table.")
+                (Text("Drag ")
+                    + Text(Image(systemName: "line.3.horizontal"))
+                    + Text(" to reorder port forwards and separators in pfSense's flat NAT table."))
                     .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
                     .padding(.horizontal, 2)

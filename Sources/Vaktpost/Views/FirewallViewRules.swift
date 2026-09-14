@@ -180,8 +180,10 @@ extension FirewallView {
             }
         } else if canReorderRules {
             countLine("\(filteredRules.count) rules")
-            Text("Drag \(Image(systemName: "line.3.horizontal")) to reorder. "
-                + "Position here is pfSense's own; check the web GUI if a separator looks out of place.")
+            (Text("Drag ")
+                + Text(Image(systemName: "line.3.horizontal"))
+                + Text(" to reorder. Position here is pfSense's own; "
+                    + "check the web GUI if a separator looks out of place."))
                 .scaledFont(11)
                 .foregroundStyle(theme.labelFaint)
                 .padding(.horizontal, 2)

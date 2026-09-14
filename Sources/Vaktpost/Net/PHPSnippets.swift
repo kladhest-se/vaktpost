@@ -475,8 +475,13 @@ struct PHPSnippet: Sendable {
             if ($installed === "") { continue; }
 
             $rows[] = [
+              // `name` remains the short value used to merge this repository
+              // answer into the configuration list. The update URL separately
+              // needs the full pfSense package identifier.
               "name" => strval($item["shortname"]) !== ""
                 ? strval($item["shortname"]) : strval($item["name"]),
+              "shortname" => strval($item["shortname"]),
+              "update_name" => strval($item["name"]),
               "descr" => strval($item["desc"]),
               "installed_version" => $installed,
               "latest_version" => $latest,

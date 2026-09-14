@@ -15,6 +15,16 @@ struct UpdatesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                if hasAvailableUpdates {
+                    Notice(
+                        symbol: "arrow.up.circle",
+                        title: "Updates continue in pfSense",
+                        detail: "Each update opens the firewall's own review, confirmation, progress, and reboot flow. "
+                            + "You may be asked to sign in again.",
+                        health: .info
+                    )
+                }
+
                 GroupHeading(text: "Firmware")
                 firmwareSlab.sectionFreshness([.version])
 
@@ -32,6 +42,10 @@ struct UpdatesView: View {
             await store.refresh()
         }
         .navigationTitle("Updates")
+    }
+
+    private var hasAvailableUpdates: Bool {
+        store.version?.updateAvailable == true || store.packages.contains(where: \.updateAvailable)
     }
 
     /// Firmware, checked on demand like packages.
@@ -62,6 +76,9 @@ struct UpdatesView: View {
                     Text("\(latest) is available.")
                         .scaledFont(12)
                         .foregroundStyle(theme.warn)
+                    if let url = PfSenseUpdateLink.firmware(baseURL: store.profile.baseURL) {
+                        updateLink("Review and start update", systemImage: "arrow.up.circle.fill", url: url)
+                    }
                 } else {
                     Text(store.firmwareCheckResult ?? "Up to date as of the last refresh.")
                         .scaledFont(11)
@@ -133,9 +150,25 @@ struct UpdatesView: View {
                                 .foregroundStyle(theme.labelFaint)
                                 .lineLimit(2)
                         }
+                        if let url = PfSenseUpdateLink.package(pkg, baseURL: store.profile.baseURL) {
+                            updateLink("Update in pfSense", systemImage: "arrow.up.circle", url: url)
+                                .padding(.top, 4)
+                        }
                     }
                 }
             }
         }
+    }
+
+    private func updateLink(_ title: String, systemImage: String, url: URL) -> some View {
+        Link(destination: url) {
+            Label(title, systemImage: systemImage)
+                .scaledFont(12, weight: .semibold)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.roundedRectangle(radius: 8))
+        .tint(theme.accentColor)
+        .accessibilityHint("Opens the firewall's update confirmation page")
     }
 }

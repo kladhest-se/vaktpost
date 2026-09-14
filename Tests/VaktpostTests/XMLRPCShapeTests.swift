@@ -823,6 +823,7 @@ final class PackageUpdateTests: XCTestCase {
         XCTAssertTrue(script.contains("function_exists(\"get_pkg_info\")"))
         XCTAssertTrue(script.contains("file_exists(\"/etc/inc/pkg-utils.inc\")"))
         XCTAssertTrue(script.contains("\"available\" => $available"))
+        XCTAssertTrue(script.contains("\"update_name\" => strval($item[\"name\"])"))
     }
 }
 
