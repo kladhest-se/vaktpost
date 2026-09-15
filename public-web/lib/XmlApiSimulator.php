@@ -202,6 +202,12 @@ final class XmlApiSimulator
             return ['payload' => $this->vpnBatch($degraded)['sections']['wireguard']];
         }
         if (str_contains($script, 'filter_configure_sync')) {
+            // The real snippet's success path also clears pfSense's own
+            // "aliases" dirty flag once the reload completes — this is the
+            // one place the pending state this lab tracks actually clears,
+            // matching that: an Apply here is what stops every other read
+            // from reporting apply_pending until the next write sets it again.
+            unset($_SESSION['vaktpost_dirty']);
             return ['payload' => ['status' => 'ok']];
         }
         if (str_contains($script, 'restart_service')) {
