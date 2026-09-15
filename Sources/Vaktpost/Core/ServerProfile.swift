@@ -33,8 +33,18 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     // profiles default to monitor-only. Do not let a lint pass remove it.
     // swiftlint:disable:next implicit_optional_initialization
     var administrationEnabled: Bool? = nil
-    var overviewVisibleSections: [String] = ["status", "interfaces", "system", "gateways", "services", "firewall"]
+    var overviewVisibleSections: [String] = ["alerts", "status", "interfaces", "system", "gateways", "services", "firewall"]
     var collapsedSections: [String] = []
+    // Alerts were an always-on banner before they became a hideable section
+    // like every other one. Nil is the migration-safe form of "not yet
+    // migrated" — see administrationEnabled above for why an Optional here
+    // rather than a plain Bool: profiles saved by older builds have no such
+    // key, and this is what a missing key decodes to. loadVisibleSections()
+    // inserts "alerts" into a profile's stored order exactly once when this
+    // is anything other than true, so nobody upgrading loses a banner they
+    // never chose to hide — and never inserts it again afterward, so hiding
+    // it once it's visible actually stays hidden.
+    var hasMigratedAlertsSection: Bool? = nil
 
     var isConfigured: Bool { URL(string: baseURL)?.host != nil }
     var host: String { URL(string: baseURL)?.host ?? baseURL }
@@ -223,6 +233,29 @@ final class ServerRegistry: Observable {
         profile.overviewVisibleSections = names
         servers[idx] = profile
         persist()
+    }
+
+    /// Inserts "alerts" into a profile's stored section order exactly once,
+    /// for a profile saved before alerts became a hideable section rather
+    /// than an always-on banner.
+    ///
+    /// Runs unconditionally when called — the one-time guard is
+    /// `hasMigratedAlertsSection` on the caller's side, checked before this
+    /// is ever invoked, so calling it twice would silently re-add "alerts"
+    /// to a list somebody had deliberately removed it from. Returns the
+    /// updated profile so the caller's own copy reflects what was just
+    /// persisted, rather than the one it read before this ran.
+    @discardableResult
+    func migrateAlertsSection(for server: ServerProfile) -> ServerProfile {
+        guard let idx = servers.firstIndex(where: { $0.id == server.id }) else { return server }
+        var profile = servers[idx]
+        if !profile.overviewVisibleSections.contains(OverviewSection.alerts.rawValue) {
+            profile.overviewVisibleSections.insert(OverviewSection.alerts.rawValue, at: 0)
+        }
+        profile.hasMigratedAlertsSection = true
+        servers[idx] = profile
+        persist()
+        return profile
     }
 
     func setOverviewSectionVisibility(_ server: ServerProfile, _ section: OverviewSection, visible: Bool) {

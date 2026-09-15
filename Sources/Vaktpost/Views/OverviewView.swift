@@ -30,11 +30,6 @@ struct OverviewView: View {
                             connectionBannerContent(for: msg)
                         }
 
-                        if store.alertManager.criticalAlertCount > 0 {
-                            alertsTeaser
-                                .wobble(isEditing)
-                        }
-
                         let indexedSections = Array(visibleSections.enumerated())
                         ForEach(indexedSections, id: \.element.self) { index, section in
                             SectionView(
@@ -88,7 +83,7 @@ struct OverviewView: View {
     }
 
     private func loadVisibleSections() {
-        guard let active = registry.active else { return }
+        guard var active = registry.active else { return }
         // The stored array in its stored order.
         //
         // Filtering `allCases` returned declaration order and threw the saved
@@ -105,6 +100,17 @@ struct OverviewView: View {
         if let migrated = OverviewSection.migrate(storedNames: names) {
             names = migrated
             registry.setOverviewSectionNames(active, migrated)
+        }
+
+        // A one-time upgrade, not a standing rule: alerts used to be an
+        // always-on banner rather than a section somebody could hide, so a
+        // profile saved before this existed gets it inserted once here. The
+        // flag on the profile is what keeps this from running again — once
+        // it is set, hiding alerts afterward stays hidden rather than being
+        // silently re-added on the next load.
+        if active.hasMigratedAlertsSection != true {
+            active = registry.migrateAlertsSection(for: active)
+            names = active.overviewVisibleSections
         }
 
         var seen = Set<OverviewSection>()
@@ -173,6 +179,8 @@ struct OverviewView: View {
     /// statements, which turns the builder off anyway and warns about it.
     private func sectionContentView(_ section: OverviewSection) -> AnyView {
         switch section {
+        case .alerts:
+            return AnyView(alertsSlab)
         case .status:
             return AnyView(statusSlab.sectionFreshness([.system]))
         case .interfaces:

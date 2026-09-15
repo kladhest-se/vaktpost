@@ -11,8 +11,14 @@ enum RPCError: LocalizedError, Equatable {
     case forbidden
     case tls
     case transport(String)
-    /// No route to the firewall, as distinct from a request that timed out.
-    /// Not worth retrying: nothing about the second attempt is different.
+    /// No route to the firewall, or no response within the timeout.
+    ///
+    /// A firewall that is meant to be reachable answers in milliseconds; a
+    /// timeout on one is exactly as conclusive as an explicit "no route" —
+    /// nothing about a second attempt a moment later would be different,
+    /// since the network condition that caused the first one hasn't
+    /// changed. Retrying it only doubles how long a genuinely unreachable
+    /// firewall takes to be reported as such.
     case offline(String)
     case fault(Int, String)
     /// The response was not XML-RPC, with whatever it actually was.
@@ -105,13 +111,17 @@ actor XMLRPCClient {
         let config = URLSessionConfiguration.ephemeral
         // exec_php can take a while; the firmware-version snippet in
         // particular shells out to the package system.
-        // Fifteen seconds, not thirty.
+        // Eight seconds, not fifteen.
         //
         // This is a firewall on the local network: it answers in milliseconds
-        // or it is not reachable. Thirty seconds — doubled by the retry, and
-        // multiplied by the calls in a refresh — is how the app came to sit on
-        // stale data for minutes after the Wi-Fi went off.
-        config.timeoutIntervalForRequest = 15
+        // or it is not reachable, and a timeout no longer gets a second
+        // attempt (see RPCError.offline) — so this is the one wait standing
+        // between a dead connection and "not answering," not half of one.
+        // Still generous next to "milliseconds," and multiplied by however
+        // many calls a refresh makes, it is the difference between a phone on
+        // cellular finding out its firewall is unreachable in seconds rather
+        // than staring at a loading screen for the better part of a minute.
+        config.timeoutIntervalForRequest = 8
         config.waitsForConnectivity = false
         config.httpAdditionalHeaders = ["Content-Type": "text/xml; charset=utf-8"]
         self.session = URLSession(configuration: config, delegate: evaluator, delegateQueue: nil)
@@ -310,7 +320,8 @@ actor XMLRPCClient {
                  .networkConnectionLost,
                  .cannotConnectToHost,
                  .cannotFindHost,
-                 .dnsLookupFailed:
+                 .dnsLookupFailed,
+                 .timedOut:
                 // The system already knows there is no route. Retrying waits
                 // another fifteen seconds to be told the same thing, and a
                 // refresh makes five of these — which is how the app sat on
@@ -383,7 +394,8 @@ actor XMLRPCClient {
                  .networkConnectionLost,
                  .cannotConnectToHost,
                  .cannotFindHost,
-                 .dnsLookupFailed:
+                 .dnsLookupFailed,
+                 .timedOut:
                 throw RPCError.offline(error.localizedDescription)
             default:
                 throw RPCError.transport(error.localizedDescription)

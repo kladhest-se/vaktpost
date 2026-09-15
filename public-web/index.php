@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 $releaseVersion = '0.1.0';
 $releaseStatus = 'preparing for its first public release';
+$labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https://' : 'http://')
+    . ($_SERVER['HTTP_HOST'] ?? 'this site');
 ?>
 <!doctype html>
 <html lang="en" data-flavor="mocha" data-accent="sapphire">
@@ -30,7 +32,6 @@ $releaseStatus = 'preparing for its first public release';
     </a>
     <nav class="site-nav" aria-label="Primary">
       <a href="#top" aria-current="page">App</a>
-      <a href="lab.php">XMLAPI Lab</a>
     </nav>
     <div class="picker">
       <span class="picker__label" id="flavor-label">Flavour</span>
@@ -476,12 +477,15 @@ $releaseStatus = 'preparing for its first public release';
     </ol>
 
     <div class="lab-callout">
-      <div>
-        <span>NO FIREWALL REQUIRED</span>
-        <h3>Try Vaktpost against synthetic pfSense data</h3>
-        <p>The public XMLAPI Lab provides healthy, outdated, degraded, and failure scenarios without exposing a real firewall or accepting executable PHP.</p>
-      </div>
-      <a class="btn btn--solid" href="lab.php">Open XMLAPI Lab</a>
+      <span>NO FIREWALL REQUIRED</span>
+      <h3>Try Vaktpost against synthetic pfSense data</h3>
+      <p>A public endpoint returns healthy, outdated, degraded, and failure scenarios without exposing a real firewall or accepting executable PHP. Make a separate firewall profile in the app and use the website address — not the <code>/xmlrpc.php</code> path — as its base URL.</p>
+      <dl class="lab-details">
+        <div><dt>Base URL</dt><dd><code><?= htmlspecialchars($labOrigin, ENT_QUOTES, 'UTF-8') ?></code></dd></div>
+        <div><dt>Username</dt><dd><code>review</code> for a healthy firewall, <code>updates</code> for outdated firmware and packages, <code>degraded</code> for gateway/VPN/service problems, or <code>fault</code> to see how the app handles a firewall that stops responding partway through</dd></div>
+        <div><dt>Password</dt><dd><code>vaktpost-demo</code></dd></div>
+      </dl>
+      <p style="margin-top:1rem">Rules, aliases, and port forwards can be created, edited, and deleted to try the app's write flow — nothing to undo afterward. Each session's changes reset to the original fixtures after 20 minutes of inactivity.</p>
     </div>
 
   </div>

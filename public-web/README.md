@@ -29,6 +29,20 @@ recognizes only known Vaktpost request signatures and returns synthetic data.
 The Updates profile uses an expiring PHP session so the app can verify that a
 simulated firmware or package update completed.
 
+Rules, port forwards, aliases, and separators can be created, edited,
+deleted, and reordered — the point of a public endpoint is to exercise the
+app's write paths too, not just read a fixed fixture. Each PHP session gets
+its own mutable copy of the fixtures, seeded from the same data every
+read-only request already returns, so one visitor's changes never affect
+another's. That copy resets to the original fixtures after 20 minutes of
+inactivity, independent of the host's own session garbage collection —
+GC is tuned for freeing memory on a busy host and gives no guarantee about
+when, or whether, a low-traffic lab session actually gets cleaned up. So
+emptying out the ruleset to see how the app handles it is expected use, not
+something that needs undoing: it fixes itself on its own on the next visit
+after a short wait, or immediately for a returning visitor once the
+20 minutes have passed.
+
 The fixtures populate the app's principal screens: WAN/LAN/VPN interfaces,
 gateways and services; ARP and DHCP clients; filter rules, NAT and aliases;
 installed and outdated packages; VPN status; system notices; all five logs;

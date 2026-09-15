@@ -252,10 +252,28 @@ final class XmlApiSimulator
     // the next read reflects it, the way a real firewall would.
 
     /** @return array{rules: list<array<string, mixed>>, nat_rules: list<array<string, mixed>>, aliases: list<array<string, mixed>>, filter_separators: list<array<string, mixed>>, nat_separators: list<array<string, mixed>>} */
+    /**
+     * A session's state is discarded and reseeded after this many seconds,
+     * regardless of PHP's own session garbage collection. GC is
+     * probabilistic and tuned for freeing memory on a busy host — on a
+     * lab endpoint that might see one visitor an hour, it can leave a
+     * ruleset someone emptied out sitting there for whoever tries the app
+     * next. This bounds that independently of how any given host has GC
+     * configured.
+     */
+    private const STATE_MAX_AGE_SECONDS = 1200;
+
+    /** @return array{seeded_at: int, rules: list<array<string, mixed>>, nat_rules: list<array<string, mixed>>, aliases: list<array<string, mixed>>, filter_separators: list<array<string, mixed>>, nat_separators: list<array<string, mixed>>} */
     private function state(): array
     {
-        if (!isset($_SESSION['vaktpost_state']) || !is_array($_SESSION['vaktpost_state'])) {
+        $existing = $_SESSION['vaktpost_state'] ?? null;
+        $stale = is_array($existing)
+            && is_int($existing['seeded_at'] ?? null)
+            && (time() - $existing['seeded_at']) > self::STATE_MAX_AGE_SECONDS;
+
+        if (!is_array($existing) || $stale) {
             $_SESSION['vaktpost_state'] = [
+                'seeded_at' => time(),
                 'rules' => $this->firewallRules(),
                 'nat_rules' => $this->portForwards(),
                 'aliases' => $this->aliases(),
@@ -264,6 +282,9 @@ final class XmlApiSimulator
                 ],
                 'nat_separators' => [],
             ];
+            // A reseed clears whatever was pending too — there is nothing
+            // meaningful left to apply once the ruleset behind it is gone.
+            unset($_SESSION['vaktpost_dirty']);
         }
         return $_SESSION['vaktpost_state'];
     }

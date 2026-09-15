@@ -66,28 +66,35 @@ extension OverviewView {
         .task { await store.loadDNSBLStats() }
     }
 
-    var alertsTeaser: some View {
+    var alertsSlab: some View {
         NavigationLink { AlertsView() } label: {
-            Slab(rail: store.alertManager.visibleAlerts.first?.severity ?? .warn, title: "Alerts",
-                 trailing: "\(store.alertManager.criticalAlertCount)") {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(store.alertManager.visibleAlerts.prefix(3)) { alert in
-                        HStack(spacing: 8) {
-                            Image(systemName: alert.category.symbol)
-                                .scaledFont(12)
-                                .foregroundStyle(alert.severity.color(theme))
-                                .scaledFrame(width: 16)
-                            Text(alert.title)
-                                .scaledFont(13)
-                                .foregroundStyle(theme.label)
-                                .lineLimit(2)
-                            Spacer()
-                        }
+            Slab(rail: store.alertManager.visibleAlerts.first?.severity ?? .ok, title: "Alerts",
+                 trailing: store.alertManager.criticalAlertCount > 0 ? "\(store.alertManager.criticalAlertCount)" : nil) {
+                if store.alertManager.visibleAlerts.isEmpty {
+                    HStack {
+                        StatusPill(text: "all clear", health: .ok)
+                        Spacer()
                     }
-                    if store.alertManager.visibleAlerts.count > 3 {
-                        Text("+\(store.alertManager.visibleAlerts.count - 3) more")
-                            .scaledFont(11)
-                            .foregroundStyle(theme.labelFaint)
+                } else {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(store.alertManager.visibleAlerts.prefix(3)) { alert in
+                            HStack(spacing: 8) {
+                                Image(systemName: alert.category.symbol)
+                                    .scaledFont(12)
+                                    .foregroundStyle(alert.severity.color(theme))
+                                    .scaledFrame(width: 16)
+                                Text(alert.title)
+                                    .scaledFont(13)
+                                    .foregroundStyle(theme.label)
+                                    .lineLimit(2)
+                                Spacer()
+                            }
+                        }
+                        if store.alertManager.visibleAlerts.count > 3 {
+                            Text("+\(store.alertManager.visibleAlerts.count - 3) more")
+                                .scaledFont(11)
+                                .foregroundStyle(theme.labelFaint)
+                        }
                     }
                 }
             }

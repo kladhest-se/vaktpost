@@ -199,7 +199,6 @@ h1 {
 }
 
 .lab-callout {
-  display:flex; align-items:center; justify-content:space-between; gap:2rem;
   margin-top:2.4rem; padding:1.5rem;
   border:1px solid color-mix(in srgb,var(--accent) 38%,var(--surface0));
   border-radius:var(--r); background:var(--mantle);
@@ -207,8 +206,12 @@ h1 {
 .lab-callout span { color:var(--accent); font:700 .76rem/1 var(--mono); letter-spacing:.08em; }
 .lab-callout h3 { margin:.65rem 0 .35rem; }
 .lab-callout p { margin:0; color:var(--subtext0); font-size:.92rem; }
-.lab-callout .btn { flex:none; }
-@media(max-width:680px){.lab-callout{align-items:flex-start;flex-direction:column}.site-nav{order:2;width:100%}.picker{margin-left:0}}
+.lab-details { margin:1.2rem 0 0; display:flex; flex-direction:column; gap:.6rem; }
+.lab-details > div { display:flex; gap:.9rem; flex-wrap:wrap; }
+.lab-details dt { flex:none; width:6.5rem; color:var(--subtext0); font:700 .76rem/1.4 var(--mono); letter-spacing:.04em; text-transform:uppercase; }
+.lab-details dd { margin:0; flex:1 1 16rem; font-size:.88rem; color:var(--text); }
+.lab-details code { font-family:var(--mono); font-size:.85em; background:var(--surface0); padding:.1em .35em; border-radius:4px; }
+@media(max-width:680px){.site-nav{order:2;width:100%}.picker{margin-left:0}.lab-details dt{width:100%}}
 
 /* ── Device rendering ──────────────────────────────────────────────────── */
 

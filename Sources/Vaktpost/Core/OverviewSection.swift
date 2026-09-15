@@ -1,12 +1,13 @@
 import Foundation
 
 enum OverviewSection: String, CaseIterable, Identifiable {
-    case status, interfaces, system, gateways, services, firewall, vpnServers, vpnClients, clients, dnsbl
+    case alerts, status, interfaces, system, gateways, services, firewall, vpnServers, vpnClients, clients, dnsbl
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
+        case .alerts: return "Alerts"
         case .status: return "Status"
         case .interfaces: return "Interfaces"
         case .system: return "System"
@@ -71,6 +72,7 @@ enum OverviewSection: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .alerts: return "bell.badge"
         case .status: return "checkmark.shield"
         case .interfaces: return "network"
         case .system: return "cpu"
