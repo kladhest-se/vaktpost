@@ -29,6 +29,13 @@ recognizes only known Vaktpost request signatures and returns synthetic data.
 The Updates profile uses an expiring PHP session so the app can verify that a
 simulated firmware or package update completed.
 
+The fixtures populate the app's principal screens: WAN/LAN/VPN interfaces,
+gateways and services; ARP and DHCP clients; filter rules, NAT and aliases;
+installed and outdated packages; VPN status; system notices; all five logs;
+pf tables, pfBlockerNG/DNSBL, HAProxy, ACME and RRD traffic history. The
+browser console exposes representative probes so the response shapes can be
+checked before connecting the app.
+
 Put ordinary rate limiting in front of the public endpoint. The Basic Auth
 password gates only public synthetic fixtures and is not a substitute for rate
 limiting.

@@ -46,6 +46,35 @@ final class XmlApiSimulator
             return ['payload' => $this->systemBatch($updatesAvailable, $completedUpdates)];
         }
 
+        // Detail screens must be matched before the generic installed-package
+        // signature below. pfBlockerNG, HAProxy and ACME all read
+        // $config["installedpackages"], but each expects its own response
+        // shape rather than the ordinary package list.
+        if (str_contains($script, 'pfblockerngdnsblsettings')) {
+            return ['payload' => $this->pfBlocker()];
+        }
+        if (str_contains($script, '$byDomain') && str_contains($script, 'dnsbl.log')) {
+            return ['payload' => $this->dnsblStats()];
+        }
+        if (str_contains($script, 'ha_backends') && str_contains($script, 'ha_pools')) {
+            return ['payload' => $this->haproxy()];
+        }
+        if (str_contains($script, 'accountkeys') && str_contains($script, 'a_domainlist')) {
+            return ['payload' => $this->acme()];
+        }
+        if (str_contains($script, 'pfSense_get_pf_table') && str_contains($script, 'pfr_get_table_addrs')) {
+            return ['payload' => $this->pfTables()];
+        }
+        if (str_contains($script, '$available = function_exists("rrd_fetch")')
+            && str_contains($script, '*-traffic.rrd')) {
+            return ['payload' => $this->rrdTraffic()];
+        }
+
+        $log = $this->logRequest($script);
+        if ($log !== null) {
+            return ['payload' => $log];
+        }
+
         if (str_contains($script, '$vaktpost_kind') && str_contains($script, 'mwexec_bg')) {
             if (!$updatesAvailable) {
                 return ['payload' => ['status' => 'no_update', 'started' => false, 'error' => 'The requested update is no longer available']];
@@ -137,13 +166,17 @@ final class XmlApiSimulator
             return ['payload' => ['data' => $this->packages($updatesAvailable, (bool) ($completedUpdates['package'] ?? false))]];
         }
 
-        // Optional detail screens return harmless empty shapes only for reviewed,
-        // distinctive pfSense/Vaktpost signatures.
-        $emptyDataSignatures = ['pfctl_table', 'pfBlockerNG', 'DNSBL', 'haproxy', 'acme', 'clog', 'rrd', 'get_dhcp_leases', 'get_static_maps', 'get_host_overrides'];
-        foreach ($emptyDataSignatures as $signature) {
-            if (stripos($script, $signature) !== false) {
-                return ['payload' => ['data' => []]];
-            }
+        if (str_contains($script, 'system_get_arp_table')) {
+            return ['payload' => $this->clientsBatch()['sections']['arp_table']];
+        }
+        if (str_contains($script, 'system_get_dhcpleases')) {
+            return ['payload' => $this->clientsBatch()['sections']['dhcp_leases']];
+        }
+        if (str_contains($script, '$config["dhcpd"]') && str_contains($script, 'staticmap')) {
+            return ['payload' => $this->clientsBatch()['sections']['static_mappings']];
+        }
+        if (str_contains($script, 'config_get_path("unbound/hosts"')) {
+            return ['payload' => $this->clientsBatch()['sections']['host_overrides']];
         }
 
         return ['fault' => ['code' => -32602, 'message' => 'The lab refused an unknown snippet; submitted PHP is never executed']];
@@ -238,6 +271,155 @@ final class XmlApiSimulator
             ['name' => 'openvpn-client-export', 'shortname' => 'openvpn-client-export', 'update_name' => 'pfSense-pkg-openvpn-client-export', 'descr' => 'OpenVPN client configuration exporter', 'installed_version' => '1.9.13', 'latest_version' => '1.9.13', 'update_available' => false],
             ['name' => 'acme', 'shortname' => 'acme', 'update_name' => 'pfSense-pkg-acme', 'descr' => 'ACME certificate automation', 'installed_version' => '0.8.1', 'latest_version' => '0.8.1', 'update_available' => false],
         ];
+    }
+
+    /** @return array{data: list<string>, path: string, size: int} */
+    private function logRequest(string $script): ?array
+    {
+        if (preg_match('/\\$path\\s*=\\s*"\\/var\\/log\\/(filter|system|auth|dhcpd|openvpn)\\.log"/', $script, $matches) !== 1) {
+            return null;
+        }
+
+        $source = $matches[1];
+        $rows = $this->logs()[$source];
+        return [
+            'data' => $rows,
+            'path' => '/var/log/' . $source . '.log',
+            'size' => strlen(implode(PHP_EOL, $rows)),
+        ];
+    }
+
+    /** @return array<string, list<string>> */
+    private function logs(): array
+    {
+        return [
+            'filter' => [
+                'Sep 15 13:58:02 filterlog[4711]: 5,,,1700000001,vtnet1,match,pass,in,4,0x0,,64,0,0,DF,6,tcp,60,192.0.2.110,192.0.2.20,53318,443,0,S,',
+                'Sep 15 14:01:44 filterlog[4711]: 5,,,1700000002,vtnet0,match,block,in,4,0x0,,51,44210,0,none,6,tcp,60,203.0.113.66,198.51.100.24,51422,22,0,S,',
+                'Sep 15 14:03:09 filterlog[4711]: 5,,,1700000003,ovpns1,match,pass,in,4,0x0,,64,0,0,none,17,udp,74,192.0.2.210,192.0.2.53,59001,53,54',
+            ],
+            'system' => [
+                'Sep 15 13:45:00 vaktpost-lab php-fpm[2114]: /rc.start_packages: Restarting/Starting all packages.',
+                'Sep 15 14:00:01 vaktpost-lab check_reload_status[411]: Reloading filter',
+                'Sep 15 14:03:12 vaktpost-lab syslogd: synthetic lab snapshot complete',
+            ],
+            'auth' => [
+                'Sep 15 13:52:17 vaktpost-lab sshd[8201]: Accepted publickey for lab-admin from 192.0.2.111 port 52108 ssh2',
+                'Sep 15 14:02:53 vaktpost-lab php-fpm[8344]: Successful login for user review from 192.0.2.110',
+            ],
+            'dhcpd' => [
+                'Sep 15 13:50:06 vaktpost-lab dhcpd[991]: DHCPACK on 192.0.2.110 to 02:00:00:10:01:10 (test-iphone) via vtnet1',
+                'Sep 15 14:00:42 vaktpost-lab dhcpd[991]: DHCPACK on 192.0.2.111 to 02:00:00:10:01:11 (test-mac) via vtnet1',
+            ],
+            'openvpn' => [
+                'Sep 15 13:40:31 vaktpost-lab openvpn[2390]: peer info: IV_PLAT=iOS',
+                'Sep 15 13:40:32 vaktpost-lab openvpn[2390]: friend-test/203.0.113.42:51820 MULTI_sva: pool returned IPv4=192.0.2.210',
+            ],
+        ];
+    }
+
+    /** @return array{available: bool, data: list<array<string, mixed>>} */
+    private function pfTables(): array
+    {
+        return ['available' => true, 'data' => [
+            ['name' => 'sshguard', 'entries' => ['203.0.113.66', '203.0.113.81']],
+            ['name' => 'demo_web_servers', 'entries' => ['192.0.2.20', '192.0.2.21']],
+        ]];
+    }
+
+    /** @return array<string, mixed> */
+    private function pfBlocker(): array
+    {
+        return [
+            'installed' => true,
+            'enabled' => true,
+            'dnsbl' => true,
+            'dnsbl_mode' => 'dnsbl_python',
+            'mode' => 'on',
+            'accessor' => 'synthetic',
+            'paths' => ['pkg' => true, 'logs' => true, 'db' => true, 'deny' => true, 'dnsbl' => true],
+            'logs' => [
+                ['name' => 'pfblockerng.log', 'bytes' => 18342, 'updated' => 1789462990],
+                ['name' => 'dnsbl.log', 'bytes' => 9271, 'updated' => 1789462960],
+            ],
+            'feeds' => [
+                ['name' => 'pfB_PRI1_v4', 'descr' => 'Synthetic reputation feed', 'type' => 'urltable', 'entries' => 1248, 'source' => 'file'],
+                ['name' => 'pfB_DEMO_v4', 'descr' => 'Lab deny list', 'type' => 'host', 'entries' => 2, 'source' => 'config'],
+            ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function dnsblStats(): array
+    {
+        return [
+            'available' => true, 'bytes' => 9271, 'scanned' => 9271,
+            'truncated' => false, 'events' => 18, 'unparsed' => 0,
+            'first' => 'Sep 15 09:11:03', 'last' => 'Sep 15 14:02:18',
+            'domains' => [['name' => 'telemetry.example.invalid', 'count' => 8], ['name' => 'ads.example.invalid', 'count' => 6]],
+            'clients' => [['name' => '192.0.2.110', 'count' => 10], ['name' => '192.0.2.111', 'count' => 8]],
+            'groups' => [['name' => 'Demo_Blocklists', 'count' => 18]],
+            'feeds' => [['name' => 'Synthetic_List', 'count' => 18]],
+            'hours' => [['label' => 'Sep 15 13', 'count' => 7], ['label' => 'Sep 15 14', 'count' => 4]],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function haproxy(): array
+    {
+        return [
+            'installed' => true,
+            'frontends' => [[
+                'name' => 'public_https', 'descr' => 'Synthetic HTTPS frontend', 'status' => 'active',
+                'type' => 'http', 'binds' => ['198.51.100.24:443 ssl'], 'acl_count' => 1, 'backend' => 'demo_apps',
+            ]],
+            'backends' => [[
+                'name' => 'demo_apps', 'descr' => 'Synthetic application pool', 'balance' => 'roundrobin',
+                'check_type' => 'HTTP', 'check_uri' => '/health', 'check_interval' => '5000',
+                'servers' => [
+                    ['name' => 'web-01', 'address' => '192.0.2.20', 'port' => '443', 'enabled' => true, 'ssl' => true, 'weight' => '100'],
+                    ['name' => 'web-02', 'address' => '192.0.2.21', 'port' => '443', 'enabled' => true, 'ssl' => true, 'weight' => '100'],
+                ],
+            ]],
+            'stats_accessors' => [],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function acme(): array
+    {
+        return [
+            'installed' => true,
+            'certificates' => [[
+                'name' => 'lab-cert', 'descr' => 'Vaktpost Lab Certificate', 'account' => 'letsencrypt-production',
+                'keylength' => 'ec-256', 'renew_after' => '60', 'enabled' => true,
+                'domains' => ['lab.example.invalid', 'vpn.example.invalid'],
+            ]],
+            'accounts' => [[
+                'name' => 'letsencrypt-production', 'descr' => 'Synthetic ACME account',
+                'server' => 'https://acme-v02.api.letsencrypt.org/directory',
+            ]],
+        ];
+    }
+
+    /** @return array{available: bool, data: list<array<string, mixed>>} */
+    private function rrdTraffic(): array
+    {
+        $start = 1789461000;
+        $series = [];
+        foreach ([['wan', 'inpass', 192000.0], ['wan', 'outpass', 64000.0], ['lan', 'inpass', 88000.0], ['lan', 'outpass', 210000.0]] as $definition) {
+            [$file, $name, $base] = $definition;
+            $points = [];
+            for ($index = 0; $index < 12; $index++) {
+                $points[] = ['at' => $start + ($index * 300), 'value' => $base + (($index % 4) * 12500)];
+            }
+            $series[] = [
+                'file' => $file, 'series' => $name, 'last_update' => $start + 3300,
+                'age_seconds' => 60, 'resolution' => 300, 'values_seen' => 12,
+                'values_kept' => 12, 'points' => $points,
+            ];
+        }
+        return ['available' => true, 'data' => $series];
     }
 
     /** @return list<array<string, mixed>> */

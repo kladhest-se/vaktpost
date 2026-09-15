@@ -74,8 +74,12 @@ $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
         <div class="lab-probes" role="listbox" aria-label="Probe">
           <button type="button" data-probe="connection"><span>Connection</span><small>Credentials and version</small></button>
           <button type="button" class="is-selected" data-probe="dashboard"><span>Dashboard</span><small>Core batched snapshot</small></button>
-          <button type="button" data-probe="updates"><span>Updates</span><small>Repository comparison</small></button>
+          <button type="button" data-probe="interfaces"><span>Interfaces</span><small>WAN, LAN, and VPN</small></button>
+          <button type="button" data-probe="clients"><span>Clients</span><small>ARP, DHCP, and aliases</small></button>
+          <button type="button" data-probe="packages"><span>Packages</span><small>Installed example packages</small></button>
+          <button type="button" data-probe="updates"><span>Package updates</span><small>Repository comparison</small></button>
           <button type="button" data-probe="rules"><span>Firewall rules</span><small>Synthetic rule set</small></button>
+          <button type="button" data-probe="logs"><span>Firewall log</span><small>Pass and block examples</small></button>
         </div>
         <div class="lab-response">
           <div class="lab-response__head"><span>XML-RPC RESPONSE</span><output id="response-status">Not run</output></div>

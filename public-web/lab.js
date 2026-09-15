@@ -2,7 +2,16 @@
   'use strict';
 
   const password = document.body.dataset.demoPassword || 'vaktpost-demo';
-  const labels = { connection: 'Connection', dashboard: 'Dashboard', updates: 'Updates', rules: 'Firewall rules' };
+  const labels = {
+    connection: 'Connection',
+    dashboard: 'Dashboard',
+    interfaces: 'Interfaces',
+    clients: 'Clients',
+    packages: 'Packages',
+    updates: 'Package updates',
+    rules: 'Firewall rules',
+    logs: 'Firewall log',
+  };
   const profiles = {
     review: ['Healthy review', 'All core services are healthy.'],
     updates: ['Updates available', 'Firmware and one package are outdated.'],
@@ -12,8 +21,12 @@
   const scripts = {
     connection: '$toreturn = ["version" => trim(file_get_contents("/etc/version"))];',
     dashboard: '$vaktpost_batch = []; $vaktpost_batch["telemetry"] = []; $vaktpost_batch["firmware"] = []; $toreturn = ["sections" => $vaktpost_batch];',
+    interfaces: '$rows = []; foreach (get_configured_interface_with_descr() as $ifdescr => $ifname) { $rows[] = $ifdescr; } $toreturn = ["data" => $rows];',
+    clients: '$vaktpost_batch = []; $vaktpost_batch["arp_table"] = []; $vaktpost_batch["dhcp_leases"] = []; $toreturn = ["sections" => $vaktpost_batch];',
+    packages: 'global $config; $installed = $config["installedpackages"]; $toreturn = ["data" => $installed["package"]];',
     updates: '$rows = []; $info = get_pkg_info("all", false, true); $toreturn = ["available" => true, "data" => $rows];',
     rules: 'global $config; $filter = $config["filter"]; $toreturn = ["data" => $filter["rule"]];',
+    logs: '$path = "/var/log/filter.log"; $chunk = file_get_contents($path); $toreturn = ["data" => []];',
   };
   let scenario = 'review';
   let probe = 'dashboard';
