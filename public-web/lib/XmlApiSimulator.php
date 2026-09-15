@@ -790,9 +790,32 @@ final class XmlApiSimulator
     /** @return array<string, mixed> */
     private function telemetry(): array
     {
+        // Ticks are cumulative counters, the same shape as interface byte
+        // counters — driftingCounter() applies here for the same reason:
+        // a static pair of tick values, like the fixed baseline this
+        // replaced, produces a zero delta between any two polls. The app's
+        // own CPU-usage derivation treats a zero interval as indistinguishable
+        // from the same sample read twice and discards it rather than
+        // reporting 0% — so a static total_ticks/idle_ticks pair does not
+        // make the app show 0% usage, it makes the CPU meter never appear
+        // at all, which is what was happening here.
+        //
+        // idle's own wobble is capped well below what would let it exceed
+        // total in the same interval: total_ticks always advances at a
+        // fixed 400/sec (no wobble — a clock does not speed up and slow
+        // down), and idle wobbles between 256 and 384 of those 400,
+        // implying roughly 4%–36% instantaneous CPU usage. Total ticks
+        // being a hard ceiling idle can never cross is what the app's own
+        // "idle_delta <= total_delta" sanity check depends on; a wobble
+        // large enough to cross it even briefly would make that one poll
+        // look like a counter reset and discard it.
+        $elapsed = microtime(true) - strtotime('2026-09-01 00:00:00 UTC');
+        $cpuTicksTotal = (int) $this->driftingCounter(8_400_000, 400, $elapsed, 45, 0, 0.0);
+        $cpuTicksIdle = (int) $this->driftingCounter(7_240_000, 320, $elapsed, 45, 0, 0.2);
+
         return [
             'hostname' => 'vaktpost-lab', 'domain' => 'example.invalid', 'platform' => 'Virtual pfSense test appliance', 'serial' => 'SYNTHETIC-ONLY',
-            'cpu_count' => 4, 'cpu_ticks_total' => 8400000, 'cpu_ticks_idle' => 7240000, 'mem_usage' => 31, 'swap_usage' => 0, 'uptime_sec' => 1248920,
+            'cpu_count' => 4, 'cpu_ticks_total' => $cpuTicksTotal, 'cpu_ticks_idle' => $cpuTicksIdle, 'mem_usage' => 31, 'swap_usage' => 0, 'uptime_sec' => 1248920,
             // A genuinely separate sensor from the per-core ones below —
             // an ACPI thermal zone, not a duplicate of dev.cpu.0.temperature
             // under a second name. The app shows both rows together when

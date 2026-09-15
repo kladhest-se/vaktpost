@@ -238,7 +238,7 @@ extension OverviewView {
             if let sys = store.system {
                 VStack(spacing: 12) {
                     if let cpu = sys.cpuUsage {
-                        Meter(label: "CPU", value: cpu / 100, readout: Fmt.pct(cpu),
+                        Meter(label: "CPU Usage", value: cpu / 100, readout: Fmt.pct(cpu),
                               health: level(cpu, warn: HealthThresholds.cpuWarn, bad: HealthThresholds.cpuBad))
                     }
                     if let mem = sys.memUsage {
@@ -258,7 +258,6 @@ extension OverviewView {
                               health: level(mbuf, warn: HealthThresholds.mbufWarn, bad: HealthThresholds.mbufBad))
                     }
                     Hairline()
-                    FieldRow(key: "Load average", value: sys.loadDescription)
                     // A fixed 110°C ceiling for the bar rather than one tied
                     // to whichever sensor's own "bad" threshold happens to
                     // be showing — the two sensors here disagree on where
