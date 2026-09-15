@@ -733,13 +733,22 @@ struct RuleEditSheet: View {
                     Slab(rail: .info, title: "Position",
                          trailing: "\(placement.proposedPosition) of \(placement.total)") {
                         VStack(alignment: .leading, spacing: 8) {
-                            Picker("", selection: $edited.placementTarget) {
+                            Menu {
                                 ForEach(placementTargets, id: \.self) { target in
-                                    Text(placementLabel(target)).tag(target)
+                                    Button(placementLabel(target)) { edited.placementTarget = target }
                                 }
+                            } label: {
+                                HStack(alignment: .top, spacing: 6) {
+                                    Text(placementLabel(edited.placementTarget))
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 8)
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .scaledFont(12)
+                                        .padding(.top, 2)
+                                }
+                                .foregroundStyle(theme.accentColor)
                             }
-                            .pickerStyle(.menu)
-                            .tint(theme.accentColor)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                             Text("The selected rule is used as a stable anchor and rechecked on the firewall before saving.")

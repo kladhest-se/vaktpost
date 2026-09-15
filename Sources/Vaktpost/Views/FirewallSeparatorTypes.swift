@@ -369,15 +369,23 @@ struct SeparatorEditSheet: View {
 
                     Slab(rail: .info, title: "Position") {
                         VStack(alignment: .leading, spacing: 8) {
-                            Picker("", selection: $edited.position) {
-                                Text(firstPositionLabel).tag(0)
+                            Menu {
+                                Button(firstPositionLabel) { edited.position = 0 }
                                 ForEach(Array(positionLabels.enumerated()), id: \.offset) { index, label in
-                                    Text(label)
-                                        .tag(index + 1)
+                                    Button(label) { edited.position = index + 1 }
                                 }
+                            } label: {
+                                HStack(alignment: .top, spacing: 6) {
+                                    Text(edited.position == 0 ? firstPositionLabel : positionLabels[edited.position - 1])
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: 8)
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .scaledFont(12)
+                                        .padding(.top, 2)
+                                }
+                                .foregroundStyle(theme.accentColor)
                             }
-                            .pickerStyle(.menu)
-                            .tint(theme.accentColor)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                             Text("The position is checked against the current rules before saving.")

@@ -75,6 +75,52 @@ final class XmlApiSimulator
             return ['payload' => $log];
         }
 
+        // ── Writes ──
+        //
+        // Every write snippet carries $vaktpost_payload (base64 JSON) and
+        // ends with a write_config() call bearing its own descriptive
+        // message — checked here, before the read-only $config["filter"|
+        // "nat"|"aliases"] matches below, since every write also touches
+        // those same paths. Session-backed, so a create/edit/delete/reorder
+        // persists for the rest of this session and shows up on the next
+        // read the way it would on a real firewall.
+        if (str_contains($script, '"Vaktpost: saved a rule"')) {
+            return ['payload' => $this->writeSaveRule($script)];
+        }
+        if (str_contains($script, '"Vaktpost: deleted a rule")')) {
+            return ['payload' => $this->writeDeleteRule($script)];
+        }
+        if (str_contains($script, '"Vaktpost: saved a nat rule"')) {
+            return ['payload' => $this->writeSaveNatRule($script)];
+        }
+        if (str_contains($script, '"Vaktpost: deleted a nat rule"')) {
+            return ['payload' => $this->writeDeleteNatRule($script)];
+        }
+        if (str_contains($script, 'added a rule separator on ') || str_contains($script, 'edited a rule separator on ')) {
+            return ['payload' => $this->writeSaveFilterSeparator($script)];
+        }
+        if (str_contains($script, 'deleted a rule separator on ')) {
+            return ['payload' => $this->writeDeleteFilterSeparator($script)];
+        }
+        if (str_contains($script, 'added a NAT separator') || str_contains($script, 'edited a NAT separator')) {
+            return ['payload' => $this->writeSaveNatSeparator($script)];
+        }
+        if (str_contains($script, 'Vaktpost: deleted a NAT separator')) {
+            return ['payload' => $this->writeDeleteNatSeparator($script)];
+        }
+        if (str_contains($script, 'added firewall alias ') || str_contains($script, 'edited firewall alias ')) {
+            return ['payload' => $this->writeSaveAlias($script)];
+        }
+        if (str_contains($script, 'Vaktpost: deleted firewall alias ')) {
+            return ['payload' => $this->writeDeleteAlias($script)];
+        }
+        if (str_contains($script, 'Vaktpost: reordered rules on ')) {
+            return ['payload' => $this->writeReorderFilterRules($script)];
+        }
+        if (str_contains($script, 'Vaktpost: reordered NAT port forwards')) {
+            return ['payload' => $this->writeReorderNatRules($script)];
+        }
+
         if (str_contains($script, '$vaktpost_kind') && str_contains($script, 'mwexec_bg')) {
             if (!$updatesAvailable) {
                 return ['payload' => ['status' => 'no_update', 'started' => false, 'error' => 'The requested update is no longer available']];
@@ -114,17 +160,22 @@ final class XmlApiSimulator
         if (str_contains($script, 'get_services')) {
             return ['payload' => ['data' => $this->services($degraded)]];
         }
+        if (str_contains($script, 'is_subsystem_dirty') && str_contains($script, 'separator')) {
+            $state = $this->state();
+            return ['payload' => [
+                'filter' => $state['filter_separators'],
+                'nat' => $state['nat_separators'],
+                'apply_pending' => !empty($_SESSION['vaktpost_dirty']),
+            ]];
+        }
         if (str_contains($script, '$config["filter"]')) {
-            return ['payload' => ['data' => $this->firewallRules()]];
+            return ['payload' => ['data' => $this->state()['rules']]];
         }
         if (str_contains($script, '$config["aliases"]')) {
-            return ['payload' => ['data' => $this->aliases()]];
+            return ['payload' => ['data' => $this->state()['aliases']]];
         }
         if (str_contains($script, '$config["nat"]') && !str_contains($script, 'separator')) {
-            return ['payload' => ['data' => $this->portForwards()]];
-        }
-        if (str_contains($script, 'is_subsystem_dirty') && str_contains($script, 'separator')) {
-            return ['payload' => ['filter' => [['interface' => 'lan', 'key' => 'sep0', 'text' => 'Application access', 'color' => 'info', 'position' => '0']], 'nat' => [], 'apply_pending' => false]];
+            return ['payload' => ['data' => $this->state()['nat_rules']]];
         }
         if (str_contains($script, 'get_notices')) {
             return ['payload' => $this->notices()];
@@ -180,6 +231,469 @@ final class XmlApiSimulator
         }
 
         return ['fault' => ['code' => -32602, 'message' => 'The lab refused an unknown snippet; submitted PHP is never executed']];
+    }
+
+    // ── Session-backed writable state ──
+    //
+    // Rules, port forwards, aliases and separators start as mutable copies
+    // of the same fixtures every read-only request already returns, and
+    // every write below mutates this copy — never the static baseline — so
+    // create/edit/delete/reorder persists for the rest of this session and
+    // the next read reflects it, the way a real firewall would.
+
+    /** @return array{rules: list<array<string, mixed>>, nat_rules: list<array<string, mixed>>, aliases: list<array<string, mixed>>, filter_separators: list<array<string, mixed>>, nat_separators: list<array<string, mixed>>} */
+    private function state(): array
+    {
+        if (!isset($_SESSION['vaktpost_state']) || !is_array($_SESSION['vaktpost_state'])) {
+            $_SESSION['vaktpost_state'] = [
+                'rules' => $this->firewallRules(),
+                'nat_rules' => $this->portForwards(),
+                'aliases' => $this->aliases(),
+                'filter_separators' => [
+                    ['interface' => 'lan', 'key' => 'sep0', 'text' => 'Application access', 'color' => 'info', 'position' => '0'],
+                ],
+                'nat_separators' => [],
+            ];
+        }
+        return $_SESSION['vaktpost_state'];
+    }
+
+    private function saveState(array $state): void
+    {
+        $_SESSION['vaktpost_state'] = $state;
+        $_SESSION['vaktpost_dirty'] = true;
+    }
+
+    /**
+     * Decodes the base64 JSON payload every write snippet carries as
+     * $vaktpost_payload, the same way the real snippet's own decodePayload
+     * line does.
+     *
+     * @return array<string, mixed>
+     */
+    private function extractPayload(string $script): array
+    {
+        if (preg_match('/\$vaktpost_payload\s*=\s*"([A-Za-z0-9+\/=]*)"/', $script, $matches) !== 1) {
+            return [];
+        }
+        $decoded = base64_decode($matches[1], true);
+        if ($decoded === false) {
+            return [];
+        }
+        $data = json_decode($decoded, true);
+        return is_array($data) ? $data : [];
+    }
+
+    /** @param list<array<string, mixed>> $list */
+    private function findIndex(array $list, string $field, string $value): ?int
+    {
+        if ($value === '') {
+            return null;
+        }
+        foreach ($list as $i => $item) {
+            if (($item[$field] ?? '') === $value) {
+                return $i;
+            }
+        }
+        return null;
+    }
+
+    /** @param list<array<string, mixed>> $existing */
+    private function newTracker(array $existing): string
+    {
+        $tracker = (string) time();
+        $trackers = array_column($existing, 'tracker');
+        while (in_array($tracker, $trackers, true)) {
+            $tracker = (string) ((int) $tracker + 1);
+        }
+        return $tracker;
+    }
+
+    /** @param list<array<string, mixed>> $existing */
+    private function newSeparatorKey(array $existing): string
+    {
+        $n = 0;
+        $keys = array_column($existing, 'key');
+        while (in_array('sep' . $n, $keys, true)) {
+            $n++;
+        }
+        return 'sep' . $n;
+    }
+
+    /**
+     * Inserts a rule or port forward at the placement pfSense's own save
+     * flow supports: first, last, or immediately before a named anchor. An
+     * anchor that no longer exists falls back to last, same as a plain
+     * append would.
+     *
+     * @param list<array<string, mixed>> $list
+     * @param array<string, mixed> $item
+     * @return list<array<string, mixed>>
+     */
+    private function placeInList(array $list, array $item, string $placement, string $beforeId, string $idField = 'tracker'): array
+    {
+        if ($placement === 'first') {
+            array_unshift($list, $item);
+            return $list;
+        }
+        if ($placement === 'before' && $beforeId !== '') {
+            foreach ($list as $i => $existing) {
+                if (($existing[$idField] ?? '') === $beforeId) {
+                    array_splice($list, $i, 0, [$item]);
+                    return $list;
+                }
+            }
+        }
+        $list[] = $item;
+        return $list;
+    }
+
+    /** @return array<string, mixed> */
+    private function writeSaveRule(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $isCreate = ($input['create'] ?? false) === true;
+        $tracker = (string) ($input['tracker'] ?? '');
+        $placement = (string) ($input['placement'] ?? ($isCreate ? 'last' : 'keep'));
+        $before = (string) ($input['before_tracker'] ?? '');
+        $fields = $input;
+        unset($fields['create'], $fields['placement'], $fields['before_tracker']);
+
+        if ($isCreate) {
+            $tracker = $this->newTracker($state['rules']);
+            $fields['tracker'] = $tracker;
+            $state['rules'] = $this->placeInList($state['rules'], $fields, $placement, $before);
+        } else {
+            $index = $this->findIndex($state['rules'], 'tracker', $tracker);
+            if ($index === null) {
+                return ['status' => 'not_found', 'error' => 'The rule no longer exists.'];
+            }
+            $fields['tracker'] = $tracker;
+            $state['rules'][$index] = array_merge($state['rules'][$index], $fields);
+            if ($placement !== 'keep') {
+                $rule = $state['rules'][$index];
+                array_splice($state['rules'], $index, 1);
+                $state['rules'] = $this->placeInList($state['rules'], $rule, $placement, $before);
+            }
+        }
+        $this->saveState($state);
+
+        $result = ['status' => 'ok', 'apply_pending' => true, 'created' => $isCreate, 'tracker' => $tracker, 'placement' => $placement];
+        if ($placement === 'before') {
+            $result['before_tracker'] = $before;
+        }
+        return $result;
+    }
+
+    /** @return array<string, mixed> */
+    private function writeDeleteRule(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $tracker = (string) ($input['tracker'] ?? '');
+        $index = $this->findIndex($state['rules'], 'tracker', $tracker);
+        if ($index === null) {
+            return ['status' => 'not_found'];
+        }
+        array_splice($state['rules'], $index, 1);
+        $this->saveState($state);
+        return ['status' => 'ok', 'apply_pending' => true];
+    }
+
+    /** @return array<string, mixed> */
+    private function writeSaveNatRule(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $isCreate = ($input['create'] ?? false) === true;
+        $tracker = (string) ($input['tracker'] ?? '');
+        $fields = $input;
+        unset($fields['create']);
+
+        if ($isCreate) {
+            $tracker = $this->newTracker($state['nat_rules']);
+            $fields['tracker'] = $tracker;
+            $state['nat_rules'][] = $fields;
+        } else {
+            $index = $tracker !== '' ? $this->findIndex($state['nat_rules'], 'tracker', $tracker) : null;
+            if ($index === null) {
+                // Legacy-identity fallback for a forward saved before this
+                // app started assigning NAT trackers: match by the original
+                // interface and target instead.
+                $origInterface = (string) ($input['original_interface'] ?? '');
+                $origTarget = (string) ($input['original_target'] ?? '');
+                foreach ($state['nat_rules'] as $i => $r) {
+                    if (($r['tracker'] ?? '') === ''
+                        && ($r['interface'] ?? '') === $origInterface
+                        && ($r['target'] ?? '') === $origTarget) {
+                        $index = $i;
+                        break;
+                    }
+                }
+            }
+            if ($index === null) {
+                return ['status' => 'not_found', 'error' => 'The port forward no longer exists.'];
+            }
+            $tracker = $tracker !== '' ? $tracker : $this->newTracker($state['nat_rules']);
+            $fields['tracker'] = $tracker;
+            $state['nat_rules'][$index] = array_merge($state['nat_rules'][$index], $fields);
+        }
+        $this->saveState($state);
+        return ['status' => 'ok', 'apply_pending' => true, 'created' => $isCreate, 'tracker' => $tracker];
+    }
+
+    /** @return array<string, mixed> */
+    private function writeDeleteNatRule(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $tracker = (string) ($input['tracker'] ?? '');
+        $index = $this->findIndex($state['nat_rules'], 'tracker', $tracker);
+        if ($index === null) {
+            return ['status' => 'not_found'];
+        }
+        array_splice($state['nat_rules'], $index, 1);
+        $this->saveState($state);
+        return ['status' => 'ok', 'apply_pending' => true];
+    }
+
+    /** @return array<string, mixed> */
+    private function writeSaveFilterSeparator(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $isCreate = ($input['create'] ?? false) === true;
+        $key = (string) ($input['key'] ?? '');
+        $interface = (string) ($input['interface'] ?? '');
+        $text = (string) ($input['text'] ?? '');
+        $color = (string) ($input['color'] ?? 'info');
+        $position = (string) ($input['position'] ?? '0');
+
+        if ($isCreate) {
+            $key = $this->newSeparatorKey($state['filter_separators']);
+            $state['filter_separators'][] = [
+                'interface' => $interface, 'key' => $key, 'text' => $text, 'color' => $color, 'position' => $position,
+            ];
+        } else {
+            $index = $this->findIndex($state['filter_separators'], 'key', $key);
+            if ($index === null) {
+                return ['status' => 'not_found', 'error' => 'The separator is no longer present'];
+            }
+            $state['filter_separators'][$index] = [
+                'interface' => $interface, 'key' => $key, 'text' => $text, 'color' => $color, 'position' => $position,
+            ];
+        }
+        $this->saveState($state);
+        return [
+            'status' => 'ok', 'apply_pending' => true, 'key' => $key, 'interface' => $interface,
+            'text' => $text, 'color' => $color, 'position' => $position, 'created' => $isCreate,
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function writeDeleteFilterSeparator(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $key = (string) ($input['key'] ?? '');
+        $interface = (string) ($input['interface'] ?? '');
+        $index = $this->findIndex($state['filter_separators'], 'key', $key);
+        if ($index === null) {
+            return ['status' => 'not_found', 'error' => 'The separator is no longer present'];
+        }
+        array_splice($state['filter_separators'], $index, 1);
+        $this->saveState($state);
+        return ['status' => 'ok', 'apply_pending' => true, 'key' => $key, 'interface' => $interface];
+    }
+
+    /** @return array<string, mixed> */
+    private function writeSaveNatSeparator(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $isCreate = ($input['create'] ?? false) === true;
+        $key = (string) ($input['key'] ?? '');
+        $text = (string) ($input['text'] ?? '');
+        $color = (string) ($input['color'] ?? 'info');
+        $position = (string) ($input['position'] ?? '0');
+
+        if ($isCreate) {
+            $key = $this->newSeparatorKey($state['nat_separators']);
+            $state['nat_separators'][] = ['key' => $key, 'text' => $text, 'color' => $color, 'position' => $position];
+        } else {
+            $index = $this->findIndex($state['nat_separators'], 'key', $key);
+            if ($index === null) {
+                return ['status' => 'not_found', 'error' => 'The NAT separator is no longer present'];
+            }
+            $state['nat_separators'][$index] = ['key' => $key, 'text' => $text, 'color' => $color, 'position' => $position];
+        }
+        $this->saveState($state);
+        return ['status' => 'ok', 'apply_pending' => true, 'key' => $key, 'text' => $text, 'color' => $color, 'position' => $position, 'created' => $isCreate];
+    }
+
+    /** @return array<string, mixed> */
+    private function writeDeleteNatSeparator(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $key = (string) ($input['key'] ?? '');
+        $index = $this->findIndex($state['nat_separators'], 'key', $key);
+        if ($index === null) {
+            return ['status' => 'not_found', 'error' => 'The NAT separator is no longer present'];
+        }
+        array_splice($state['nat_separators'], $index, 1);
+        $this->saveState($state);
+        return ['status' => 'ok', 'apply_pending' => true, 'key' => $key];
+    }
+
+    /** @return array<string, mixed> */
+    private function writeSaveAlias(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $isCreate = ($input['create'] ?? false) === true;
+        $name = (string) ($input['name'] ?? '');
+        $fields = $input;
+        unset($fields['create'], $fields['original_name']);
+
+        if ($isCreate) {
+            $state['aliases'][] = $fields;
+        } else {
+            $index = $this->findIndex($state['aliases'], 'name', $name);
+            if ($index === null) {
+                return ['status' => 'not_found', 'error' => 'The alias is no longer present'];
+            }
+            $state['aliases'][$index] = array_merge($state['aliases'][$index], $fields);
+        }
+        $this->saveState($state);
+        return ['status' => 'ok', 'apply_pending' => true, 'created' => $isCreate, 'name' => $name];
+    }
+
+    /** @return array<string, mixed> */
+    private function writeDeleteAlias(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $name = (string) ($input['name'] ?? '');
+        $index = $this->findIndex($state['aliases'], 'name', $name);
+        if ($index === null) {
+            return ['status' => 'not_found', 'error' => 'The alias is no longer present'];
+        }
+        array_splice($state['aliases'], $index, 1);
+        $this->saveState($state);
+        return ['status' => 'ok', 'apply_pending' => true, 'name' => $name];
+    }
+
+    /** @return array<string, mixed> */
+    private function writeReorderFilterRules(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $interface = (string) ($input['interface'] ?? '');
+        $items = is_array($input['items'] ?? null) ? $input['items'] : [];
+        if ($interface === '' || empty($items)) {
+            return ['status' => 'invalid', 'error' => 'A non-empty order is required.'];
+        }
+
+        $onInterface = [];
+        $elsewhere = [];
+        foreach ($state['rules'] as $rule) {
+            if (($rule['interface'] ?? '') === $interface) {
+                $onInterface[] = $rule;
+            } else {
+                $elsewhere[] = $rule;
+            }
+        }
+        $sepsOnInterface = [];
+        $sepsElsewhere = [];
+        foreach ($state['filter_separators'] as $sep) {
+            if (($sep['interface'] ?? '') === $interface) {
+                $sepsOnInterface[] = $sep;
+            } else {
+                $sepsElsewhere[] = $sep;
+            }
+        }
+
+        $reorderedRules = [];
+        $reorderedSeps = [];
+        $precedingRules = 0;
+        foreach ($items as $item) {
+            $kind = (string) ($item['kind'] ?? '');
+            $id = (string) ($item['id'] ?? '');
+            if ($kind === 'rule') {
+                foreach ($onInterface as $rule) {
+                    if (($rule['tracker'] ?? '') === $id) {
+                        $reorderedRules[] = $rule;
+                        $precedingRules++;
+                        break;
+                    }
+                }
+            } elseif ($kind === 'separator') {
+                foreach ($sepsOnInterface as $sep) {
+                    if (($sep['key'] ?? '') === $id) {
+                        $sep['position'] = (string) $precedingRules;
+                        $reorderedSeps[] = $sep;
+                        break;
+                    }
+                }
+            }
+        }
+        if (count($reorderedRules) !== count($onInterface)) {
+            return ['status' => 'mismatch', 'error' => 'The rules on this interface changed since this order was prepared.'];
+        }
+
+        $state['rules'] = array_merge($elsewhere, $reorderedRules);
+        $state['filter_separators'] = array_merge($sepsElsewhere, $reorderedSeps);
+        $this->saveState($state);
+        return ['status' => 'ok', 'apply_pending' => true];
+    }
+
+    /** @return array<string, mixed> */
+    private function writeReorderNatRules(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $state = $this->state();
+        $items = is_array($input['items'] ?? null) ? $input['items'] : [];
+        if (empty($items)) {
+            return ['status' => 'invalid', 'error' => 'A non-empty NAT order is required.'];
+        }
+        if (count($items) !== count($state['nat_rules']) + count($state['nat_separators'])) {
+            return ['status' => 'mismatch', 'error' => 'The NAT rules or separators changed since this order was prepared.'];
+        }
+
+        $reorderedRules = [];
+        $reorderedSeps = [];
+        $precedingRules = 0;
+        foreach ($items as $item) {
+            $kind = (string) ($item['kind'] ?? '');
+            if ($kind === 'rule') {
+                $tracker = (string) ($item['tracker'] ?? '');
+                foreach ($state['nat_rules'] as $rule) {
+                    if (($rule['tracker'] ?? '') === $tracker) {
+                        $reorderedRules[] = $rule;
+                        $precedingRules++;
+                        break;
+                    }
+                }
+            } elseif ($kind === 'separator') {
+                $id = (string) ($item['id'] ?? '');
+                foreach ($state['nat_separators'] as $sep) {
+                    if (($sep['key'] ?? '') === $id) {
+                        $sep['position'] = (string) $precedingRules;
+                        $reorderedSeps[] = $sep;
+                        break;
+                    }
+                }
+            }
+        }
+        if (count($reorderedRules) !== count($state['nat_rules'])) {
+            return ['status' => 'mismatch', 'error' => 'The NAT rules or separators changed since this order was prepared.'];
+        }
+        $state['nat_rules'] = $reorderedRules;
+        $state['nat_separators'] = $reorderedSeps;
+        $this->saveState($state);
+        return ['status' => 'ok', 'apply_pending' => true];
     }
 
     /** @return array<string, mixed> */
@@ -422,13 +936,65 @@ final class XmlApiSimulator
         return ['available' => true, 'data' => $series];
     }
 
+    /**
+     * A byte counter that increases every second but at a rate that itself
+     * drifts up and down over time, rather than a constant rate — so two
+     * "live" polls a few seconds apart show a moving throughput instead of
+     * a flat line, the way a real interface does.
+     *
+     * The wobble sits on top of a straight-line trend (avgRate) rather than
+     * replacing it, and its amplitude is capped so its own rate of change
+     * never exceeds avgRate. That keeps the counter strictly increasing —
+     * important because the app treats any decrease as a counter reset
+     * (an interface reboot) and throws the sample away rather than
+     * charting a spike.
+     */
+    private function driftingCounter(float $baseline, float $avgRate, float $elapsed, float $period, float $phase, float $wobble = 0.6): float
+    {
+        if ($avgRate <= 0) {
+            return $baseline;
+        }
+        $angularFrequency = 2 * M_PI / $period;
+        $amplitude = $wobble * $avgRate / $angularFrequency;
+        return $baseline + $avgRate * $elapsed + $amplitude * sin($angularFrequency * $elapsed + $phase);
+    }
+
     /** @return list<array<string, mixed>> */
     private function interfaces(bool $degraded): array
     {
+        // A fixed, recent reference point rather than the Unix epoch or a
+        // wrapping value like "seconds since midnight": the former would
+        // put every counter in the petabytes by now, and the latter would
+        // make the counter drop at every wrap boundary, which the app reads
+        // as an interface reboot and discards the sample for. A fixed date
+        // in the past means elapsed time only ever grows, so the counter
+        // only ever grows with it.
+        $elapsed = microtime(true) - strtotime('2026-09-01 00:00:00 UTC');
+
+        // A down interface should not be gaining traffic; freezing its
+        // rate at zero here keeps opt1's degraded state consistent with
+        // its counters rather than showing a "down" interface still busy.
+        $opt1Rate = $degraded ? 0.0 : 60_000.0;
+
         return [
-            ['name' => 'wan', 'descr' => 'WAN', 'hwif' => 'vtnet0', 'status' => 'up', 'enable' => true, 'ipaddr' => '198.51.100.24', 'subnet' => '255.255.255.0', 'macaddr' => '02:00:00:00:00:10', 'media' => '10Gbase-T <full-duplex>', 'gateway' => 'WAN_DHCP', 'counters_present' => true, 'inbytes' => 938443211, 'outbytes' => 286900442, 'inpkts' => 1201900, 'outpkts' => 886210, 'inerrs' => 0, 'outerrs' => 0, 'collisions' => 0],
-            ['name' => 'lan', 'descr' => 'LAN', 'hwif' => 'vtnet1', 'status' => 'up', 'enable' => true, 'ipaddr' => '192.0.2.1', 'subnet' => '255.255.255.0', 'macaddr' => '02:00:00:00:00:11', 'media' => '10Gbase-T <full-duplex>', 'counters_present' => true, 'inbytes' => 643110223, 'outbytes' => 1224771109, 'inpkts' => 945110, 'outpkts' => 1442992, 'inerrs' => 0, 'outerrs' => 0, 'collisions' => 0],
-            ['name' => 'opt1', 'descr' => 'OPENVPN1', 'hwif' => 'ovpns1', 'status' => $degraded ? 'down' : 'up', 'enable' => true, 'ipaddr' => '192.0.2.129', 'subnet' => '255.255.255.0', 'counters_present' => true, 'inbytes' => 88120554, 'outbytes' => 42771209, 'inpkts' => 152110, 'outpkts' => 98002, 'inerrs' => 0, 'outerrs' => 0, 'collisions' => 0],
+            ['name' => 'wan', 'descr' => 'WAN', 'hwif' => 'vtnet0', 'status' => 'up', 'enable' => true, 'ipaddr' => '198.51.100.24', 'subnet' => '255.255.255.0', 'macaddr' => '02:00:00:00:00:10', 'media' => '10Gbase-T <full-duplex>', 'gateway' => 'WAN_DHCP', 'counters_present' => true,
+                'inbytes' => (int) $this->driftingCounter(938443211, 340_000, $elapsed, 47, 0.0),
+                'outbytes' => (int) $this->driftingCounter(286900442, 95_000, $elapsed, 61, 1.1),
+                'inpkts' => (int) $this->driftingCounter(1201900, 420, $elapsed, 47, 0.0),
+                'outpkts' => (int) $this->driftingCounter(886210, 130, $elapsed, 61, 1.1),
+                'inerrs' => 0, 'outerrs' => 0, 'collisions' => 0],
+            ['name' => 'lan', 'descr' => 'LAN', 'hwif' => 'vtnet1', 'status' => 'up', 'enable' => true, 'ipaddr' => '192.0.2.1', 'subnet' => '255.255.255.0', 'macaddr' => '02:00:00:00:00:11', 'media' => '10Gbase-T <full-duplex>', 'counters_present' => true,
+                'inbytes' => (int) $this->driftingCounter(643110223, 150_000, $elapsed, 53, 2.4),
+                'outbytes' => (int) $this->driftingCounter(1224771109, 480_000, $elapsed, 39, 0.6),
+                'inpkts' => (int) $this->driftingCounter(945110, 190, $elapsed, 53, 2.4),
+                'outpkts' => (int) $this->driftingCounter(1442992, 560, $elapsed, 39, 0.6),
+                'inerrs' => 0, 'outerrs' => 0, 'collisions' => 0],
+            ['name' => 'opt1', 'descr' => 'OPENVPN1', 'hwif' => 'ovpns1', 'status' => $degraded ? 'down' : 'up', 'enable' => true, 'ipaddr' => '192.0.2.129', 'subnet' => '255.255.255.0', 'counters_present' => true,
+                'inbytes' => (int) $this->driftingCounter(88120554, $opt1Rate, $elapsed, 29, 3.5),
+                'outbytes' => (int) $this->driftingCounter(42771209, $opt1Rate * 0.4, $elapsed, 29, 3.5),
+                'inpkts' => (int) $this->driftingCounter(152110, $opt1Rate / 700, $elapsed, 29, 3.5),
+                'outpkts' => (int) $this->driftingCounter(98002, ($opt1Rate * 0.4) / 700, $elapsed, 29, 3.5),
+                'inerrs' => 0, 'outerrs' => 0, 'collisions' => 0],
         ];
     }
 
