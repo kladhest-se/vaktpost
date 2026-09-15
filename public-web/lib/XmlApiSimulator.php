@@ -793,7 +793,14 @@ final class XmlApiSimulator
         return [
             'hostname' => 'vaktpost-lab', 'domain' => 'example.invalid', 'platform' => 'Virtual pfSense test appliance', 'serial' => 'SYNTHETIC-ONLY',
             'cpu_count' => 4, 'cpu_ticks_total' => 8400000, 'cpu_ticks_idle' => 7240000, 'mem_usage' => 31, 'swap_usage' => 0, 'uptime_sec' => 1248920,
-            'temp_c' => 48, 'temp_source' => 'dev.cpu.0.temperature',
+            // A genuinely separate sensor from the per-core ones below —
+            // an ACPI thermal zone, not a duplicate of dev.cpu.0.temperature
+            // under a second name. The app shows both rows together when
+            // both are present, which only makes sense when they are
+            // actually two different sensors; reusing one core's own OID
+            // here made the two rows repeat the same reading under
+            // different labels.
+            'temp_c' => 46.5, 'temp_source' => 'hw.acpi.thermal.tz0.temperature',
             'core_temps' => [['core' => 0, 'temp' => 47, 'source' => 'dev.cpu.0.temperature'], ['core' => 1, 'temp' => 48, 'source' => 'dev.cpu.1.temperature'], ['core' => 2, 'temp' => 49, 'source' => 'dev.cpu.2.temperature'], ['core' => 3, 'temp' => 50, 'source' => 'dev.cpu.3.temperature']],
             'cpu_load_avg' => [0.22, 0.18, 0.16], 'mbuf_used' => 18204, 'mbuf_total' => 262144, 'mbuf_usage' => 6.9, 'currentstates' => 482, 'maximumstates' => 400000,
             'filesystems' => [['mount' => '/', 'size' => '7.8G', 'used' => '1.9G', 'available' => '5.3G', 'percent_used' => 26], ['mount' => '/var', 'size' => '3.8G', 'used' => '620M', 'available' => '2.9G', 'percent_used' => 17]],
