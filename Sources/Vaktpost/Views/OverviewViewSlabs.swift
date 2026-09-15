@@ -259,20 +259,26 @@ extension OverviewView {
                     }
                     Hairline()
                     FieldRow(key: "Load average", value: sys.loadDescription)
+                    // A fixed 110°C ceiling for the bar rather than one tied
+                    // to whichever sensor's own "bad" threshold happens to
+                    // be showing — the two sensors here disagree on where
+                    // bad starts (a CPU die at 95, a chipset at 105), and a
+                    // bar whose full point moved with that would make the
+                    // same fill level mean a different temperature
+                    // depending on which sensor produced it. One ceiling
+                    // above the highest of them keeps the bar comparable
+                    // across both rows; the colour, not the fill length,
+                    // is what says whether a given reading is fine.
                     if !sys.coreTemps.isEmpty {
-                        FieldRow(key: "CPU", value: sys.coreTemps.map { String(format: "%d: %.1f °C", $0.core, $0.temp) }.joined(separator: " · "))
-                        if let t = sys.temperature, let source = sys.temperatureSource {
-                            let label = sys.temperatureLabel
-                            FieldRow(key: label, value: String(format: "%.1f °C (%@)", t, source as NSString))
-                        }
-                    } else if let t = sys.temperature {
-                        let label = sys.temperatureLabel
-                        if let source = sys.temperatureSource {
-                            FieldRow(key: label, value: String(format: "%.1f °C (%@)", t, source as NSString))
-                        } else {
-                            FieldRow(key: label, value: String(format: "%.1f °C", t))
-                        }
-                    } else {
+                        let cpuTemp = sys.coreTemps.map(\.temp).max() ?? 0
+                        Meter(label: "CPU Temperature", value: cpuTemp / 110, readout: String(format: "%.0f °C", cpuTemp),
+                              health: level(cpuTemp, warn: 80, bad: 95))
+                    }
+                    if let t = sys.temperature {
+                        Meter(label: "\(sys.temperatureLabel) Temperature", value: t / 110, readout: String(format: "%.0f °C", t),
+                              health: level(t, warn: sys.temperatureThresholds.warn, bad: sys.temperatureThresholds.bad))
+                    }
+                    if sys.coreTemps.isEmpty && sys.temperature == nil {
                         FieldRow(key: "Temperature",
                                  value: "no sensor loaded",
                                  mono: false)
@@ -464,18 +470,29 @@ extension OverviewView {
                                   tx: tunnel.bytesSent ?? 0)
                     }
                     ForEach(store.ipsecSAs) { sa in
-                        // IPsec reports no byte counters here and no listen
-                        // port, so the row carries what it does have rather
-                        // than padding the same columns with dashes.
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(sa.connectionName)
-                                .scaledFont(12, weight: .semibold)
-                                .foregroundStyle(theme.label)
-                                .lineLimit(1)
-                            Spacer(minLength: 8)
-                            Text(sa.remoteHost ?? sa.state)
-                                .scaledFont(11, design: .monospaced)
-                                .foregroundStyle(sa.health.color(theme))
+                        // IPsec reports no byte counters or listen port
+                        // here, so this isn't the shared serverRow — but it
+                        // gets the same two-line shape: name and status on
+                        // one line, what detail there is underneath, rather
+                        // than the connection's actual state ("established",
+                        // "connecting") going unshown whenever a remote host
+                        // happened to also be present.
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(sa.connectionName)
+                                    .scaledFont(13, weight: .semibold)
+                                    .foregroundStyle(theme.label)
+                                    .lineLimit(1)
+                                Spacer(minLength: 8)
+                                Text(sa.state)
+                                    .scaledFont(11, design: .monospaced)
+                                    .foregroundStyle(sa.health.color(theme))
+                            }
+                            if let remoteHost = sa.remoteHost, !remoteHost.isEmpty {
+                                HStack(spacing: 10) {
+                                    metric("REMOTE", remoteHost)
+                                }
+                            }
                         }
                     }
                 }
