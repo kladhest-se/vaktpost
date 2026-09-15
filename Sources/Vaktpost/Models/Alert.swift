@@ -149,17 +149,36 @@ struct VaktpostAlert: Identifiable {
     private static func systemResourceAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
         guard let sys = store.system else { return [] }
         var out: [VaktpostAlert] = []
-        if let disk = sys.diskUsage, disk >= HealthThresholds.diskWarn {
-            out.append(.init(severity: disk >= HealthThresholds.diskBad ? .bad : .warn, category: .capacity,
+        // An explicit setting wins over the built-in guess, the same way
+        // temperature's override works below — the critical point stays a
+        // fixed margin above whatever "warn" is, so lowering "warn" doesn't
+        // silently lose the distinction between concerning and serious.
+        let am = store.alertManager
+        let diskLimits = am.diskWarnOverride.map { (warn: $0, bad: max($0 + 10, HealthThresholds.diskBad)) }
+            ?? (warn: HealthThresholds.diskWarn, bad: HealthThresholds.diskBad)
+        let memLimits = am.memWarnOverride.map { (warn: $0, bad: max($0 + 10, HealthThresholds.memBad)) }
+            ?? (warn: HealthThresholds.memWarn, bad: HealthThresholds.memBad)
+        let swapLimits = am.swapWarnOverride.map { (warn: $0, bad: max($0 + 20, HealthThresholds.swapBad)) }
+            ?? (warn: HealthThresholds.swapWarn, bad: HealthThresholds.swapBad)
+        let mbufLimits = am.mbufWarnOverride.map { (warn: $0, bad: max($0 + 10, HealthThresholds.mbufBad)) }
+            ?? (warn: HealthThresholds.mbufWarn, bad: HealthThresholds.mbufBad)
+
+        if let disk = sys.diskUsage, disk >= diskLimits.warn {
+            out.append(.init(severity: disk >= diskLimits.bad ? .bad : .warn, category: .capacity,
                              title: "Disk at \(Fmt.pct(disk))",
                              detail: "Log rotation or a large package cache is the usual cause."))
         }
-        if let mem = sys.memUsage, mem >= HealthThresholds.memWarn {
-            out.append(.init(severity: .warn, category: .capacity,
+        if let mem = sys.memUsage, mem >= memLimits.warn {
+            // Was always .warn regardless of how high memory climbed — the
+            // one capacity alert here that never used its own "bad"
+            // threshold. Fixed alongside adding the override, since a
+            // threshold somebody can raise is only meaningful if crossing
+            // it still means something.
+            out.append(.init(severity: mem >= memLimits.bad ? .bad : .warn, category: .capacity,
                              title: "Memory at \(Fmt.pct(mem))", detail: "Sustained pressure may push the box into swap."))
         }
-        if let swap = sys.swapUsage, swap >= HealthThresholds.swapWarn {
-            out.append(.init(severity: .warn, category: .capacity,
+        if let swap = sys.swapUsage, swap >= swapLimits.warn {
+            out.append(.init(severity: swap >= swapLimits.bad ? .bad : .warn, category: .capacity,
                              title: "Swap in use (\(Fmt.pct(swap)))",
                              detail: "A firewall that swaps is usually one that will drop packets under load."))
         }
@@ -187,8 +206,8 @@ struct VaktpostAlert: Identifiable {
                     : "Warm for this sensor. Worth watching if it climbs."
             ))
         }
-        if let mbuf = sys.mbufUsage, mbuf >= HealthThresholds.mbufWarn {
-            out.append(.init(severity: mbuf >= HealthThresholds.mbufBad ? .bad : .warn, category: .capacity,
+        if let mbuf = sys.mbufUsage, mbuf >= mbufLimits.warn {
+            out.append(.init(severity: mbuf >= mbufLimits.bad ? .bad : .warn, category: .capacity,
                              title: "mbuf at \(Fmt.pct(mbuf))",
                              detail: "Raise kern.ipc.nmbclusters if this stays high."))
         }
@@ -197,8 +216,11 @@ struct VaktpostAlert: Identifiable {
 
     @MainActor
     private static func stateTableAlerts(_ store: DashboardStore) -> [VaktpostAlert] {
-        guard let st = store.states, let frac = st.fraction, frac >= HealthThresholds.stateWarn else { return [] }
-        return [.init(severity: frac >= HealthThresholds.stateBad ? .bad : .warn, category: .capacity,
+        let stateLimits = store.alertManager.stateWarnOverride
+            .map { (warn: $0, bad: max($0 + 0.10, HealthThresholds.stateBad)) }
+            ?? (warn: HealthThresholds.stateWarn, bad: HealthThresholds.stateBad)
+        guard let st = store.states, let frac = st.fraction, frac >= stateLimits.warn else { return [] }
+        return [.init(severity: frac >= stateLimits.bad ? .bad : .warn, category: .capacity,
                       title: "State table \(Fmt.pct(frac * 100)) full",
                       detail: "\(st.current ?? 0) of \(st.maximum ?? 0) states.")]
     }

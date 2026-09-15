@@ -8,6 +8,7 @@ struct AliasesView: View {
     @State private var query = ""
     @State private var showingNewAlias = false
     @State private var selectedTab: AliasTab = .ip
+    @State private var selection: String?
 
     /// pfSense's own Firewall / Aliases page splits into these same four tabs.
     /// IP and URLs are both address-side aliases (`isAddressAlias`); the
@@ -55,55 +56,25 @@ struct AliasesView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                FreshnessView(sections: [.aliases], showNames: true)
-                pendingBanner
-                AdministrationModeNotice()
-
-                Picker("", selection: $selectedTab) {
-                    ForEach(AliasTab.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-
-                if let err = store.errors[.aliases] {
-                    Notice(symbol: "exclamationmark.triangle",
-                           title: "Aliases unavailable", detail: err, health: .warn)
-                } else if store.aliases.isEmpty {
-                    Notice(symbol: "tag.slash", title: "No aliases configured",
-                           detail: "Use + to create a host, network, or port alias.")
-                } else if tabAliases.isEmpty {
-                    Notice(symbol: "tag.slash", title: "No \(selectedTab.rawValue) aliases",
-                           detail: "Other alias types exist under a different tab.")
+        // Every alias comparing side by side its own use elsewhere in the
+        // firewall is most of what this screen is for once there's more than
+        // a handful of them — a split view on iPad, instead of the phone's
+        // push-and-lose-the-list for every single alias looked up.
+        MasterDetail(
+            selection: $selection,
+            emptyMessage: "Choose an alias to see its members and where it's used.",
+            list: { listColumn },
+            detail: { id in
+                // Looked up by name again rather than captured, since a
+                // stored copy would show the alias as it was at the moment
+                // it was tapped rather than after the next refresh.
+                if store.aliases.contains(where: { $0.id == id }) {
+                    AliasDetailView(aliasName: id).id(store.bindingID)
                 } else {
-                    HStack {
-                        Text("\(aliases.count) of \(tabAliases.count) aliases")
-                            .scaledFont(12, design: .monospaced)
-                            .foregroundStyle(theme.labelFaint)
-                        Spacer()
-                    }
-                    ForEach(aliases) { alias in
-                        NavigationLink {
-                            AliasDetailView(aliasName: alias.name)
-                        } label: {
-                            AliasRow(alias: alias)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    if aliases.isEmpty {
-                        Notice(symbol: "magnifyingglass", title: "No matches")
-                    }
+                    Notice(symbol: "questionmark.circle", title: "That alias is no longer in the list")
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 28)
-            .readableWidth()
-        }
-        .refreshable { await store.refreshManually() }
-        .background(theme.bg.ignoresSafeArea())
-        .task { await store.loadFirewallObjects() }
-        .searchable(text: $query, prompt: "Alias name, address or port")
+        )
         .navigationTitle("Aliases")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -127,6 +98,67 @@ struct AliasesView: View {
                 await store.refreshFirewallObjectsAfterWrite()
             }
         }
+        // An alias selected on one firewall means nothing on the next --
+        // even a same-named alias on a different firewall is a different
+        // alias, and the detail pane should not keep showing it once the
+        // list beside it has moved on.
+        .onChange(of: store.bindingID) { _, _ in selection = nil }
+    }
+
+    private var listColumn: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 10) {
+                FreshnessView(sections: [.aliases], showNames: true)
+                pendingBanner
+                AdministrationModeNotice()
+
+                // Inline rather than `.searchable`: on a split-view screen,
+                // `.searchable` puts the field in the navigation bar above
+                // the title and jumps on focus — the same issue this was
+                // already fixed for on the Firewall screen and Clients.
+                InlineSearchField(text: $query, prompt: "Alias name, address or port")
+
+                Picker("", selection: $selectedTab) {
+                    ForEach(AliasTab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+
+                if let err = store.errors[.aliases] {
+                    Notice(symbol: "exclamationmark.triangle",
+                           title: "Aliases unavailable", detail: err, health: .warn)
+                } else if store.aliases.isEmpty {
+                    Notice(symbol: "tag.slash", title: "No aliases configured",
+                           detail: "Use + to create a host, network, or port alias.")
+                } else if tabAliases.isEmpty {
+                    Notice(symbol: "tag.slash", title: "No \(selectedTab.rawValue) aliases",
+                           detail: "Other alias types exist under a different tab.")
+                } else {
+                    HStack {
+                        Text("\(aliases.count) of \(tabAliases.count) aliases")
+                            .scaledFont(12, design: .monospaced)
+                            .foregroundStyle(theme.labelFaint)
+                        Spacer()
+                    }
+                    ForEach(aliases) { alias in
+                        Button {
+                            selection = alias.id
+                        } label: {
+                            AliasRow(alias: alias)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if aliases.isEmpty {
+                        Notice(symbol: "magnifyingglass", title: "No matches")
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+        }
+        .refreshable { await store.refreshManually() }
+        .background(theme.bg.ignoresSafeArea())
+        .task(id: store.activeProfile?.id) { await store.loadFirewallObjects() }
     }
 
     @ViewBuilder

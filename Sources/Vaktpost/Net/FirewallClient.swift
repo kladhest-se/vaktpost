@@ -98,6 +98,31 @@ actor FirewallClient {
             PHPSnippet.hostTraffic(slot: slot, filter: filter, sort: sort), timeout: 60))
     }
 
+    /// Looks up one DNS record type using the firewall's own resolver.
+    ///
+    /// Never on the refresh timer, only run when asked — the same shape as
+    /// `hostTraffic` above, just cheap enough not to need its longer timeout.
+    func dnsLookup(host: String, recordType: String) async throws -> DNSLookupResult {
+        DNSLookupResult(try await rpc.runObject(PHPSnippet.dnsLookup(host: host, recordType: recordType), timeout: 15))
+    }
+
+    /// A download and upload leg against a fixed public endpoint, plus
+    /// connect time as a ping proxy — see PHPSnippet.speedtest for why this
+    /// measures throughput over HTTPS rather than a shelled-out CLI tool.
+    ///
+    /// The timeout covers both legs at their own 30s ceiling each, plus the
+    /// webConfigurator lock this call queues behind on a busy firewall —
+    /// the same margin hostTraffic's own comment gives that lock elsewhere.
+    func speedtest() async throws -> SpeedtestResult {
+        SpeedtestResult(try await rpc.runObject(.speedtest, timeout: 75))
+    }
+
+    /// The configuration file exactly as it is on disk right now. Read-only
+    /// — see ConfigBackup's own comment for why no restore path exists.
+    func backupConfig() async throws -> ConfigBackup? {
+        ConfigBackup(try await rpc.runObject(.backupConfig, timeout: 20))
+    }
+
     func gateways() async throws -> [GatewayStatus] {
         try await rpc.runList(.gateways).map(GatewayStatus.init)
     }

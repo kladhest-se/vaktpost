@@ -39,12 +39,62 @@ struct IncidentTimelineView: View {
     @State private var allEvents: [IncidentEvent] = []
     @State private var filteredEvents: [IncidentEvent] = []
     @State private var incidentCount: Int = 0
+    @State private var selection: String?
 
     private let sections: [DashboardStore.Section] = [
         .firewallLog, .systemLog, .authLog, .dhcpLog, .openvpnLog
     ]
 
     var body: some View {
+        // Scanning a run of events and checking several log lines in
+        // sequence is most of what this screen is for, and comparing them
+        // is exactly what a push-and-lose-the-list phone layout gets in the
+        // way of.
+        MasterDetail(
+            selection: $selection,
+            emptyMessage: "Choose an event to see its full log line.",
+            list: { listColumn },
+            detail: { id in
+                if let event = (filteredEvents + allEvents).first(where: { $0.id == id }) {
+                    LogDetailView(line: event.line).id(store.bindingID)
+                } else {
+                    Notice(symbol: "questionmark.circle", title: "That event is no longer in the timeline")
+                }
+            }
+        )
+        .background(theme.bg.ignoresSafeArea())
+        .navigationTitle("Incident timeline")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            allEvents = IncidentTimeline.build([
+                (.firewall, store.firewallLog),
+                (.system, store.systemLog),
+                (.authentication, store.authLog),
+                (.dhcp, store.dhcpLog),
+                (.vpn, store.openvpnLog)
+            ])
+            filterEvents()
+        }
+        .onChange(of: scope) { filterEvents() }
+        .onChange(of: source) { filterEvents() }
+        .onChange(of: query) { filterEvents() }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { Task { await refresh() } } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(refreshing)
+                .accessibilityLabel("Refresh incident timeline")
+            }
+        }
+        // An event selected before a firewall switch belongs to the old
+        // firewall's logs. The id would not even collide by coincidence —
+        // it is source plus the line's own UUID — it is just meaningless
+        // once the list beside it is a different firewall's timeline.
+        .onChange(of: store.bindingID) { _, _ in selection = nil }
+    }
+
+    private var listColumn: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 PageHeader(
@@ -97,8 +147,8 @@ struct IncidentTimelineView: View {
                 } else {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(filteredEvents) { event in
-                            NavigationLink {
-                                LogDetailView(line: event.line)
+                            Button {
+                                selection = event.id
                             } label: {
                                 IncidentTimelineRow(event: event)
                             }
@@ -118,33 +168,8 @@ struct IncidentTimelineView: View {
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 28)
-            .readableWidth()
         }
-        .background(theme.bg.ignoresSafeArea())
-        .navigationTitle("Incident timeline")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            allEvents = IncidentTimeline.build([
-                (.firewall, store.firewallLog),
-                (.system, store.systemLog),
-                (.authentication, store.authLog),
-                (.dhcp, store.dhcpLog),
-                (.vpn, store.openvpnLog)
-            ])
-            filterEvents()
-        }
-        .onChange(of: scope) { filterEvents() }
-        .onChange(of: source) { filterEvents() }
-        .onChange(of: query) { filterEvents() }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button { Task { await refresh() } } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .disabled(refreshing)
-                .accessibilityLabel("Refresh incident timeline")
-            }
-        }
+        .refreshable { await refresh() }
     }
 
     private var emptyTitle: String {

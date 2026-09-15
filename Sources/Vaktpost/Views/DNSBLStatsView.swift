@@ -52,7 +52,7 @@ struct DNSBLStatsView: View {
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle("DNSBL")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await store.loadDNSBLStats() }
+        .task(id: store.activeProfile?.id) { await store.loadDNSBLStats() }
         .refreshable { await store.loadDNSBLStats(force: true) }
     }
 

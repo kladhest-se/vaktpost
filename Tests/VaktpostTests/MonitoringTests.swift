@@ -140,7 +140,12 @@ final class MonitoringTests: XCTestCase {
         let a = ServerProfile(baseURL: "https://a.example")
         let b = ServerProfile(baseURL: "https://b.example")
         var clock = Date(timeIntervalSince1970: 1000)
-        var failA = false
+        // Safe despite the warning this silences: every mutation happens
+        // between two `await store.refresh(...)` calls in this one test,
+        // never while the closure is actually running, so there's no real
+        // race for the compiler's static analysis to catch — just nothing
+        // in the type system proves it the way it would for an actor.
+        nonisolated(unsafe) var failA = false
         let store = FleetStore(now: { clock }) { profile in
             if failA && profile.id == a.id { throw Failure.offline }
             return FleetReading(memoryUsage: 40)
@@ -182,7 +187,9 @@ final class MonitoringTests: XCTestCase {
     func testFleetCPUUsesSeparateBaselinesAndRemovedServersAreDiscarded() async {
         let a = ServerProfile(baseURL: "https://a.example")
         let b = ServerProfile(baseURL: "https://b.example")
-        var second = false
+        // Same reasoning as failA above: mutated only between sequential
+        // awaited refreshes, never concurrently with the closure running.
+        nonisolated(unsafe) var second = false
         let store = FleetStore { profile in
             let offset = profile.id == a.id ? 0 : 10000
             return FleetReading(cpuTicksTotal: offset + (second ? 1100 : 1000),

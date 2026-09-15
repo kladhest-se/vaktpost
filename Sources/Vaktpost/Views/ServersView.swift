@@ -334,6 +334,19 @@ struct ServerEditView: View {
             revealedPassword = nil
             showKey = false
         }
+        // A message here is the result of a specific attempt under a
+        // specific configuration — "TLS handshake failed" was true of the
+        // settings at the moment that attempt ran. Changing any of the
+        // settings that could have caused it and leaving the same message
+        // on screen makes it read as still true of what's now configured,
+        // when nothing has actually retried it yet. Clearing it here isn't
+        // itself a retry — Save still is, via saveAndTest() — it just stops
+        // the screen from looking like a fix already made didn't work.
+        .onChange(of: profile.baseURL) { message = nil }
+        .onChange(of: profile.username) { message = nil }
+        .onChange(of: profile.allowUntrustedTLS) { message = nil }
+        .onChange(of: profile.pinnedFingerprint) { message = nil }
+        .onChange(of: password) { message = nil }
         .confirmationDialog("Pin this certificate?", isPresented: $offerPinning,
                             titleVisibility: .visible) {
             Button("Pin it") {

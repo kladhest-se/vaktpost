@@ -44,7 +44,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     // is anything other than true, so nobody upgrading loses a banner they
     // never chose to hide — and never inserts it again afterward, so hiding
     // it once it's visible actually stays hidden.
-    var hasMigratedAlertsSection: Bool? = nil
+    var hasMigratedAlertsSection: Bool?
 
     var isConfigured: Bool { URL(string: baseURL)?.host != nil }
     var host: String { URL(string: baseURL)?.host ?? baseURL }

@@ -110,7 +110,7 @@ struct LogsView: View {
         }
         .background(theme.bg.ignoresSafeArea())
         .refreshable { await store.refreshManually() }
-        .task { await store.beginSecondaryLogs(); filterLines() }
+        .task(id: store.activeProfile?.id) { await store.beginSecondaryLogs(); filterLines() }
         .onChange(of: source) { filterLines() }
         .onChange(of: action) { filterLines() }
         .onChange(of: query) { filterLines() }

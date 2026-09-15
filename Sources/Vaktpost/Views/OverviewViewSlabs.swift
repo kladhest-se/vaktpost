@@ -63,7 +63,7 @@ extension OverviewView {
             }
         }
         .buttonStyle(.plain)
-        .task { await store.loadDNSBLStats() }
+        .task(id: store.activeProfile?.id) { await store.loadDNSBLStats() }
     }
 
     var alertsSlab: some View {
@@ -236,26 +236,32 @@ extension OverviewView {
     var systemSlab: some View {
         Slab(rail: .info, title: "Resources", trailing: uptimeText) {
             if let sys = store.system {
+                let am = store.alertManager
                 VStack(spacing: 12) {
                     if let cpu = sys.cpuUsage {
+                        let l = limits(am.cpuWarnOverride, HealthThresholds.cpuWarn, HealthThresholds.cpuBad, margin: 10)
                         Meter(label: "CPU Usage", value: cpu / 100, readout: Fmt.pct(cpu),
-                              health: level(cpu, warn: HealthThresholds.cpuWarn, bad: HealthThresholds.cpuBad))
+                              health: level(cpu, warn: l.warn, bad: l.bad))
                     }
                     if let mem = sys.memUsage {
+                        let l = limits(am.memWarnOverride, HealthThresholds.memWarn, HealthThresholds.memBad, margin: 10)
                         Meter(label: "Memory", value: mem / 100, readout: Fmt.pct(mem),
-                              health: level(mem, warn: HealthThresholds.memWarn, bad: HealthThresholds.memBad))
+                              health: level(mem, warn: l.warn, bad: l.bad))
                     }
                     if let disk = sys.diskUsage {
+                        let l = limits(am.diskWarnOverride, HealthThresholds.diskWarn, HealthThresholds.diskBad, margin: 10)
                         Meter(label: "Disk", value: disk / 100, readout: Fmt.pct(disk),
-                              health: level(disk, warn: HealthThresholds.diskWarn, bad: HealthThresholds.diskBad))
+                              health: level(disk, warn: l.warn, bad: l.bad))
                     }
                     if let swap = sys.swapUsage, swap > 0 {
+                        let l = limits(am.swapWarnOverride, HealthThresholds.swapWarn, HealthThresholds.swapBad, margin: 20)
                         Meter(label: "Swap", value: swap / 100, readout: Fmt.pct(swap),
-                              health: level(swap, warn: HealthThresholds.swapWarn, bad: HealthThresholds.swapBad))
+                              health: level(swap, warn: l.warn, bad: l.bad))
                     }
                     if let mbuf = sys.mbufUsage {
+                        let l = limits(am.mbufWarnOverride, HealthThresholds.mbufWarn, HealthThresholds.mbufBad, margin: 10)
                         Meter(label: "mbuf", value: mbuf / 100, readout: Fmt.pct(mbuf),
-                              health: level(mbuf, warn: HealthThresholds.mbufWarn, bad: HealthThresholds.mbufBad))
+                              health: level(mbuf, warn: l.warn, bad: l.bad))
                     }
                     Hairline()
                     // A fixed 110°C ceiling for the bar rather than one tied
@@ -270,12 +276,23 @@ extension OverviewView {
                     // is what says whether a given reading is fine.
                     if !sys.coreTemps.isEmpty {
                         let cpuTemp = sys.coreTemps.map(\.temp).max() ?? 0
+                        // The same override Alert.swift applies to whichever
+                        // sensor actually triggers — there is one setting,
+                        // not a separate one per sensor, so both bars here
+                        // read it. Previously hardcoded to 80/95 with no
+                        // override at all, which meant a person who'd
+                        // already raised their warning point in Settings
+                        // would still see this bar turn amber at the old
+                        // default.
+                        let l = limits(am.temperatureWarnOverride, 80, 95, margin: 10)
                         Meter(label: "CPU Temperature", value: cpuTemp / 110, readout: String(format: "%.0f °C", cpuTemp),
-                              health: level(cpuTemp, warn: 80, bad: 95))
+                              health: level(cpuTemp, warn: l.warn, bad: l.bad))
                     }
                     if let t = sys.temperature {
+                        let l = limits(am.temperatureWarnOverride,
+                                       sys.temperatureThresholds.warn, sys.temperatureThresholds.bad, margin: 10)
                         Meter(label: "\(sys.temperatureLabel) Temperature", value: t / 110, readout: String(format: "%.0f °C", t),
-                              health: level(t, warn: sys.temperatureThresholds.warn, bad: sys.temperatureThresholds.bad))
+                              health: level(t, warn: l.warn, bad: l.bad))
                     }
                     if sys.coreTemps.isEmpty && sys.temperature == nil {
                         FieldRow(key: "Temperature",
@@ -300,11 +317,20 @@ extension OverviewView {
         Slab(rail: .info, title: "State table") {
             if let st = store.states {
                 if let frac = st.fraction {
+                    // Was a separate, hardcoded (70, 88) that agreed with
+                    // neither HealthThresholds nor the actual state-table
+                    // alert (75/90) — so this bar could read "warn" at 72%
+                    // full while nothing had actually alerted yet, or the
+                    // reverse. Using the same thresholds the alert itself
+                    // uses, including the override, means the bar and the
+                    // alert always agree about what "warn" means here.
+                    let l = limits(store.alertManager.stateWarnOverride.map { $0 * 100 },
+                                   HealthThresholds.stateWarn * 100, HealthThresholds.stateBad * 100, margin: 10)
                     Meter(
                         label: st.isDefaultLimit ? "States in use (default limit)" : "States in use",
                         value: frac,
                         readout: "\(st.current ?? 0) / \(st.effectiveMaximum ?? 0)",
-                        health: level(frac * 100, warn: 70, bad: 88)
+                        health: level(frac * 100, warn: l.warn, bad: l.bad)
                     )
                     StateTrendLine(values: store.stateHistory.points.map(\.value), max: st.effectiveMaximum ?? 0)
                 } else {
@@ -738,6 +764,16 @@ extension OverviewView {
         if v >= bad { return .bad }
         if v >= warn { return .warn }
         return .ok
+    }
+
+    /// Resolves an overridable warn/bad pair the same way every threshold
+    /// override in this app works: the stored override if the person set
+    /// one, with "bad" following it at a fixed margin above so lowering
+    /// "warn" doesn't erase the distinction between concerning and serious
+    /// — otherwise the built-in default pair, unchanged.
+    func limits(_ override: Double?, _ defaultWarn: Double, _ defaultBad: Double, margin: Double) -> (warn: Double, bad: Double) {
+        guard let warn = override else { return (defaultWarn, defaultBad) }
+        return (warn, max(warn + margin, defaultBad))
     }
 
     @ViewBuilder

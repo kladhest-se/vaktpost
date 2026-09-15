@@ -69,6 +69,12 @@ final class XmlApiSimulator
             && str_contains($script, '*-traffic.rrd')) {
             return ['payload' => $this->rrdTraffic($script)];
         }
+        if (str_contains($script, 'speed.cloudflare.com/__down')) {
+            return ['payload' => $this->speedtest()];
+        }
+        if (str_contains($script, 'xml_base64')) {
+            return ['payload' => $this->backupConfig()];
+        }
 
         $log = $this->logRequest($script);
         if ($log !== null) {
@@ -1001,6 +1007,51 @@ final class XmlApiSimulator
      * than an 8-hour view with three points or a year view with tens of
      * thousands.
      */
+    /// A plausible download/upload/ping triple that drifts gently over time,
+    /// the same wobble approach as the RRD and interface-counter fixtures —
+    /// not a real network measurement, since the lab has no real WAN to
+    /// measure and making one for a demo would be slower and less
+    /// repeatable than a synthetic one, not more honest.
+    private function speedtest(): array
+    {
+        $elapsed = time() - strtotime('2026-09-01 00:00:00 UTC');
+        $wobble = sin($elapsed / 340.0);
+        return [
+            'available' => true,
+            'server' => 'speed.cloudflare.com',
+            'ping_ms' => round(9.0 + $wobble * 2.5, 1),
+            'download_mbps' => round(240.0 + $wobble * 35.0, 2),
+            'upload_mbps' => round(28.0 + $wobble * 4.0, 2),
+        ];
+    }
+
+    /// A small, syntactically real pfSense-style config.xml — not a copy of
+    /// anything from a real firewall, just enough structure to demonstrate
+    /// the backup flow actually downloading and sizing a file correctly.
+    private function backupConfig(): array
+    {
+        $xml = <<<XML
+        <?xml version="1.0"?>
+        <pfsense>
+        \t<version>24.11</version>
+        \t<system>
+        \t\t<hostname>vaktpost-lab</hostname>
+        \t\t<domain>example.invalid</domain>
+        \t</system>
+        \t<interfaces>
+        \t\t<wan><if>vtnet0</if></wan>
+        \t\t<lan><if>vtnet1</if></lan>
+        \t</interfaces>
+        </pfsense>
+        XML;
+        return [
+            'available' => true,
+            'xml_base64' => base64_encode($xml),
+            'size_bytes' => strlen($xml),
+            'hostname' => 'vaktpost-lab',
+        ];
+    }
+
     private function rrdTraffic(string $script): array
     {
         preg_match('/"-s",\s*"-(\d+)"/', $script, $windowMatch);

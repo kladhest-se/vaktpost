@@ -123,7 +123,7 @@ extension FirewallView {
     }
 
     var canReorderRules: Bool {
-        interfaceFilter != nil && !showFloating && query.isEmpty
+        store.canAdminister && interfaceFilter != nil && !showFloating && query.isEmpty
             && untrackedRulesOnSelectedInterface.isEmpty
     }
 

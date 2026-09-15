@@ -40,7 +40,7 @@ struct PFBlockerView: View {
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle("pfBlockerNG")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await store.loadPFBlocker() }
+        .task(id: store.activeProfile?.id) { await store.loadPFBlocker() }
         .refreshable { await store.loadPFBlocker(force: true) }
     }
 

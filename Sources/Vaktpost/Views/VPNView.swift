@@ -12,6 +12,9 @@ struct VPNView: View {
     @Environment(\.dashboardStore) private var store: DashboardStore
 
     @State private var pane: Pane?
+    // Which OpenVPN server/client or WireGuard tunnel is selected for detail
+    // — IPsec has no detail screen to select into, so this is unused there.
+    @State private var detailSelection: String?
 
     enum Pane: String, CaseIterable, Identifiable {
         case openvpn = "OpenVPN", wireguard = "WireGuard", ipsec = "IPsec"
@@ -44,43 +47,115 @@ struct VPNView: View {
                 .padding(.vertical, 10)
             }
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    FreshnessView(sections: [.openvpn, .openvpnClients, .ipsec, .wireguard], showNames: true)
-                    if available.isEmpty {
-                        Notice(
-                            symbol: "lock.open",
-                            title: "No VPN configured",
-                            detail: "No OpenVPN instances, WireGuard tunnels or IPsec associations were reported."
-                        )
-                    } else {
-                        switch selection {
-                        case .openvpn: openvpnPane
-                        case .wireguard: wireguardPane
-                        case .ipsec: ipsecPane
-                        }
-                    }
+            if available.isEmpty {
+                ScrollView {
+                    Notice(
+                        symbol: "lock.open",
+                        title: "No VPN configured",
+                        detail: "No OpenVPN instances, WireGuard tunnels or IPsec associations were reported."
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, available.count > 1 ? 0 : 12)
-                .padding(.bottom, 28)
-            .readableWidth()
+                .refreshable { await store.refreshManually() }
+            } else {
+                // OpenVPN and WireGuard both have a detail screen worth
+                // comparing side by side on iPad — a peer list moved off the
+                // row specifically so the row could stay a summary, which
+                // only pays off if the detail is still visible while
+                // scanning the rest of the list, not one push away from it.
+                // IPsec has nothing to push to, so it stays a plain
+                // full-width scroll like it always was.
+                switch selection {
+                case .openvpn:
+                    MasterDetail(
+                        selection: $detailSelection,
+                        emptyMessage: "Choose a server or client instance to see its connections.",
+                        list: { openvpnColumn },
+                        detail: { id in
+                            if let srv = (store.openvpnServers + store.openvpnClients).first(where: { $0.id == id }) {
+                                OpenVPNDetailView(server: srv, vpnThroughput: store.vpnThroughput).id(store.bindingID)
+                            } else {
+                                Notice(symbol: "questionmark.circle", title: "That instance is no longer in the list")
+                            }
+                        }
+                    )
+                case .wireguard:
+                    MasterDetail(
+                        selection: $detailSelection,
+                        emptyMessage: "Choose a tunnel to see its peers.",
+                        list: { wireguardColumn },
+                        detail: { id in
+                            if let tunnel = store.wireguardTunnels.first(where: { $0.id == id }) {
+                                WireGuardDetailView(
+                                    tunnel: tunnel,
+                                    peers: store.wireguardPeers.filter { $0.tunnel == tunnel.name }
+                                ).id(store.bindingID)
+                            } else {
+                                Notice(symbol: "questionmark.circle", title: "That tunnel is no longer in the list")
+                            }
+                        }
+                    )
+                case .ipsec:
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            FreshnessView(sections: [.ipsec], showNames: true)
+                            ipsecPane
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, available.count > 1 ? 0 : 12)
+                        .padding(.bottom, 28)
+                        .readableWidth()
+                    }
+                    .refreshable { await store.refreshManually() }
+                }
             }
-            .refreshable { await store.refreshManually() }
         }
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle("VPN")
+        // A selection from one pane means nothing in another — an OpenVPN
+        // server id and a WireGuard tunnel id could coincidentally collide,
+        // and even without that, switching technologies should not leave
+        // the old detail showing underneath the new list.
+        .onChange(of: pane) { detailSelection = nil }
+        .onChange(of: store.bindingID) { _, _ in detailSelection = nil }
+    }
+
+    private var openvpnColumn: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                FreshnessView(sections: [.openvpn, .openvpnClients], showNames: true)
+                openvpnPane
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, available.count > 1 ? 0 : 12)
+            .padding(.bottom, 28)
+        }
+        .refreshable { await store.refreshManually() }
+    }
+
+    private var wireguardColumn: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                FreshnessView(sections: [.wireguard], showNames: true)
+                wireguardPane
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, available.count > 1 ? 0 : 12)
+            .padding(.bottom, 28)
+        }
+        .refreshable { await store.refreshManually() }
     }
 
     @ViewBuilder
     private var openvpnPane: some View {
         ForEach(store.openvpnServers) { srv in
-            OpenVPNCard(server: srv, vpnThroughput: store.vpnThroughput)
+            OpenVPNCard(server: srv, vpnThroughput: store.vpnThroughput, selection: $detailSelection)
         }
         if !store.openvpnClients.isEmpty {
             GroupHeading(text: "Client instances")
             ForEach(store.openvpnClients) { srv in
-                OpenVPNCard(server: srv, vpnThroughput: store.vpnThroughput)
+                OpenVPNCard(server: srv, vpnThroughput: store.vpnThroughput, selection: $detailSelection)
             }
         }
     }
@@ -90,7 +165,8 @@ struct VPNView: View {
             WireGuardCard(
                 tunnel: tunnel,
                 peers: store.wireguardPeers.filter { $0.tunnel == tunnel.name },
-                vpnThroughput: store.vpnThroughput
+                vpnThroughput: store.vpnThroughput,
+                selection: $detailSelection
             )
         }
     }
@@ -110,10 +186,11 @@ struct OpenVPNCard: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     let server: OpenVPNServerStatus
     let vpnThroughput: ThroughputTracker
+    @Binding var selection: String?
 
     var body: some View {
-        NavigationLink {
-            OpenVPNDetailView(server: server, vpnThroughput: vpnThroughput)
+        Button {
+            selection = server.id
         } label: {
             Slab(rail: server.health, trailing: server.modeLabel) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -245,14 +322,15 @@ struct WireGuardCard: View {
     let tunnel: WireGuardTunnel
     let peers: [WireGuardPeer]
     let vpnThroughput: ThroughputTracker
+    @Binding var selection: String?
 
     private var connected: Int {
         peers.filter { $0.health == .ok }.count
     }
 
     var body: some View {
-        NavigationLink {
-            WireGuardDetailView(tunnel: tunnel, peers: peers)
+        Button {
+            selection = tunnel.id
         } label: {
             Slab(rail: tunnel.health, trailing: tunnel.listenPort.map { "port \($0)" }) {
                 VStack(alignment: .leading, spacing: 8) {

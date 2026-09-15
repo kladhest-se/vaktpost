@@ -15,6 +15,12 @@ final class AlertManager {
 
     private enum UDKey: String {
         case temperatureWarn = "alerts.tempWarn"
+        case cpuWarn = "alerts.cpuWarn"
+        case memWarn = "alerts.memWarn"
+        case diskWarn = "alerts.diskWarn"
+        case swapWarn = "alerts.swapWarn"
+        case mbufWarn = "alerts.mbufWarn"
+        case stateWarn = "alerts.stateWarn"
         case mutedAlerts = "alerts.hidden.v2"
         case alertsSilenced = "alerts.silenced"
         case acknowledgedAlerts = "alerts.acknowledged"
@@ -82,6 +88,38 @@ final class AlertManager {
         }
     }
 
+    /// The remaining built-in thresholds, overridable for the same reason
+    /// temperature is: a fixed guess about what "normal" looks like on
+    /// hardware the app has never seen. A firewall carrying a large mbuf
+    /// pool on purpose, or one that always idles around 80% state table
+    /// usage by design, shouldn't sit permanently flagged for it.
+    ///
+    /// `cpuWarnOverride` has no corresponding alert to feed — nothing
+    /// generates one from CPU usage today — so it only affects the Overview
+    /// meter's colour. The other five all affect both, the same way
+    /// temperature's override does.
+    var cpuWarnOverride: Double? {
+        didSet { UserDefaults.standard.set(cpuWarnOverride ?? 0, forKey: UDKey.cpuWarn.rawValue) }
+    }
+    var memWarnOverride: Double? {
+        didSet { UserDefaults.standard.set(memWarnOverride ?? 0, forKey: UDKey.memWarn.rawValue) }
+    }
+    var diskWarnOverride: Double? {
+        didSet { UserDefaults.standard.set(diskWarnOverride ?? 0, forKey: UDKey.diskWarn.rawValue) }
+    }
+    var swapWarnOverride: Double? {
+        didSet { UserDefaults.standard.set(swapWarnOverride ?? 0, forKey: UDKey.swapWarn.rawValue) }
+    }
+    var mbufWarnOverride: Double? {
+        didSet { UserDefaults.standard.set(mbufWarnOverride ?? 0, forKey: UDKey.mbufWarn.rawValue) }
+    }
+    /// A fraction (0–1), not a percentage, matching `HealthThresholds.stateWarn`
+    /// and the state table's own `fraction` — stored and compared in the same
+    /// units so nothing has to convert at the point of use.
+    var stateWarnOverride: Double? {
+        didSet { UserDefaults.standard.set(stateWarnOverride ?? 0, forKey: UDKey.stateWarn.rawValue) }
+    }
+
     // MARK: Initialization
 
     init(defaults: UserDefaults = .standard) {
@@ -91,6 +129,18 @@ final class AlertManager {
         acknowledgedAlerts = Set(defaults.stringArray(forKey: "alerts.acknowledged") ?? [])
         let tempWarn = defaults.double(forKey: "alerts.tempWarn")
         temperatureWarnOverride = tempWarn > 0 ? tempWarn : nil
+        let cpuWarn = defaults.double(forKey: UDKey.cpuWarn.rawValue)
+        cpuWarnOverride = cpuWarn > 0 ? cpuWarn : nil
+        let memWarn = defaults.double(forKey: UDKey.memWarn.rawValue)
+        memWarnOverride = memWarn > 0 ? memWarn : nil
+        let diskWarn = defaults.double(forKey: UDKey.diskWarn.rawValue)
+        diskWarnOverride = diskWarn > 0 ? diskWarn : nil
+        let swapWarn = defaults.double(forKey: UDKey.swapWarn.rawValue)
+        swapWarnOverride = swapWarn > 0 ? swapWarn : nil
+        let mbufWarn = defaults.double(forKey: UDKey.mbufWarn.rawValue)
+        mbufWarnOverride = mbufWarn > 0 ? mbufWarn : nil
+        let stateWarn = defaults.double(forKey: UDKey.stateWarn.rawValue)
+        stateWarnOverride = stateWarn > 0 ? stateWarn : nil
     }
 
     // MARK: Actions

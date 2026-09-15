@@ -82,7 +82,7 @@ struct ACMEView: View {
         }
         .refreshable { await store.refreshManually() }
         .background(theme.bg.ignoresSafeArea())
-        .task { await store.loadACME() }
+        .task(id: store.activeProfile?.id) { await store.loadACME() }
         .searchable(text: $query, prompt: "Certificate or domain")
         .navigationTitle("ACME Certificates")
     }

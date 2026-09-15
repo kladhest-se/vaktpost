@@ -280,6 +280,29 @@ struct PHPSnippet: Sendable {
         // `pkg_valid_name` and `escapeshellarg`.
         "g_get", "pkg_valid_name", "pkg_version_compare", "escapeshellarg",
         "isvalidpid", "unlink_if_exists", "mwexec_bg", "posix_kill", "usleep",
+        // A DNS lookup, using PHP's own resolver client rather than a shell.
+        // `dns_get_record()` asks the system resolver directly and returns a
+        // structured array — no `dig`/`nslookup` binary, no `exec`, nothing
+        // this boundary would otherwise have to forbid. `microtime` only
+        // times how long that call took, the same way other read snippets
+        // already read `time()`, and `round` only rounds that duration for
+        // display — both pure functions with no reach outside their own
+        // arguments.
+        "dns_get_record", "microtime", "round",
+        // The speed test's own outbound HTTPS request, plus the metadata
+        // read alongside it — none of it a shell call. `curl_*` makes an
+        // ordinary HTTP request the same way `dns_get_record` above makes
+        // an ordinary DNS one; `curl_getinfo`/`curl_error` only read back
+        // timing and status from a request already made, never issue one.
+        // `random_bytes` generates the upload leg's own throwaway payload
+        // in memory — nothing this reads or writes persists anywhere.
+        "curl_init", "curl_setopt", "curl_exec", "curl_getinfo", "curl_error", "curl_close",
+        "random_bytes",
+        // The config backup's own read path. `is_readable` and `php_uname`
+        // are pure queries; `base64_encode` only re-encodes a string this
+        // snippet already read via `file_get_contents`, already on this
+        // list, for safe transport — it does not touch disk itself.
+        "is_readable", "php_uname", "base64_encode",
     ]
 
     // MARK: - System
@@ -2943,6 +2966,64 @@ struct PHPSnippet: Sendable {
     $toreturn = ["version" => trim(file_get_contents("/etc/version"))];
     """)
 
+    /// Looks up one DNS record type for a host, using the firewall's own
+    /// resolver — usually Unbound, forwarding through whatever upstream or
+    /// split-DNS rules are configured there.
+    ///
+    /// `dns_get_record()` is PHP's own resolver client. It needs no shell —
+    /// unlike `dig` or `nslookup`, which is what this app's write boundary
+    /// would otherwise have to forbid here the same way it forbids `exec`
+    /// everywhere else. Populates both `records` (name/class/type/value,
+    /// the shape a `dig`-style tool would show) and `answers`
+    /// (name/address) with the same rows, so a view can read whichever
+    /// shape suits the record type without a second round trip.
+    ///
+    /// - Parameters:
+    ///   - host: The hostname to look up.
+    ///   - recordType: One of A, AAAA, CNAME, MX, NS, PTR, SOA, TXT.
+    ///     Anything else is treated as A.
+    static func dnsLookup(host: String, recordType: String) -> PHPSnippet {
+        let encoded = payload(JSONDict(["host": .string(host), "type": .string(recordType)]))
+        return PHPSnippet("dns_lookup", """
+        ini_set('display_errors', 0);
+        $toreturn = ["records" => [], "answers" => [], "serverTimings" => []];
+        $vaktpost_payload = "\(encoded)";
+        \(decodePayload)
+        $vaktpost_host = trim(strval($vaktpost_input["host"] ?? ""));
+        $vaktpost_type_name = strtoupper(trim(strval($vaktpost_input["type"] ?? "A")));
+        $vaktpost_types = ["A" => DNS_A, "AAAA" => DNS_AAAA, "MX" => DNS_MX, "TXT" => DNS_TXT,
+          "CNAME" => DNS_CNAME, "NS" => DNS_NS, "PTR" => DNS_PTR, "SOA" => DNS_SOA];
+        $vaktpost_dnstype = isset($vaktpost_types[$vaktpost_type_name]) ? $vaktpost_types[$vaktpost_type_name] : DNS_A;
+        $toreturn["host"] = $vaktpost_host;
+        if ($vaktpost_host === "" || strlen($vaktpost_host) > 253) {
+          $toreturn["error"] = "Enter a valid hostname.";
+        } else {
+          $vaktpost_start = microtime(true);
+          $vaktpost_results = @dns_get_record($vaktpost_host, $vaktpost_dnstype);
+          $vaktpost_elapsed = intval(round((microtime(true) - $vaktpost_start) * 1000));
+          $toreturn["queryTime"] = $vaktpost_elapsed;
+          $toreturn["serverTimings"][] = ["server" => "Firewall's own resolver", "time" => $vaktpost_elapsed . " msec"];
+          if (!is_array($vaktpost_results) || count($vaktpost_results) === 0) {
+            $toreturn["error"] = "No " . $vaktpost_type_name . " records found.";
+          } else {
+            foreach ($vaktpost_results as $vaktpost_r) {
+              $vaktpost_rtype = isset($vaktpost_r["type"]) ? strval($vaktpost_r["type"]) : $vaktpost_type_name;
+              $vaktpost_rname = isset($vaktpost_r["host"]) ? strval($vaktpost_r["host"]) : $vaktpost_host;
+              $vaktpost_value = "";
+              if (isset($vaktpost_r["ip"])) { $vaktpost_value = strval($vaktpost_r["ip"]); }
+              elseif (isset($vaktpost_r["ipv6"])) { $vaktpost_value = strval($vaktpost_r["ipv6"]); }
+              elseif (isset($vaktpost_r["txt"])) { $vaktpost_value = strval($vaktpost_r["txt"]); }
+              elseif (isset($vaktpost_r["target"]) && isset($vaktpost_r["pri"])) { $vaktpost_value = strval($vaktpost_r["pri"]) . " " . strval($vaktpost_r["target"]); }
+              elseif (isset($vaktpost_r["target"])) { $vaktpost_value = strval($vaktpost_r["target"]); }
+              elseif (isset($vaktpost_r["mname"])) { $vaktpost_value = strval($vaktpost_r["mname"]); }
+              $toreturn["records"][] = ["name" => $vaktpost_rname, "class" => "IN", "type" => $vaktpost_rtype, "value" => $vaktpost_value];
+              $toreturn["answers"][] = ["name" => $vaktpost_rname, "address" => $vaktpost_value];
+            }
+          }
+        }
+        """)
+    }
+
     /// Reloads the firewall ruleset without restarting services.
     ///
     /// Calls `filter_configure_sync()` which reloads the pf ruleset in place.
@@ -5077,6 +5158,106 @@ struct PHPSnippet: Sendable {
         """)
     }
 
+    /// Throughput measured over HTTPS rather than shelling out to a CLI
+    /// speedtest tool. This app's own write-boundary rules forbid every
+    /// shell-execution path (`exec`, `system`, `shell_exec`, `proc_open`,
+    /// and the rest) in every snippet but pfSense's own fixed updater —
+    /// deliberately, since a shell reach would make the function allowlist
+    /// meaningless. curl_exec() is not on that list: it makes an ordinary
+    /// outbound HTTPS request, the same category of thing DNS lookups and
+    /// ping already do here, so this measures real throughput without
+    /// needing a package installed or an exception carved into that rule.
+    ///
+    /// speed.cloudflare.com is Cloudflare's own speed-test infrastructure —
+    /// the same one behind their public DNS resolver's own speed-test page —
+    /// a known payload size with no signup or key needed, reachable from
+    /// any firewall with a working WAN.
+    static let speedtest = PHPSnippet("speedtest", """
+    ini_set('display_errors', 0);
+    $toreturn = [];
+
+    if (!function_exists('curl_init')) {
+        $toreturn["available"] = false;
+        $toreturn["reason"] = "PHP's curl extension is not available on this firewall.";
+    } else {
+        // Download first: a WAN that cannot reach the test server at all
+        // should be reported here rather than after also waiting out the
+        // upload leg's own timeout.
+        $downloadBytes = 10000000;
+        $downloadStart = microtime(true);
+        $ch = curl_init("https://speed.cloudflare.com/__down?bytes=$downloadBytes");
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, false);
+        curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($handle, $data) { return strlen($data); });
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+        $ok = curl_exec($ch);
+        $connectTime = curl_getinfo($ch, CURLINFO_CONNECT_TIME);
+        $downloadSize = curl_getinfo($ch, CURLINFO_SIZE_DOWNLOAD);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+        $downloadElapsed = microtime(true) - $downloadStart;
+
+        if ($ok === false || $httpCode !== 200 || $downloadSize <= 0 || $downloadElapsed <= 0) {
+            $toreturn["available"] = false;
+            $toreturn["reason"] = $curlError !== "" ? $curlError : "The download test failed with HTTP status $httpCode.";
+        } else {
+            $toreturn["available"] = true;
+            $toreturn["server"] = "speed.cloudflare.com";
+            $toreturn["ping_ms"] = round($connectTime * 1000, 1);
+            $toreturn["download_mbps"] = round(($downloadSize * 8) / $downloadElapsed / 1000000, 2);
+
+            // A failed upload leg still leaves download and ping worth
+            // reporting, so its own failure does not blank out the rest.
+            $uploadBytes = 5000000;
+            $uploadData = random_bytes($uploadBytes);
+            $uploadStart = microtime(true);
+            $ch2 = curl_init("https://speed.cloudflare.com/__up");
+            curl_setopt($ch2, CURLOPT_POST, true);
+            curl_setopt($ch2, CURLOPT_POSTFIELDS, $uploadData);
+            curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch2, CURLOPT_TIMEOUT, 30);
+            curl_setopt($ch2, CURLOPT_CONNECTTIMEOUT, 10);
+            curl_setopt($ch2, CURLOPT_SSL_VERIFYPEER, true);
+            $ok2 = curl_exec($ch2);
+            $uploadHttpCode = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+            curl_close($ch2);
+            $uploadElapsed = microtime(true) - $uploadStart;
+
+            if ($ok2 !== false && $uploadHttpCode === 200 && $uploadElapsed > 0) {
+                $toreturn["upload_mbps"] = round(($uploadBytes * 8) / $uploadElapsed / 1000000, 2);
+            }
+        }
+    }
+    """)
+
+    /// The configuration file exactly as pfSense has it on disk right now —
+    /// a plain read, base64-encoded for safe transport, never a write. No
+    /// entry in `writeOperations` needed: `file_get_contents()` here is the
+    /// read this app's own write-boundary rules already permit without
+    /// restriction (only write-mode `fopen` and `file_put_contents` are
+    /// forbidden), and nothing below ever assigns back to `$config` or
+    /// calls `write_config()`.
+    static let backupConfig = PHPSnippet("backup_config", """
+    ini_set('display_errors', 0);
+    require_once '/etc/inc/globals.inc';
+    global $g;
+    $toreturn = [];
+    $cfgdir = $g['conf_path'] ?? '/cf/conf';
+    $cfgfile = $cfgdir . '/config.xml';
+    if (!file_exists($cfgfile) || !is_readable($cfgfile)) {
+        $toreturn["available"] = false;
+        $toreturn["reason"] = "The configuration file could not be read.";
+    } else {
+        $xml = file_get_contents($cfgfile);
+        $toreturn["available"] = $xml !== false;
+        $toreturn["xml_base64"] = $xml !== false ? base64_encode($xml) : null;
+        $toreturn["size_bytes"] = $xml !== false ? strlen($xml) : 0;
+        $toreturn["hostname"] = php_uname('n');
+    }
+    """)
+
     /// Every snippet, for the publish check to audit and for tests to cover.
     static var all: [PHPSnippet] {
         [telemetry, firmware, packages, packageUpdates, updateProcessStatus,
@@ -5086,7 +5267,7 @@ struct PHPSnippet: Sendable {
          ruleSeparators, carp,
          certificates, dyndns, ping, rrdProbe, rrdTrace,
          batchCore, batchClients, batchVpn, batchSystem,
-         reloadFirewall]
+         reloadFirewall, speedtest, backupConfig]
         + LogSource.allCases.map { log($0, limit: 100) }
         + RRDWindow.allCases.map { rrdTraffic($0) }
         + HostFilter.allCases.map { hostTraffic(slot: 0, filter: $0, sort: .inbound) }

@@ -32,6 +32,8 @@ struct MoreView: View {
                     link("Incident Timeline", "point.3.connected.trianglepath.dotted", badge: 0) { IncidentTimelineView() }
                     link("Analytics", "chart.bar", badge: 0) { AnalyticsView() }
                     link("Investigate", "magnifyingglass", badge: 0) { InvestigateView() }
+                    link("Network Tools", "dot.radiowaves.left.and.right", badge: 0) { NetworkToolsView() }
+                    link("Speed Test", "gauge.with.dots.needle.67percent", badge: 0) { SpeedtestView() }
                     link("Conflicts", "exclamationmark.triangle", badge: store.conflictCount) { ConflictsView() }
                 }
 
@@ -47,6 +49,14 @@ struct MoreView: View {
                     link("System Status", "server.rack", badge: 0) { SystemView() }
                     link("Certificates", "lock.doc", badge: store.expiringCertificateCount) { CertificatesView() }
                     link("ACME", "checkmark.seal", badge: store.stalledACME.count) { ACMEView() }
+                    // Contains everything on the firewall including
+                    // passwords and private keys, so this stays behind the
+                    // same administration gate as an actual write rather
+                    // than sitting next to Certificates and ACME as if it
+                    // were an equally low-stakes read.
+                    if store.canAdminister {
+                        link("Configuration Backup", "arrow.down.doc", badge: 0) { ConfigBackupView() }
+                    }
                 }
             }
             .padding(.horizontal, 16)

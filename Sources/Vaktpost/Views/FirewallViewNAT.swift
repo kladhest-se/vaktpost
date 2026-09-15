@@ -75,7 +75,7 @@ extension FirewallView {
     }
 
     var canReorderNatRules: Bool {
-        query.isEmpty && currentNatItems.count > 1
+        store.canAdminister && query.isEmpty && currentNatItems.count > 1
     }
 
     @ViewBuilder

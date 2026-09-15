@@ -11,6 +11,8 @@ struct NetworkView: View {
     @State private var quickBlockInterface: InterfaceStat?
     @State private var showWriteError = false
     @State private var writeError: WriteError?
+    // Interfaces only — gateways have no detail view to select into.
+    @State private var selection: String?
 
     enum InterfaceFilter: String, CaseIterable, Identifiable {
         case all = "All", up = "Up", down = "Down"
@@ -18,65 +20,89 @@ struct NetworkView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                PageHeader(title: "Network",
-                           subtitle: selectedTab == 0 ? "\(store.interfaces.count) interfaces" : "\(store.gatewayManager.gateways.count) gateways")
-                VStack(spacing: 0) {
-                    Picker("Network", selection: $selectedTab) {
-                        Text("Interfaces").tag(0)
-                        Text("Gateways").tag(1)
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    
-                    if selectedTab == 0 {
-                        Picker("Status", selection: $interfaceFilter) {
-                            ForEach(InterfaceFilter.allCases) { Text($0.rawValue).tag($0) }
+        Group {
+            if selectedTab == 0 {
+                // A split view on iPad: comparing two interfaces' throughput
+                // side by side is exactly the kind of thing this screen is
+                // for, and it was previously the same push-and-lose-the-list
+                // navigation as a phone regardless of how much width was
+                // available.
+                MasterDetail(
+                    selection: $selection,
+                    emptyMessage: "Choose an interface to see its throughput, history and client traffic.",
+                    list: { interfacesColumn },
+                    detail: { id in
+                        // Looked up again rather than captured: a stored copy
+                        // would show the interface as it was at the moment it
+                        // was tapped, and this list refreshes on every cycle.
+                        if let iface = store.interfaces.first(where: { $0.id == id }) {
+                            InterfaceDetailView(iface: iface).id(store.bindingID)
+                        } else {
+                            Notice(symbol: "questionmark.circle",
+                                   title: "That interface is no longer in the list")
                         }
-                        .pickerStyle(.segmented)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 4)
-                        
-                        interfacesContent
-                    } else {
-                        gatewaysContent
                     }
+                )
+            } else {
+                // Full width rather than inside the split view: gateways have
+                // no detail screen to select into, so a list column beside an
+                // empty "choose something" pane would be advice about a
+                // screen that does not exist.
+                ScrollView {
+                    PageHeader(title: "Network", subtitle: "\(store.gatewayManager.gateways.count) gateways")
+                    tabPicker
+                    gatewaysContent
                 }
+                .readableWidth()
                 .refreshable { await store.refreshManually() }
+                .background(theme.bg.ignoresSafeArea())
             }
-            .background(theme.bg.ignoresSafeArea())
-            .navigationTitle("Network")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if selectedTab == 0 && store.interfaces.count > 1 {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        NavigationLink {
-                            InterfaceComparisonView()
-                        } label: {
-                            Image(systemName: "arrow.left.arrow.right")
-                        }
+        }
+        .navigationTitle("Network")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if selectedTab == 0 && store.interfaces.count > 1 {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    NavigationLink {
+                        InterfaceComparisonView()
+                    } label: {
+                        Image(systemName: "arrow.left.arrow.right")
                     }
                 }
             }
-            .sheet(isPresented: $showQuickBlock) {
-                NavigationStack {
-                    QuickBlockView()
-                }
-            }
-            .confirmationSheet(
-                isPresented: $showReloadConfirm,
-                title: "Reload firewall rules",
-                message: store.writeCoordinator.preview(for: .reloadFirewall),
-                destructive: true,
-                destructiveLabel: "Reload",
-                confirmLabel: "Cancel",
-                onConfirm: { await reloadFirewall() },
-                onCancel: {}
-            )
-            .writeErrorAlert(isErrorPresented: $showWriteError, error: $writeError)
         }
+        .sheet(isPresented: $showQuickBlock) {
+            NavigationStack {
+                QuickBlockView()
+            }
+        }
+        .confirmationSheet(
+            isPresented: $showReloadConfirm,
+            title: "Reload firewall rules",
+            message: store.writeCoordinator.preview(for: .reloadFirewall),
+            destructive: true,
+            destructiveLabel: "Reload",
+            confirmLabel: "Cancel",
+            onConfirm: { await reloadFirewall() },
+            onCancel: {}
+        )
+        .writeErrorAlert(isErrorPresented: $showWriteError, error: $writeError)
+        // A selected interface belongs to the firewall it was selected on.
+        // Left alone across a switch, the detail pane would keep showing
+        // one firewall's interface — by name only, since the id is a
+        // "device-name" pair another firewall could coincidentally share —
+        // while the list beside it had already moved to the next one.
+        .onChange(of: store.bindingID) { _, _ in selection = nil }
+    }
+
+    private var tabPicker: some View {
+        Picker("Network", selection: $selectedTab) {
+            Text("Interfaces").tag(0)
+            Text("Gateways").tag(1)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     // MARK: Interfaces
@@ -87,6 +113,23 @@ struct NetworkView: View {
         case .up: return store.interfaces.filter { $0.status == "up" }
         case .down: return store.interfaces.filter { $0.status != "up" }
         }
+    }
+
+    private var interfacesColumn: some View {
+        ScrollView {
+            PageHeader(title: "Network", subtitle: "\(store.interfaces.count) interfaces")
+            tabPicker
+            Picker("Status", selection: $interfaceFilter) {
+                ForEach(InterfaceFilter.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 4)
+
+            interfacesContent
+        }
+        .refreshable { await store.refreshManually() }
+        .background(theme.bg.ignoresSafeArea())
     }
 
     private var interfacesContent: some View {
@@ -113,7 +156,7 @@ struct NetworkView: View {
                 )
             } else {
                 ForEach(interfaces) { iface in
-                    InterfaceCard(iface: iface)
+                    InterfaceCard(iface: iface, selection: $selection)
                 }
             }
         }
@@ -171,10 +214,11 @@ struct InterfaceCard: View {
     @Environment(\.dashboardStore) private var store: DashboardStore
     @State private var showQuickBlock = false
     let iface: InterfaceStat
+    @Binding var selection: String?
 
     var body: some View {
-        NavigationLink {
-            InterfaceDetailView(iface: iface)
+        Button {
+            selection = iface.id
         } label: {
         Slab(rail: iface.health) {
             VStack(alignment: .leading, spacing: 6) {

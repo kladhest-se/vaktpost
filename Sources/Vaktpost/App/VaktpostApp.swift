@@ -231,7 +231,6 @@ struct RootView: View {
                                 .appToolbar()
                         }
                         .tabItem { Label("More", systemImage: "ellipsis.circle") }
-                        .badge(store.alertManager.criticalAlertCount)
                     }
 
                     // No refresh indicator here at all.

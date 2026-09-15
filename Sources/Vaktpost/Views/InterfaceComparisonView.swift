@@ -36,7 +36,7 @@ struct InterfaceComparisonView: View {
     private var selectedInterfaces: [InterfaceStat] {
         store.interfaces
             .filter { selectedKeys.contains($0.seriesKey) }
-            .sorted { store.interfaceLabel(for: $0.name) ?? $0.name < store.interfaceLabel(for: $1.name) ?? $1.name }
+            .sorted { $0.name < $1.name }
     }
 
     var body: some View {
@@ -134,12 +134,24 @@ struct InterfaceComparisonView: View {
                     }
                 }
 
+                // iface.name directly, not store.interfaceLabel(for:) — this
+                // screen already has InterfaceStat, whose .name is the
+                // resolved friendly name, so it needs no lookup. Passing it
+                // through the lookup anyway once made this screen show one
+                // interface's name for a different one: pfSense's internal
+                // "lan" role can be renamed to display as anything, and a
+                // separate interface can then be given that literal name.
+                // interfaceLabel(for:) is built for raw pfSense identifiers
+                // (a rule's, lease's, or ARP entry's own interface field) —
+                // exactly the case where an internal handle needs resolving
+                // to what the administrator actually calls it — not for a
+                // name that's already resolved.
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 16) {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(splitInterfaces.left, id: \.seriesKey) { iface in
                                 InterfaceCheckRow(
-                                    label: store.interfaceLabel(for: iface.name) ?? iface.name,
+                                    label: iface.name,
                                     health: iface.health,
                                     isSelected: selectedKeys.contains(iface.seriesKey)
                                 ) {
@@ -150,7 +162,7 @@ struct InterfaceComparisonView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(splitInterfaces.right, id: \.seriesKey) { iface in
                                 InterfaceCheckRow(
-                                    label: store.interfaceLabel(for: iface.name) ?? iface.name,
+                                    label: iface.name,
                                     health: iface.health,
                                     isSelected: selectedKeys.contains(iface.seriesKey)
                                 ) {
@@ -185,7 +197,7 @@ struct InterfaceComparisonView: View {
             title: "Inbound",
             series: selectedInterfaces.map { iface -> (label: String, values: [Double], color: Color) in
                 let points = store.throughput.points(for: iface.seriesKey)
-                let label = store.interfaceLabel(for: iface.name) ?? iface.name
+                let label = iface.name
                 return (label, points.map(\.inBps), interfaceColors[iface.seriesKey] ?? theme.ok)
             },
             color: theme.ok
@@ -197,7 +209,7 @@ struct InterfaceComparisonView: View {
             title: "Outbound",
             series: selectedInterfaces.map { iface -> (label: String, values: [Double], color: Color) in
                 let points = store.throughput.points(for: iface.seriesKey)
-                let label = store.interfaceLabel(for: iface.name) ?? iface.name
+                let label = iface.name
                 return (label, points.map(\.outBps), interfaceColors[iface.seriesKey] ?? theme.info)
             },
             color: theme.info

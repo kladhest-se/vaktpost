@@ -79,7 +79,7 @@ struct HAProxyView: View {
             .refreshable { await store.refreshManually() }
         }
         .background(theme.bg.ignoresSafeArea())
-        .task { await store.loadHAProxy() }
+        .task(id: store.activeProfile?.id) { await store.loadHAProxy() }
         .searchable(text: $query, prompt: "Backend, server or address")
         .navigationTitle("HAProxy")
     }

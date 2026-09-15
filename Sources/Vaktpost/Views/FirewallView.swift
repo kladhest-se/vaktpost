@@ -194,7 +194,7 @@ struct FirewallView: View {
         // Rules, NAT and aliases are fetched when this screen opens rather
         // than on the refresh timer — 98 rules is a large payload for a tab
         // most people never open. Nothing called this, so the tab was empty.
-        .task { await store.loadFirewallObjects() }
+        .task(id: store.activeProfile?.id) { await store.loadFirewallObjects() }
         .navigationTitle("Firewall")
         // Not on `orderChangedBar`, where this used to live. That bar exists
         // only `if ruleOrderIsDirty`, and `rulePendingOrder = nil` — which

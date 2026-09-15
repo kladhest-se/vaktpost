@@ -244,7 +244,72 @@ struct SettingsView: View {
                         .tint(theme.accentColor)
                         .contextMenu {
                             if category == .sensor { temperatureMenu }
+                            if category == .capacity { capacityMenus }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Six nested submenus under the Capacity row's long press: CPU, Memory,
+    /// Disk, Swap, mbuf, and the state table. One shared row, because
+    /// `.capacity` is one alert category covering five different alerts —
+    /// CPU makes six, despite having no alert of its own to attach to,
+    /// since it is the same kind of number as the other five and the meter
+    /// on Overview reads the same override.
+    @ViewBuilder
+    private var capacityMenus: some View {
+        thresholdMenu("CPU usage", current: store.alertManager.cpuWarnOverride, options: [50, 60, 70, 80, 90]) {
+            store.alertManager.cpuWarnOverride = $0
+        }
+        thresholdMenu("Memory", current: store.alertManager.memWarnOverride, options: [60, 70, 80, 90]) {
+            store.alertManager.memWarnOverride = $0
+        }
+        thresholdMenu("Disk", current: store.alertManager.diskWarnOverride, options: [60, 70, 80, 90]) {
+            store.alertManager.diskWarnOverride = $0
+        }
+        thresholdMenu("Swap", current: store.alertManager.swapWarnOverride, options: [10, 25, 40, 60]) {
+            store.alertManager.swapWarnOverride = $0
+        }
+        thresholdMenu("mbuf", current: store.alertManager.mbufWarnOverride, options: [50, 60, 75, 85]) {
+            store.alertManager.mbufWarnOverride = $0
+        }
+        // Stored as a fraction (0–1), matching HealthThresholds.stateWarn and
+        // the state table's own `fraction` — only this one needs the ×100/÷100
+        // conversion at the boundary, since it's the only overridable
+        // threshold not already stored the same way it's displayed.
+        thresholdMenu("State table", current: store.alertManager.stateWarnOverride.map { $0 * 100 },
+                      options: [50, 65, 75, 85]) {
+            store.alertManager.stateWarnOverride = $0.map { $0 / 100 }
+        }
+    }
+
+    /// One row's worth of "Automatic" plus a handful of round percentage
+    /// steps, as a submenu — the same fixed-steps-not-a-slider shape
+    /// `temperatureMenu` already uses, generalized so the other six
+    /// thresholds don't each need their own copy of it.
+    @ViewBuilder
+    private func thresholdMenu(_ title: String, current: Double?, options: [Int],
+                               set: @escaping (Double?) -> Void) -> some View {
+        Menu(title) {
+            Button {
+                set(nil)
+            } label: {
+                if current == nil {
+                    Label("Automatic", systemImage: "checkmark")
+                } else {
+                    Text("Automatic")
+                }
+            }
+            ForEach(options, id: \.self) { percent in
+                Button {
+                    set(Double(percent))
+                } label: {
+                    if Int(current ?? -1) == percent {
+                        Label("Warn at \(percent)%", systemImage: "checkmark")
+                    } else {
+                        Text("Warn at \(percent)%")
                     }
                 }
             }
