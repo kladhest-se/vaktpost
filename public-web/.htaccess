@@ -3,6 +3,12 @@ Options -Indexes
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteRule ^lib/ - [R=404,L]
+  # Some Apache/PHP setups (CGI/FastCGI in particular) do not forward the
+  # Authorization header to PHP by default, which xmlrpc.php needs to read
+  # the Basic Auth credentials. This re-exposes it as REDIRECT_HTTP_AUTHORIZATION,
+  # which xmlrpc.php already falls back to.
+  RewriteCond %{HTTP:Authorization} ^(.+)
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 </IfModule>
 
 <IfModule mod_headers.c>

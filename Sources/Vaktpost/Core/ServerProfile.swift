@@ -61,6 +61,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
 
 /// Holds every configured firewall and which one is on screen.
 @MainActor
+@Observable
 final class ServerRegistry: Observable {
 
     private static let listKey = "servers.list"
