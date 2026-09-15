@@ -2,6 +2,28 @@
 
 declare(strict_types=1);
 
+// Polyfills for PHP 8.0 string functions, since this endpoint has been
+// deployed on hosts running an older PHP. Behaviourally identical to the
+// built-ins; only defined if the host doesn't already provide them.
+if (!function_exists('str_contains')) {
+    function str_contains(string $haystack, string $needle): bool
+    {
+        return $needle === '' || strpos($haystack, $needle) !== false;
+    }
+}
+if (!function_exists('str_starts_with')) {
+    function str_starts_with(string $haystack, string $needle): bool
+    {
+        return $needle === '' || strncmp($haystack, $needle, strlen($needle)) === 0;
+    }
+}
+if (!function_exists('str_ends_with')) {
+    function str_ends_with(string $haystack, string $needle): bool
+    {
+        return $needle === '' || substr($haystack, -strlen($needle)) === $needle;
+    }
+}
+
 require_once __DIR__ . '/lib/XmlApiSimulator.php';
 
 const MAX_BODY_BYTES = 512000;
@@ -28,7 +50,7 @@ function xmlUnescape(string $value): string
     return html_entity_decode($value, ENT_QUOTES | ENT_XML1, 'UTF-8');
 }
 
-function xmlResponse(mixed $payload, int $status = 200): never
+function xmlResponse($payload, int $status = 200)
 {
     http_response_code($status);
     header('Content-Type: text/xml; charset=utf-8');
@@ -42,7 +64,7 @@ function xmlResponse(mixed $payload, int $status = 200): never
     exit;
 }
 
-function faultResponse(int $code, string $message, int $status = 500): never
+function faultResponse(int $code, string $message, int $status = 500)
 {
     http_response_code($status);
     header('Content-Type: text/xml; charset=utf-8');
