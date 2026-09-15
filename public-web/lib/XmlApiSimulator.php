@@ -75,6 +75,10 @@ final class XmlApiSimulator
             return ['payload' => $log];
         }
 
+        if (str_contains($script, 'printBandwidth(')) {
+            return ['payload' => $this->hostTraffic($script)];
+        }
+
         // ── Writes ──
         //
         // Every write snippet carries $vaktpost_payload (base64 JSON) and
@@ -1002,6 +1006,131 @@ final class XmlApiSimulator
                 'outpkts' => (int) $this->driftingCounter(98002, ($opt1Rate * 0.4) / 700, $elapsed, 29, 3.5),
                 'inerrs' => 0, 'outerrs' => 0, 'collisions' => 0],
         ];
+    }
+
+    /**
+     * Per-host bandwidth for one interface, synthesized from a small fixed
+     * catalog of hosts per interface rather than a real packet capture.
+     * `slot`, and the filter/sort `printBandwidth` was called with, are read
+     * out of the snippet text the same way every other value here is —
+     * they're embedded directly in the script rather than passed as part of
+     * the payload, since this snippet predates the payload convention.
+     *
+     * @return array<string, mixed>
+     */
+    private function hostTraffic(string $script): array
+    {
+        preg_match('/\$vaktpost_slot = (\d+);/', $script, $slotMatch);
+        preg_match('/printBandwidth\(\$vaktpost_key, "(\w*)", "(\w*)"/', $script, $paramsMatch);
+        $slot = isset($slotMatch[1]) ? (int) $slotMatch[1] : 0;
+        $filter = $paramsMatch[1] ?? 'local';
+        $sort = $paramsMatch[2] ?? 'in';
+
+        $interfaces = [
+            ['key' => 'wan', 'descr' => 'WAN', 'device' => 'vtnet0'],
+            ['key' => 'lan', 'descr' => 'LAN', 'device' => 'vtnet1'],
+            ['key' => 'opt1', 'descr' => 'OPENVPN1', 'device' => 'ovpns1'],
+        ];
+        if (!isset($interfaces[$slot])) {
+            return [
+                'available' => false, 'interface' => '', 'descr' => '', 'device' => '',
+                'slot' => $slot, 'reason' => 'This firewall has no interface in that position.',
+                'raw' => '', 'data' => [],
+            ];
+        }
+        $iface = $interfaces[$slot];
+
+        // A small, fixed set of hosts per interface: "local" ones matching
+        // the same addresses the Clients tab already shows via ARP/DHCP,
+        // "remote" ones representing traffic to or from the internet. WAN
+        // genuinely has no hosts of its own behind it, so its local set is
+        // empty — matching how a real WAN interface has no local subnet.
+        $catalog = [
+            'wan' => ['local' => [], 'remote' => ['203.0.113.66', '198.51.100.5', '203.0.113.81']],
+            'lan' => ['local' => ['192.0.2.20', '192.0.2.53', '192.0.2.110', '192.0.2.111'], 'remote' => ['203.0.113.10', '198.51.100.20']],
+            'opt1' => ['local' => ['192.0.2.210'], 'remote' => ['203.0.113.42']],
+        ];
+        $pool = $catalog[$iface['key']] ?? ['local' => [], 'remote' => []];
+        if ($filter === 'local') {
+            $hosts = $pool['local'];
+        } elseif ($filter === 'remote') {
+            $hosts = $pool['remote'];
+        } else {
+            $hosts = array_merge($pool['local'], $pool['remote']);
+        }
+
+        if (empty($hosts)) {
+            return [
+                'available' => true, 'interface' => $iface['key'], 'descr' => $iface['descr'],
+                'device' => $iface['device'], 'slot' => $slot, 'reason' => '', 'raw' => '', 'data' => [],
+            ];
+        }
+
+        // A time-varying instantaneous rate per host, distinct per host and
+        // per direction so the numbers move between polls rather than
+        // sitting flat. This is a fresh capture each call, not a counter,
+        // so unlike interface byte counts there is no monotonicity
+        // constraint to respect here.
+        $now = microtime(true);
+        $rows = [];
+        foreach ($hosts as $ip) {
+            $seed = crc32($ip);
+            $phaseIn = ($seed % 100) / 100 * 2 * M_PI;
+            $phaseOut = (($seed >> 8) % 100) / 100 * 2 * M_PI;
+            $baseIn = 200_000 + ($seed % 900_000);
+            $baseOut = 80_000 + (($seed >> 4) % 400_000);
+            $bitsIn = max(0, $baseIn * (1 + 0.5 * sin($now / 7 + $phaseIn)));
+            $bitsOut = max(0, $baseOut * (1 + 0.5 * sin($now / 11 + $phaseOut)));
+            $rows[] = [
+                'ip' => $ip,
+                'in_text' => $this->formatRate($bitsIn),
+                'out_text' => $this->formatRate($bitsOut),
+                'sort_in' => $bitsIn,
+                'sort_out' => $bitsOut,
+            ];
+        }
+
+        $sortKey = $sort === 'out' ? 'sort_out' : 'sort_in';
+        usort($rows, function (array $a, array $b) use ($sortKey): int {
+            return $b[$sortKey] <=> $a[$sortKey];
+        });
+        $rows = array_slice($rows, 0, 10);
+        foreach ($rows as $i => $row) {
+            unset($rows[$i]['sort_in'], $rows[$i]['sort_out']);
+        }
+
+        $rawParts = [];
+        foreach ($rows as $row) {
+            $rawParts[] = $row['ip'] . ';' . $row['in_text'] . ';' . $row['out_text'];
+        }
+        $raw = implode('|', $rawParts) . '|';
+
+        return [
+            'available' => true,
+            'interface' => $iface['key'],
+            'descr' => $iface['descr'],
+            'device' => $iface['device'],
+            'slot' => $slot,
+            'reason' => '',
+            'raw' => $raw,
+            'data' => array_values($rows),
+        ];
+    }
+
+    /**
+     * Formats a bits-per-second value the way `rate` prints one: a bare
+     * integer under 1000, otherwise a two-decimal value with a K or M
+     * suffix.
+     */
+    private function formatRate(float $bitsPerSecond): string
+    {
+        if ($bitsPerSecond >= 1_000_000) {
+            return number_format($bitsPerSecond / 1_000_000, 2) . 'M';
+        }
+        if ($bitsPerSecond >= 1_000) {
+            return number_format($bitsPerSecond / 1_000, 2) . 'K';
+        }
+        return (string) (int) round($bitsPerSecond);
     }
 
     /** @return array{data: array<string, array<string, mixed>>} */
