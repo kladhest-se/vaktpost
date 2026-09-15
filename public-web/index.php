@@ -15,8 +15,8 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 <meta name="description" content="Vaktpost is an open-source iOS app for monitoring a pfSense firewall and performing a constrained set of confirmed administrative actions.">
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="icon" type="image/png" href="icons/coral.png">
-<link rel="apple-touch-icon" href="icons/coral.png">
+<link rel="icon" type="image/png" href="app-icons/coral.png">
+<link rel="apple-touch-icon" href="app-icons/coral.png">
 <link rel="stylesheet" href="styles.css">
 <meta property="og:title" content="Vaktpost">
 <meta property="og:description" content="An iOS app for monitoring and administering a pfSense firewall. Open source, Catppuccin-themed.">
@@ -27,7 +27,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 <header class="bar">
   <div class="wrap bar__inner">
     <a class="mark" href="#top">
-      <img class="mark__icon" id="mark-icon" src="icons/coral.png" alt="" width="26" height="26">
+      <img class="mark__icon" id="mark-icon" src="app-icons/coral.png" alt="" width="26" height="26">
       Vaktpost
     </a>
     <nav class="site-nav" aria-label="Primary">

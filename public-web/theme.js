@@ -40,7 +40,7 @@
     const icon = document.getElementById('mark-icon');
     if (icon) {
       const name = ICON_FOR_ACCENT[accent] || 'coral';
-      icon.src = 'icons/' + name + '.png';
+      icon.src = 'app-icons/' + name + '.png';
     }
     for (const b of flavorButtons) b.setAttribute('aria-pressed', String(b.dataset.flavor === flavor));
     for (const b of accentButtons) b.setAttribute('aria-pressed', String(b.dataset.accent === accent));
