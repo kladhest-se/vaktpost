@@ -67,7 +67,7 @@ final class XmlApiSimulator
         }
         if (str_contains($script, '$available = function_exists("rrd_fetch")')
             && str_contains($script, '*-traffic.rrd')) {
-            return ['payload' => $this->rrdTraffic()];
+            return ['payload' => $this->rrdTraffic($script)];
         }
 
         $log = $this->logRequest($script);
@@ -948,20 +948,66 @@ final class XmlApiSimulator
     }
 
     /** @return array{available: bool, data: list<array<string, mixed>>} */
-    private function rrdTraffic(): array
+    /**
+     * Traffic history for the four series pfSense's own Status → Monitoring
+     * page draws, anchored to the current time rather than a fixed date.
+     *
+     * A fixed `$start` here was the earlier version of this method, and it
+     * had the same bug as the fixed-epoch interface counters did before
+     * `driftingCounter()`: every response claimed the same "last update",
+     * so the app's own staleness check kept reporting a growing gap no
+     * matter when it was actually asked — a few minutes old today, hours
+     * old by next week. Anchoring `$lastUpdate` to now and computing
+     * `age_seconds` from it the same way the real snippet does
+     * (`time() - $last`) means it reads as current every time, the way an
+     * RRD file that is actually being written to would.
+     *
+     * The requested window is read out of the script the same way slot and
+     * filter are for host traffic — pulled from the literal `rrd_fetch`
+     * call rather than passed as a separate payload, since this snippet
+     * predates that convention. A fixed point count regardless of window
+     * is a simplification of RRD's own per-resolution consolidation
+     * tiers, but keeps every window's chart similarly readable rather
+     * than an 8-hour view with three points or a year view with tens of
+     * thousands.
+     */
+    private function rrdTraffic(string $script): array
     {
-        $start = 1789461000;
+        preg_match('/"-s",\s*"-(\d+)"/', $script, $windowMatch);
+        $windowSeconds = isset($windowMatch[1]) ? (int) $windowMatch[1] : 28_800;
+
+        $pointCount = 48;
+        $resolution = max(60, intdiv($windowSeconds, $pointCount));
+        $lastUpdate = time();
+        // A fixed, recent reference point for the wobble driving each
+        // series' values — see driftingCounter()'s own note on why a fixed
+        // Unix epoch is wrong here: it would put every value in a range
+        // this chart cannot sensibly display. The trend itself does not
+        // need to grow the way a cumulative byte counter does, since these
+        // are rates, not counters, so there is no monotonicity constraint
+        // to preserve — only a plausible day so the eye reads it as
+        // "recent" rather than "years of history".
+        $elapsed = time() - strtotime('2026-09-01 00:00:00 UTC');
+
         $series = [];
-        foreach ([['wan', 'inpass', 192000.0], ['wan', 'outpass', 64000.0], ['lan', 'inpass', 88000.0], ['lan', 'outpass', 210000.0]] as $definition) {
-            [$file, $name, $base] = $definition;
+        foreach ([
+            ['wan', 'inpass', 340_000.0, 47.0, 0.0],
+            ['wan', 'outpass', 95_000.0, 61.0, 1.1],
+            ['lan', 'inpass', 150_000.0, 53.0, 2.4],
+            ['lan', 'outpass', 480_000.0, 39.0, 0.6],
+        ] as [$file, $name, $avgRate, $period, $phase]) {
             $points = [];
-            for ($index = 0; $index < 12; $index++) {
-                $points[] = ['at' => $start + ($index * 300), 'value' => $base + (($index % 4) * 12500)];
+            for ($index = 0; $index < $pointCount; $index++) {
+                $at = $lastUpdate - ($pointCount - 1 - $index) * $resolution;
+                $pointElapsed = $elapsed - ($pointCount - 1 - $index) * $resolution;
+                $angularFrequency = 2 * M_PI / $period;
+                $value = $avgRate * (1 + 0.5 * sin($angularFrequency * $pointElapsed + $phase));
+                $points[] = ['at' => $at, 'value' => max(0, $value)];
             }
             $series[] = [
-                'file' => $file, 'series' => $name, 'last_update' => $start + 3300,
-                'age_seconds' => 60, 'resolution' => 300, 'values_seen' => 12,
-                'values_kept' => 12, 'points' => $points,
+                'file' => $file, 'series' => $name, 'last_update' => $lastUpdate,
+                'age_seconds' => time() - $lastUpdate, 'resolution' => $resolution,
+                'values_seen' => $pointCount, 'values_kept' => $pointCount, 'points' => $points,
             ];
         }
         return ['available' => true, 'data' => $series];

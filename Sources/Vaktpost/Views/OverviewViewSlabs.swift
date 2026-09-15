@@ -23,7 +23,7 @@ extension OverviewView {
     /// not a spinner that never resolves.
     var dnsblSlab: some View {
         NavigationLink { DNSBLStatsView() } label: {
-            Slab(rail: store.dnsblAvailable ? .ok : .idle, title: "DNSBL",
+            Slab(rail: store.dnsblAvailable ? .ok : .idle,
                  trailing: store.dnsblStats.map { "\($0.events)" }) {
                 VStack(alignment: .leading, spacing: 6) {
                     if !store.pfBlockerInstalled {
@@ -68,7 +68,7 @@ extension OverviewView {
 
     var alertsSlab: some View {
         NavigationLink { AlertsView() } label: {
-            Slab(rail: store.alertManager.visibleAlerts.first?.severity ?? .ok, title: "Alerts",
+            Slab(rail: store.alertManager.visibleAlerts.first?.severity ?? .ok,
                  trailing: store.alertManager.criticalAlertCount > 0 ? "\(store.alertManager.criticalAlertCount)" : nil) {
                 if store.alertManager.visibleAlerts.isEmpty {
                     HStack {
@@ -432,7 +432,7 @@ extension OverviewView {
     /// rate, and are labelled as totals rather than left to be mistaken for
     /// throughput.
     var vpnServersSlab: some View {
-        Slab(rail: vpnServersHealth, title: "VPN servers", trailing: vpnServersTrailing) {
+        Slab(rail: vpnServersHealth, trailing: vpnServersTrailing) {
             if !hasVPNServers {
                 placeholder(.openvpn)
             } else {
@@ -443,10 +443,14 @@ extension OverviewView {
                         // and a count of clients is the clients' section's
                         // answer, not this one's. A server that appears in
                         // `status/openvpn/servers` is running, so that is what
-                        // it says.
+                        // it says — "up", matching the word WireGuard tunnels
+                        // below use for the same condition, rather than a
+                        // separate synthesized "listening" that told two
+                        // technologies reporting the same thing apart for no
+                        // reason a person reading the list could see.
                         serverRow(name: server.name,
                                   health: server.status == nil ? .ok : server.health,
-                                  status: server.status ?? "listening",
+                                  status: server.status ?? "up",
                                   port: server.port,
                                   rx: server.connections.compactMap(\.bytesReceived).reduce(0, +),
                                   tx: server.connections.compactMap(\.bytesSent).reduce(0, +))
@@ -524,7 +528,7 @@ extension OverviewView {
     /// So this is every OpenVPN connection and every WireGuard peer that has
     /// handshaken, named, with where they came from and what they have moved.
     var vpnClientsSlab: some View {
-        Slab(rail: vpnClientsHealth, title: "VPN clients", trailing: vpnClientsTrailing) {
+        Slab(rail: vpnClientsHealth, trailing: vpnClientsTrailing) {
             if connectedClients.isEmpty && liveWireGuardPeers.isEmpty {
                 Text(hasVPNServers
                      ? "Nobody is connected right now."

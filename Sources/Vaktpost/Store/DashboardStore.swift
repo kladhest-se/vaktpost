@@ -534,6 +534,21 @@ final class DashboardStore: Observable {
         generation.advance()
         let binding = bindingID
         let previousClient = client
+        // A refresh in flight for the firewall just left behind cannot
+        // reset this itself: its own `defer` only clears the flag when its
+        // captured binding still matches the current generation, and
+        // `generation.advance()` just made sure it never will again. Left
+        // alone, that stale `true` blocks every refresh attempted under
+        // the new generation forever — including the one a few lines
+        // below — leaving the screen on whatever `clearData()` just
+        // cleared it to until something unrelated, like the app
+        // backgrounding and foregrounding, happens to touch this flag by
+        // a different path. The old refresh's own results are already
+        // handled — every read it does past this point is gated by
+        // `isCurrent(binding)` against the binding it captured, so nothing
+        // it was doing can land on the new firewall's data even though its
+        // task keeps running to completion in the background.
+        isRefreshing = false
         activeProfile = registry.active
         let profile = registry.active ?? ServerProfile()
         let currentGeneration = generation
