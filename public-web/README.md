@@ -1,8 +1,8 @@
 # public-web
 
-The project site. One small PHP entry point, CSS, and one browser script — no
-build step, framework, database, fonts, analytics, or third-party runtime
-assets.
+The project site and its synthetic XMLAPI test lab. It uses small PHP entry
+points, CSS, and browser scripts — no build step, framework, database, fonts,
+analytics, or third-party runtime assets.
 
 ```sh
 php -S 127.0.0.1:8000 -t public-web
@@ -10,6 +10,28 @@ php -S 127.0.0.1:8000 -t public-web
 
 For production, point a PHP-capable web server's document root at
 `public-web/`. GitHub Pages cannot run the PHP entry point.
+
+## XMLAPI Lab
+
+`lab.php` is the public browser console and `xmlrpc.php` is the endpoint used
+by Vaktpost. Enter the website origin as the firewall base URL; Vaktpost adds
+`/xmlrpc.php` itself.
+
+- Username `review`: healthy App Review data
+- Username `updates`: outdated firmware and one outdated package
+- Username `degraded`: gateway, VPN, and service problems
+- Username `fault`: sign-in succeeds, then feature calls fail deliberately
+- Default password: `vaktpost-demo`
+
+Set `VAKTPOST_DEMO_PASSWORD` in production to change the shared password. The
+endpoint never evaluates the submitted PHP or connects to a firewall. It
+recognizes only known Vaktpost request signatures and returns synthetic data.
+The Updates profile uses an expiring PHP session so the app can verify that a
+simulated firmware or package update completed.
+
+Put ordinary rate limiting in front of the public endpoint. The Basic Auth
+password gates only public synthetic fixtures and is not a substitute for rate
+limiting.
 
 ## Before publishing
 
@@ -20,6 +42,8 @@ For production, point a PHP-capable web server's document root at
   the app. It is a rendering, not a product screenshot.
 - Keep the version 0.1 feature and deferred-scope lists aligned with the root
   `README.md` before publishing.
+- Confirm that the public host passes the `Authorization` header to PHP and
+  serves the site over HTTPS before using the lab from iOS.
 
 ## Theming
 

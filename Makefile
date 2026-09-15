@@ -9,7 +9,7 @@
 # compiles without booting anything.
 
 .PHONY: help project open build lint test run install archive clean oui \
-	destinations devices teams web
+	destinations devices teams web web-check
 
 PROJECT := Vaktpost.xcodeproj
 SCHEME  := Vaktpost
@@ -32,6 +32,7 @@ help:
 	@echo "    make install DEVICE=FA371128-… TEAM_ID=ABCDE12345"
 	@echo ""
 	@echo "  make web             serve public-web/ on :8000"
+	@echo "  make web-check       validate the public website and XMLAPI lab"
 	@echo "  make oui             refresh the bundled IEEE MAC vendor database"
 	@echo "  make clean           remove the generated project and build products"
 
@@ -166,7 +167,7 @@ archive:
 # stops shipping it, and the failure is a wall of destinations rather than an
 # answer.
 SIM_ID := $(shell xcrun simctl list devices available -j 2>/dev/null | \
-	python3 -c 'import json,sys;\
+python3 -c 'import json,sys;\
 d=json.load(sys.stdin)["devices"];\
 c=[v for k,vs in d.items() for v in vs if v["name"].startswith("iPhone")];\
 print(c[-1]["udid"] if c else "")' 2>/dev/null)
@@ -244,6 +245,12 @@ destinations:
 # ── The website ──────────────────────────────────────────────────────────────
 
 # public-web/ uses a small PHP entry point and has no build step.
+web-check:
+	@find public-web -name '*.php' -print0 | xargs -0 -n1 php -l
+	@node --check public-web/theme.js
+	@node --check public-web/lab.js
+	@php ../vaktpost-tools/tests/xmlapi-lab.php
+
 web:
 	@echo "  http://localhost:8000"
 	@command -v php >/dev/null || { echo "php is missing — install PHP to preview the website"; exit 1; }

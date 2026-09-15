@@ -122,6 +122,15 @@ a:hover { text-decoration-thickness: 2px; }
   letter-spacing: -.02em; color: var(--text); text-decoration: none;
 }
 
+.site-nav { display:flex; align-items:center; gap:.35rem; }
+.site-nav a {
+  padding:.42rem .65rem; border-radius:8px;
+  color:var(--subtext0); text-decoration:none;
+  font:600 .82rem/1 var(--sans);
+}
+.site-nav a:hover { color:var(--text); background:var(--surface0); }
+.site-nav a[aria-current="page"] { color:var(--crust); background:var(--accent); }
+
 .picker { display: flex; align-items: center; gap: 1rem; margin-left: auto; flex-wrap: wrap; }
 .picker__label { font-size: .78rem; color: var(--overlay1); }
 
@@ -188,6 +197,18 @@ h1 {
   font-family: var(--mono); font-size: .82rem;
   color: var(--overlay1); max-width: 46ch; line-height: 1.5;
 }
+
+.lab-callout {
+  display:flex; align-items:center; justify-content:space-between; gap:2rem;
+  margin-top:2.4rem; padding:1.5rem;
+  border:1px solid color-mix(in srgb,var(--accent) 38%,var(--surface0));
+  border-radius:var(--r); background:var(--mantle);
+}
+.lab-callout span { color:var(--accent); font:700 .76rem/1 var(--mono); letter-spacing:.08em; }
+.lab-callout h3 { margin:.65rem 0 .35rem; }
+.lab-callout p { margin:0; color:var(--subtext0); font-size:.92rem; }
+.lab-callout .btn { flex:none; }
+@media(max-width:680px){.lab-callout{align-items:flex-start;flex-direction:column}.site-nav{order:2;width:100%}.picker{margin-left:0}}
 
 /* ── Device rendering ──────────────────────────────────────────────────── */
 
@@ -508,4 +529,3 @@ footer p { max-width: 62ch; margin: 0 0 .6rem; }
   font: 500 11px/1.2 var(--sans); color: var(--subtext0);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-

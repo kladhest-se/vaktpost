@@ -28,6 +28,10 @@ $releaseStatus = 'preparing for its first public release';
       <img class="mark__icon" id="mark-icon" src="icons/coral.png" alt="" width="26" height="26">
       Vaktpost
     </a>
+    <nav class="site-nav" aria-label="Primary">
+      <a href="#top" aria-current="page">App</a>
+      <a href="lab.php">XMLAPI Lab</a>
+    </nav>
     <div class="picker">
       <span class="picker__label" id="flavor-label">Flavour</span>
       <div class="flavors" role="group" aria-labelledby="flavor-label" id="flavors"></div>
@@ -454,7 +458,7 @@ $releaseStatus = 'preparing for its first public release';
     <h2>Kept out of the first release</h2>
     <p class="lede">Version 0.1 is not intended to replace the complete pfSense WebUI.</p>
     <div class="limit">
-      <p>Outbound and 1:1 NAT, virtual IPs, schedules, traffic shaping, package configuration, firmware installation, backups and restores, bulk editing, templates, automation, and unattended writes are deliberately deferred.</p>
+      <p>Outbound and 1:1 NAT, virtual IPs, schedules, traffic shaping, package configuration, backups and restores, bulk editing, templates, automation, and unattended writes are deliberately deferred.</p>
     </div>
   </div>
 </section>
@@ -470,6 +474,15 @@ $releaseStatus = 'preparing for its first public release';
       <li><p>Pin the certificate. pfSense ships a self-signed one, so connect once with untrusted TLS allowed, then tap <strong>Pin last seen certificate</strong> in the firewall's settings. After that the connection is accepted only if that exact certificate is presented. Re-pin when you renew it.</p></li>
       <li><p>Keep the profile in <strong>monitor-only mode</strong> unless you need administration. Firewall edits are staged and use pfSense's global Apply Changes workflow.</p></li>
     </ol>
+
+    <div class="lab-callout">
+      <div>
+        <span>NO FIREWALL REQUIRED</span>
+        <h3>Try Vaktpost against synthetic pfSense data</h3>
+        <p>The public XMLAPI Lab provides healthy, outdated, degraded, and failure scenarios without exposing a real firewall or accepting executable PHP.</p>
+      </div>
+      <a class="btn btn--solid" href="lab.php">Open XMLAPI Lab</a>
+    </div>
 
   </div>
 </section>

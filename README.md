@@ -178,7 +178,8 @@ improves navigation.
 
 ## Website
 
-`public-web/` is a dependency-free PHP site. Serve it with `make web` or point
+`public-web/` is a dependency-free PHP site with a synthetic XMLAPI lab for
+testing Vaktpost without exposing a firewall. Serve it with `make web` or point
 a PHP-capable web server at the directory. See
 [public-web/README.md](public-web/README.md).
 
