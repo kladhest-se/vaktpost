@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Make the synthetic XMLAPI lab generate bounded, session-isolated live logs
+  with valid rotating filter events, deterministic bursts, tail limits, and
+  browser probes for poll, burst, and reset testing.
+- Replace the last stale untrusted-TLS recovery instruction with the secure
+  per-firewall certificate review and fingerprint comparison workflow.
+- Add pause/follow controls, unseen-event counts, stable row identity, scoped
+  refresh, failure backoff, and optional address/port redaction to live logs.
+- Confirm transient fleet health and connectivity problems across two readings
+  before alerting, and exponentially back off repeatedly unavailable firewalls.
+- Expand the existing per-firewall health overview and fleet dashboard with
+  interface, gateway latency/loss, state-table, update, and notice signals.
+- Add per-firewall certificate identity, validity, fingerprint, trust, expiry,
+  mismatch, and explicit re-pin controls while enforcing HTTPS-only endpoints.
+- Add bounded live firewall-log polling with structured filters and safe
+  parsing of prefixed, raw, malformed, and partial filterlog records.
+- Allow an inbound firewall-log event to prefill a disabled staged rule for
+  review through the existing write coordinator and Apply Changes workflow.
 - Treat a short-lived updater as accepted or completed instead of reporting a
   false launch failure merely because pfSense's WebUI PID file is absent.
 - Use pfSense's ordinary package-update flags rather than its forced reinstall

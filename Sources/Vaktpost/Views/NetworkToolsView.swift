@@ -52,8 +52,8 @@ struct NetworkToolsView: View {
                 .pickerStyle(.segmented)
 
                 LabelledField(title: "Host", text: $host,
-                             placeholder: "IP address or hostname",
-                             keyboard: .URL, autocap: false)
+                              placeholder: "IP address or hostname",
+                              keyboard: .URL, autocap: false)
 
                 switch tool {
                 case .ping: pingSection
@@ -109,7 +109,10 @@ struct NetworkToolsView: View {
 
     private var tracerouteSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Up to 30 hops, sent from this device. Some networks — cellular especially — filter the probes this needs, which shows up as a run of timeouts rather than a wrong answer.")
+            Text(
+                "Up to 30 hops, sent from this device. Some networks — cellular especially — filter the probes "
+                    + "this needs, which shows up as a run of timeouts rather than a wrong answer."
+            )
                 .scaledFont(12)
                 .foregroundStyle(theme.labelFaint)
 
@@ -124,7 +127,7 @@ struct NetworkToolsView: View {
             if let result = tracerouteResult {
                 if result.hops.isEmpty {
                     Notice(symbol: "questionmark.circle", title: "No hops recorded",
-                          detail: "The host may not have resolved, or nothing along the path responded.")
+                           detail: "The host may not have resolved, or nothing along the path responded.")
                 } else {
                     Slab(rail: .info, title: "Hops") {
                         VStack(alignment: .leading, spacing: 8) {
@@ -190,10 +193,10 @@ struct NetworkToolsView: View {
             if let result = dnsResult {
                 if result.hasError || result.records.isEmpty {
                     Notice(symbol: "questionmark.circle", title: "No records found",
-                          detail: "Check the hostname and record type.")
+                           detail: "Check the hostname and record type.")
                 } else {
                     Slab(rail: .info, title: "\(dnsRecordType) records",
-                        trailing: result.queryTime.map { "\($0) ms" }) {
+                         trailing: result.queryTime.map { "\($0) ms" }) {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(Array(result.records.enumerated()), id: \.offset) { _, record in
                                 VStack(alignment: .leading, spacing: 2) {

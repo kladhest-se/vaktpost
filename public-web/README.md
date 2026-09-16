@@ -50,6 +50,14 @@ pf tables, pfBlockerNG/DNSBL, HAProxy, ACME and RRD traffic history. The
 browser console exposes representative probes so the response shapes can be
 checked before connecting the app.
 
+Every log is session-backed and grows as that session polls it. The filter log
+rotates through parseable IPv4, IPv6, TCP, UDP and ICMP pass/block examples and
+emits a deterministic three-event burst every fifth ordinary poll. Histories
+are capped at 500 rows and the requested Vaktpost tail limit is honored. The
+browser console can append one event, append a five-event burst, or reset its
+own fixtures; an iOS connection has a separate session and advances
+automatically, so testing the app never depends on keeping the browser open.
+
 Put ordinary rate limiting in front of the public endpoint. The Basic Auth
 password gates only public synthetic fixtures and is not a substitute for rate
 limiting.

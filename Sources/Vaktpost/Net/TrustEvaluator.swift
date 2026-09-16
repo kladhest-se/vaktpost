@@ -39,15 +39,20 @@ private final class TrustState: Sendable {
 /// the main actor; its accepted pin is persisted before credentials are sent.
 final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
     typealias PinHandler = @MainActor @Sendable (ServerProfile, String) -> Bool
+    typealias ObservationHandler = @MainActor @Sendable (ServerProfile, CertificateObservation) -> Void
 
     private let state: TrustState
     private let owner = UUID()
     private let onPin: PinHandler
+    private let onObserve: ObservationHandler?
     private let allowsTrustPrompt: Bool
 
-    init(profile: ServerProfile, allowsTrustPrompt: Bool = true, onPin: @escaping PinHandler) {
+    init(profile: ServerProfile, allowsTrustPrompt: Bool = true,
+         onObserve: ObservationHandler? = nil,
+         onPin: @escaping PinHandler) {
         state = TrustState(profile: profile)
         self.onPin = onPin
+        self.onObserve = onObserve
         self.allowsTrustPrompt = allowsTrustPrompt
     }
 
@@ -90,6 +95,9 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
         let fingerprint = Self.fingerprint(of: trust)
         state.recordFingerprint(fingerprint)
         let profile = state.read().profile
+        if let observation = Self.observation(of: trust, fingerprint: fingerprint) {
+            Task { @MainActor [onObserve] in onObserve?(profile, observation) }
+        }
         let pin = profile.pinnedFingerprint.lowercased()
             .replacingOccurrences(of: ":", with: "")
             .replacingOccurrences(of: " ", with: "")
@@ -97,10 +105,6 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
             completion.resolve(fingerprint == pin
                 ? (.useCredential, URLCredential(trust: trust))
                 : (.cancelAuthenticationChallenge, nil))
-            return
-        }
-        if profile.allowUntrustedTLS {
-            completion.resolve((.useCredential, URLCredential(trust: trust)))
             return
         }
         // Certificates already trusted by the system need no exception prompt.
@@ -133,8 +137,6 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
                     }
                     self.state.pin(fingerprint)
                     completion.resolve((.useCredential, trustCredential))
-                case .trust:
-                    completion.resolve((.useCredential, trustCredential))
                 case .cancel:
                     completion.resolve((.cancelAuthenticationChallenge, nil))
                 }
@@ -142,7 +144,7 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
         }
     }
 
-    enum PinningDecision: Sendable { case pin, trust, cancel }
+    enum PinningDecision: Sendable { case pin, cancel }
 
     /// Lowercase hex SHA-256 over the leaf certificate's DER encoding.
     static func fingerprint(of trust: SecTrust) -> String? {
@@ -167,6 +169,29 @@ final class TrustEvaluator: NSObject, URLSessionTaskDelegate, Sendable {
         }
         guard let leaf else { return nil }
         return SecCertificateCopySubjectSummary(leaf as SecCertificate) as String?
+    }
+
+    static func observation(of trust: SecTrust, fingerprint: String?) -> CertificateObservation? {
+        let leaf: SecCertificate?
+        if #available(iOS 15.0, *) {
+            leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first
+        } else {
+            leaf = SecTrustGetCertificateAtIndex(trust, 0)
+        }
+        guard let leaf, let fingerprint else { return nil }
+
+        let der = SecCertificateCopyData(leaf) as Data
+        let metadata = DERCertificateMetadata.parse(der)
+
+        return CertificateObservation(
+            fingerprint: fingerprint,
+            subject: subjectName(of: trust) ?? "Unknown certificate",
+            issuer: metadata?.issuer,
+            validFrom: metadata?.validFrom,
+            validUntil: metadata?.validUntil,
+            systemTrusted: SecTrustEvaluateWithError(trust, nil),
+            observedAt: Date()
+        )
     }
 }
 
@@ -205,7 +230,6 @@ private enum CertificatePrompt {
         pending[owner] = Pending(alert: alert, taskID: taskID, completion: completion)
         for (title, style, decision) in [
             ("Cancel", UIAlertAction.Style.cancel, TrustEvaluator.PinningDecision.cancel),
-            ("Trust Only", .default, .trust),
             ("Pin & Trust", .default, .pin)
         ] {
             alert.addAction(UIAlertAction(title: title, style: style) { _ in

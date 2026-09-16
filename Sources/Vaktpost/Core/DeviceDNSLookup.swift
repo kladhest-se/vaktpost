@@ -97,7 +97,7 @@ enum DeviceDNSLookup {
             "host": .string(host), "queryTime": .number(Double(elapsedMs)),
             "records": .array(addresses.map { address in
                 .object(["name": .string(host), "class": .string("IN"),
-                        "type": .string(type), "value": .string(address)])
+                         "type": .string(type), "value": .string(address)])
             }),
             "answers": .array(addresses.map { address in
                 .object(["name": .string(host), "address": .string(address)])
@@ -118,7 +118,7 @@ enum DeviceDNSLookup {
             nil, 0, NI_NUMERICHOST
         )
         guard status == 0 else { return nil }
-        let bytes = text.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }
-        return String(decoding: bytes, as: UTF8.self)
+        let bytes = text.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return String(bytes: bytes, encoding: .utf8)
     }
 }

@@ -29,6 +29,32 @@ struct SettingsView: View {
                     lockScreenSlab
                 }
 
+                GroupHeading(text: "Configured firewalls")
+                NavigationLink { ServersView() } label: {
+                    Slab(rail: store.registry.persistenceError == nil ? .info : .bad) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "server.rack")
+                                .foregroundStyle(store.registry.persistenceError == nil
+                                                 ? theme.info : theme.bad)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Firewall instances")
+                                    .scaledFont(14, weight: .medium)
+                                    .foregroundStyle(theme.label)
+                                Text(store.registry.persistenceError
+                                     ?? "Connection, certificate, refresh, and administration settings for each firewall")
+                                    .scaledFont(11)
+                                    .foregroundStyle(store.registry.persistenceError == nil
+                                                     ? theme.labelFaint : theme.bad)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .scaledFont(11, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+
                 GroupHeading(text: "Administration")
                 Slab(rail: store.auditTrail.persistenceError == nil ? .info : .bad) {
                     HStack(spacing: 10) {

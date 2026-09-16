@@ -72,16 +72,22 @@ struct AllFirewallsView: View {
             let snapshot = fleet.snapshots[profile.id]
             let reading = snapshot?.reading
             let stale = snapshot?.lastSuccess.map { context.date.timeIntervalSince($0) > 120 } ?? false
+            let attention = snapshot?.needsAttention == true
+            let confirming = snapshot?.isConfirmingIssue == true
             let health: Health = snapshot?.failure != nil ? .bad
-                : stale || reading?.needsAttention == true ? .warn
+                : stale || attention ? .warn
+                : confirming ? .idle
                 : reading != nil ? .ok : .idle
             Slab(rail: health) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(profile.displayName).scaledFont(16, weight: .semibold)
+                        if profile.id == registry.active?.id {
+                            StatusPill(text: "current", health: .info)
+                        }
                         Spacer()
                         StatusPill(text: snapshot?.failure != nil ? "Check failed"
-                            : stale ? "Stale" : reading?.needsAttention == true ? "Needs attention"
+                            : confirming ? "Rechecking" : stale ? "Stale" : attention ? "Needs attention"
                             : reading != nil ? "Connected" : "Not checked", health: health)
                     }
                     Text(profile.baseURL)
@@ -92,6 +98,9 @@ struct AllFirewallsView: View {
                         Text(failure).scaledFont(12).foregroundStyle(theme.warn)
                         Text("Open this firewall to check its connection or approve its certificate.")
                             .scaledFont(11).foregroundStyle(theme.labelMuted)
+                    } else if snapshot?.consecutiveFailures == 1 {
+                        Text("One check failed. Vaktpost will confirm it before raising an outage.")
+                            .scaledFont(11).foregroundStyle(theme.labelFaint)
                     }
                     if let reading {
                         HStack {
@@ -109,6 +118,26 @@ struct AllFirewallsView: View {
                         }
                         Text("\(reading.gatewayProblems) gateway issues · \(reading.stoppedServices) stopped services")
                             .scaledFont(12)
+                        if reading.interfaceProblems > 0 {
+                            Text("\(reading.interfaceProblems) interfaces need attention")
+                                .scaledFont(11).foregroundStyle(theme.warn)
+                        }
+                        HStack(spacing: 12) {
+                            if let latency = reading.gatewayWorstLatencyMS {
+                                Text(String(format: "Gateway %.1f ms", latency))
+                            }
+                            if let loss = reading.gatewayWorstLossPercent {
+                                Text(String(format: "%.0f%% loss", loss))
+                            }
+                        }
+                        .scaledFont(11, design: .monospaced)
+                        .foregroundStyle(theme.labelMuted)
+                        if let current = reading.firewallStatesCurrent {
+                            Text(reading.firewallStatesMaximum.map { "States \(current) / \($0)" }
+                                 ?? "States \(current)")
+                                .scaledFont(11, design: .monospaced)
+                                .foregroundStyle(reading.stateUsage >= 0.9 ? theme.warn : theme.labelMuted)
+                        }
                         if reading.unknownGateways > 0 {
                             Text("\(reading.unknownGateways) gateways have no status yet.")
                                 .scaledFont(11).foregroundStyle(theme.warn)
@@ -116,12 +145,23 @@ struct AllFirewallsView: View {
                         if let count = reading.certificateWarnings {
                             Text("\(count) certificates expired or due within 30 days")
                                 .scaledFont(12)
-                        } else {
+                        } else if snapshot?.hasConfirmedTransientAttention == true {
                             Text("Certificate check unavailable")
                                 .scaledFont(12).foregroundStyle(theme.warn)
                             if let error = reading.certificateError {
                                 Text(error).scaledFont(10).foregroundStyle(theme.labelFaint)
                             }
+                        } else {
+                            Text("Certificate check pending confirmation")
+                                .scaledFont(12).foregroundStyle(theme.labelFaint)
+                        }
+                        let updateCount = reading.packageUpdates + (reading.firmwareUpdateAvailable == true ? 1 : 0)
+                        Text(updateCount == 0 ? "No known updates" : "\(updateCount) update indicators")
+                            .scaledFont(12)
+                            .foregroundStyle(updateCount == 0 ? theme.labelMuted : theme.warn)
+                        if reading.systemNotices > 0 {
+                            Text("\(reading.systemNotices) pfSense system notices")
+                                .scaledFont(12).foregroundStyle(theme.warn)
                         }
                     }
                     HStack(spacing: 4) {
@@ -131,6 +171,10 @@ struct AllFirewallsView: View {
                             Text("ago")
                         } else { Text("No successful check yet") }
                         if fleet.checkingID == profile.id { Text("· checking…") }
+                        else if let retryAt = snapshot?.nextAutomaticAttempt, retryAt > context.date {
+                            Text("· retry")
+                            Text(retryAt, style: .relative)
+                        }
                     }
                     .scaledFont(10).foregroundStyle(theme.labelFaint)
                     Button(profile.id == registry.active?.id ? "Open current firewall" : "Open firewall") {

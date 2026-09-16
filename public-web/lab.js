@@ -10,7 +10,9 @@
     packages: 'Packages',
     updates: 'Package updates',
     rules: 'Firewall rules',
-    logs: 'Firewall log',
+    logs: 'Firewall log poll',
+    logBurst: 'Firewall log burst',
+    logReset: 'Reset firewall log',
   };
   const profiles = {
     review: ['Healthy review', 'All core services are healthy.'],
@@ -27,6 +29,8 @@
     updates: '$rows = []; $info = get_pkg_info("all", false, true); $toreturn = ["available" => true, "data" => $rows];',
     rules: 'global $config; $filter = $config["filter"]; $toreturn = ["data" => $filter["rule"]];',
     logs: '$path = "/var/log/filter.log"; $chunk = file_get_contents($path); $toreturn = ["data" => []];',
+    logBurst: '/* VAKTPOST_LAB_LOG_BURST */ $path = "/var/log/filter.log"; $toreturn = ["data" => []];',
+    logReset: '/* VAKTPOST_LAB_LOG_RESET */ $path = "/var/log/filter.log"; $toreturn = ["data" => []];',
   };
   let scenario = 'review';
   let probe = 'dashboard';

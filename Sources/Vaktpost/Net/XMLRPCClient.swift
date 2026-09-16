@@ -61,7 +61,7 @@ enum RPCError: LocalizedError, Equatable {
             return "Sign-in was rejected (401). Check the username, password, and that the account holds the System - HA node sync privilege."
         case .forbidden:
             return "Authenticated, but XML-RPC was refused (403). The account needs the System - HA node sync privilege."
-        case .tls: return "TLS handshake failed. Pin the certificate or enable untrusted TLS in Settings."
+        case .tls: return "TLS handshake failed or the certificate changed. Review the certificate in this firewall's settings."
         case .transport(let m): return m
         case .fault(let code, let message):
             return "The firewall reported an error (\(code)): \(message)"
@@ -103,9 +103,12 @@ actor XMLRPCClient {
     /// work onto a box that is already the thing being monitored.
     private let queue = SerialRequestQueue()
 
-    init(profile: ServerProfile, allowsTrustPrompt: Bool = true, onPin: @escaping TrustEvaluator.PinHandler) {
+    init(profile: ServerProfile, allowsTrustPrompt: Bool = true,
+         onObserve: TrustEvaluator.ObservationHandler? = nil,
+         onPin: @escaping TrustEvaluator.PinHandler) {
         self.profile = profile
-        let evaluator = TrustEvaluator(profile: profile, allowsTrustPrompt: allowsTrustPrompt, onPin: onPin)
+        let evaluator = TrustEvaluator(profile: profile, allowsTrustPrompt: allowsTrustPrompt,
+                                       onObserve: onObserve, onPin: onPin)
         self.trust = evaluator
 
         let config = URLSessionConfiguration.ephemeral
@@ -284,7 +287,7 @@ actor XMLRPCClient {
         guard let password = Keychain.password(for: profile.id), !password.isEmpty else {
             throw RPCError.noCredentials
         }
-        guard let base = URL(string: profile.baseURL.trimmingCharacters(in: .whitespaces)),
+        guard let base = profile.validatedBaseURL,
               let url = URL(string: "/xmlrpc.php", relativeTo: base)
         else { throw RPCError.badURL }
 
@@ -362,7 +365,7 @@ actor XMLRPCClient {
         guard let password = Keychain.password(for: profile.id), !password.isEmpty else {
             throw RPCError.noCredentials
         }
-        guard let base = URL(string: profile.baseURL.trimmingCharacters(in: .whitespaces)),
+        guard let base = profile.validatedBaseURL,
               let url = URL(string: "/xmlrpc.php", relativeTo: base)
         else { throw RPCError.badURL }
 

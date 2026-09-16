@@ -34,7 +34,7 @@ struct ConfigBackupView: View {
 
                 if let errorMessage {
                     Notice(symbol: "exclamationmark.triangle", title: "Backup failed",
-                          detail: errorMessage, health: .warn)
+                           detail: errorMessage, health: .warn)
                 }
 
                 if let backup {

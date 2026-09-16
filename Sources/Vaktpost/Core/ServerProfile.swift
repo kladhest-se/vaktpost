@@ -4,6 +4,54 @@ import os.log
 
 private let keychainLog = OSLog(subsystem: "se.kladhest.vaktpost", category: "Keychain")
 
+// MARK: - Observed TLS certificate
+
+struct CertificateObservation: Codable, Equatable, Hashable, Sendable {
+    var fingerprint: String
+    var subject: String
+    var issuer: String?
+    var validFrom: Date?
+    var validUntil: Date?
+    var systemTrusted: Bool
+    var observedAt: Date
+
+    enum ExpiryState: Equatable {
+        case unavailable
+        case notYetValid
+        case valid(daysRemaining: Int)
+        case expiringSoon(daysRemaining: Int)
+        case critical(daysRemaining: Int)
+        case expired(daysAgo: Int)
+
+        var health: Health {
+            switch self {
+            case .unavailable: return .idle
+            case .notYetValid, .expiringSoon: return .warn
+            case .valid: return .ok
+            case .critical, .expired: return .bad
+            }
+        }
+    }
+
+    func expiryState(now: Date = Date()) -> ExpiryState {
+        if let validFrom, validFrom > now { return .notYetValid }
+        guard let validUntil else { return .unavailable }
+        let days = Int(floor(validUntil.timeIntervalSince(now) / 86_400))
+        if days < 0 { return .expired(daysAgo: abs(days)) }
+        if days <= 7 { return .critical(daysRemaining: days) }
+        if days <= 30 { return .expiringSoon(daysRemaining: days) }
+        return .valid(daysRemaining: days)
+    }
+
+    func matches(pin: String) -> Bool {
+        Self.normalized(fingerprint) == Self.normalized(pin) && !Self.normalized(pin).isEmpty
+    }
+
+    static func normalized(_ value: String) -> String {
+        value.lowercased().filter(\.isHexDigit)
+    }
+}
+
 // MARK: - Profile
 
 struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
@@ -11,11 +59,15 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// Scheme + host + optional port, e.g. "https://fw01.example.se" or "https://10.0.0.1:8443"
     var baseURL: String = ""
     var label: String = ""
-    /// Accept a certificate that does not chain to a trusted root. Weaker than
-    /// pinning; see TrustEvaluator.
+    /// Legacy decoding field. It is always normalised to false and is never
+    /// consulted by the trust evaluator.
     var allowUntrustedTLS: Bool = false
     /// Lowercase hex SHA-256 of the leaf certificate's DER.
     var pinnedFingerprint: String = ""
+    /// Most recently presented leaf certificate for this exact server binding.
+    /// Kept per profile so Settings never shows one firewall's certificate for
+    /// another. A mismatch is recorded for review but is never trusted.
+    var certificateObservation: CertificateObservation?
     /// webConfigurator username. The account needs the "System - HA node sync"
     /// privilege, which is administrator-equivalent — see SECURITY.md.
     /// Empty rather than "admin".
@@ -46,7 +98,18 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     // it once it's visible actually stays hidden.
     var hasMigratedAlertsSection: Bool?
 
-    var isConfigured: Bool { URL(string: baseURL)?.host != nil }
+    var validatedBaseURL: URL? {
+        guard let components = URLComponents(string: baseURL),
+              components.scheme?.lowercased() == "https",
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil,
+              components.path.isEmpty || components.path == "/",
+              let url = components.url else { return nil }
+        return url
+    }
+
+    var isConfigured: Bool { validatedBaseURL != nil }
     var host: String { URL(string: baseURL)?.host ?? baseURL }
     var displayName: String { label.isEmpty ? host : label }
 
@@ -60,10 +123,14 @@ struct ServerProfile: Codable, Identifiable, Equatable, Hashable, Sendable {
     /// Normalises a user-typed URL: adds https://, strips trailing slashes.
     mutating func normalize() {
         baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !baseURL.isEmpty, !baseURL.lowercased().hasPrefix("http") {
+        if !baseURL.isEmpty, !baseURL.contains("://") {
             baseURL = "https://" + baseURL
         }
         while baseURL.hasSuffix("/") { baseURL.removeLast() }
+        // This legacy field is deliberately inert. Keeping it Codable lets old
+        // profiles load, while normalising it prevents any future code from
+        // accidentally treating it as permission to bypass certificate checks.
+        allowUntrustedTLS = false
     }
 }
 
@@ -79,6 +146,7 @@ final class ServerRegistry: Observable {
 
     private(set) var servers: [ServerProfile] = []
     private(set) var activeID: UUID?
+    private(set) var persistenceError: String?
 
     var active: ServerProfile? {
         guard let activeID else { return servers.first }
@@ -100,9 +168,15 @@ final class ServerRegistry: Observable {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         let d = defaults
+        var shouldPersistNormalization = false
         if let data = d.data(forKey: Self.listKey),
            let list = try? JSONDecoder().decode([ServerProfile].self, from: data) {
-            servers = list
+            servers = list.map { stored in
+                var normalized = stored
+                normalized.normalize()
+                return normalized
+            }
+            shouldPersistNormalization = servers != list
         } else if let data = d.data(forKey: "server.profile"),
                   var legacy = try? JSONDecoder().decode(ServerProfile.self, from: data),
                   legacy.isConfigured {
@@ -140,6 +214,7 @@ final class ServerRegistry: Observable {
             activeID = uuid
         }
         if activeID == nil { activeID = servers.first?.id }
+        if shouldPersistNormalization { persist() }
     }
 
     // MARK: Mutation
@@ -167,6 +242,28 @@ final class ServerRegistry: Observable {
         servers[index].allowUntrustedTLS = false
         persist()
         return true
+    }
+
+    /// Records what the server presented without changing trust. This is safe
+    /// on a pin mismatch: Settings can explain the change, but the connection
+    /// remains rejected until the user explicitly replaces the pin.
+    func observeCertificate(_ observation: CertificateObservation, for expected: ServerProfile) {
+        guard let index = servers.firstIndex(where: { $0.id == expected.id }),
+              servers[index].baseURL == expected.baseURL,
+              servers[index].username == expected.username,
+              servers[index].pinnedFingerprint == expected.pinnedFingerprint else { return }
+        servers[index].certificateObservation = observation
+        persist()
+    }
+
+    func replaceCertificatePin(_ fingerprint: String, for profileID: UUID) -> Bool {
+        guard let index = servers.firstIndex(where: { $0.id == profileID }) else { return false }
+        let normalized = CertificateObservation.normalized(fingerprint)
+        guard normalized.count == 64 else { return false }
+        servers[index].pinnedFingerprint = normalized
+        servers[index].allowUntrustedTLS = false
+        persist()
+        return persistenceError == nil
     }
 
     @discardableResult
@@ -297,8 +394,15 @@ final class ServerRegistry: Observable {
 
     private func persist() {
         let d = defaults
-        if let data = try? JSONEncoder().encode(servers) {
+        do {
+            let data = try JSONEncoder().encode(servers)
             d.set(data, forKey: Self.listKey)
+            persistenceError = nil
+        } catch {
+            persistenceError = "Firewall settings could not be saved: \(error.localizedDescription)"
+            os_log(.error, log: keychainLog, "Profile persistence failed: %{public}@",
+                   error.localizedDescription)
+            return
         }
         if let activeID {
             d.set(activeID.uuidString, forKey: Self.activeKey)

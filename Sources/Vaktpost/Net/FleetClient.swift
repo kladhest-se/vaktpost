@@ -15,6 +15,9 @@ extension FleetStore {
             let batch = try await client.batchCore()
             try Task.checkCancellation()
             let system = SystemStatus(batch.object("telemetry"))
+            let states = StateTableSize(batch.object("telemetry"))
+            let version = SystemVersion(batch.object("firmware"))
+            let interfaces = batch.rows("interfaces").map(InterfaceStat.init)
             let gateways = batch.rows("gateways").map(GatewayStatus.init)
             let services = batch.rows("services").map(ServiceStatus.init)
             var reading = FleetReading(
@@ -23,13 +26,25 @@ extension FleetStore {
                 cpuTicksTotal: system.cpuTicksTotal, cpuTicksIdle: system.cpuTicksIdle,
                 gatewayProblems: gateways.filter { $0.health == .bad || $0.health == .warn }.count,
                 unknownGateways: gateways.filter { $0.health == .idle }.count,
-                stoppedServices: services.filter { $0.health == .bad }.count)
+                stoppedServices: services.filter { $0.health == .bad }.count,
+                interfaceProblems: interfaces.filter { $0.health == .bad || $0.health == .warn }.count,
+                gatewayWorstLatencyMS: gateways.compactMap(\.delayMS).max(),
+                gatewayWorstLossPercent: gateways.compactMap(\.lossPercent).max(),
+                firewallStatesCurrent: states.current,
+                firewallStatesMaximum: states.effectiveMaximum,
+                firmwareUpdateAvailable: version.updateAvailable)
             do {
-                let certificates = try await client.certificates()
+                let systemBatch = try await client.batchSystem()
                 try Task.checkCancellation()
+                let certificates = systemBatch.rows("certificates").map {
+                    CertificateInfo($0, isCA: $0.bool("is_ca") ?? false)
+                }
                 reading.certificateWarnings = certificates.filter {
                     $0.health == .warn || $0.health == .bad
                 }.count
+                reading.packageUpdates = systemBatch.rows("packages")
+                    .map(PackageInfo.init).filter(\.updateAvailable).count
+                reading.systemNotices = systemBatch.rows("notices").count
             } catch {
                 try Task.checkCancellation()
                 reading.certificateError = error.localizedDescription

@@ -157,7 +157,13 @@ struct ServerRow: View {
                         Text("No password saved")
                             .scaledFont(11)
                             .foregroundStyle(theme.warn)
-                    } else if server.pinnedFingerprint.isEmpty && server.allowUntrustedTLS {
+                    } else if let observed = server.certificateObservation,
+                              !server.pinnedFingerprint.isEmpty,
+                              !observed.matches(pin: server.pinnedFingerprint) {
+                        Text("Certificate changed — connection blocked")
+                            .scaledFont(11)
+                            .foregroundStyle(theme.bad)
+                    } else if server.pinnedFingerprint.isEmpty {
                         Text("Certificate not pinned")
                             .scaledFont(11)
                             .foregroundStyle(theme.warn)
@@ -194,6 +200,7 @@ struct ServerEditView: View {
     @State private var offerPinning = false
     @State private var confirmedFingerprint: String?
     @State private var pendingFingerprint: String?
+    @State private var showRepinConfirmation = false
 
     @State var profile: ServerProfile
     @State private var password = ""
@@ -258,36 +265,7 @@ struct ServerEditView: View {
                     }
                 }
 
-                Slab(rail: profile.pinnedFingerprint.isEmpty && profile.allowUntrustedTLS ? .warn : .info,
-                     title: "TLS") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle(isOn: $profile.allowUntrustedTLS) {
-                            Text("Allow untrusted certificate")
-                                .scaledFont(14)
-                                .foregroundStyle(theme.label)
-                        }
-                        .tint(theme.accentColor)
-
-                        pinnedFingerprintField
-
-                        Button {
-                            Task {
-                                if let fp = await store.client.lastSeenFingerprint {
-                                    profile.pinnedFingerprint = fp
-                                    message = "Pinned the certificate from the last connection."
-                                    messageHealth = .ok
-                                } else {
-                                    message = "Connect once first, then pin what was presented."
-                                    messageHealth = .warn
-                                }
-                            }
-                        } label: {
-                            Text("Pin last seen certificate")
-                                .scaledFont(13, weight: .medium)
-                                .foregroundStyle(theme.accentColor)
-                        }
-                    }
-                }
+                certificateSlab
 
                 Slab(rail: .info, title: "Refresh") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -355,7 +333,6 @@ struct ServerEditView: View {
         // the screen from looking like a fix already made didn't work.
         .onChange(of: profile.baseURL) { message = nil; showOpenSettingsButton = false }
         .onChange(of: profile.username) { message = nil; showOpenSettingsButton = false }
-        .onChange(of: profile.allowUntrustedTLS) { message = nil; showOpenSettingsButton = false }
         .onChange(of: profile.pinnedFingerprint) { message = nil; showOpenSettingsButton = false }
         .onChange(of: password) { message = nil; showOpenSettingsButton = false }
         .confirmationDialog("Pin this certificate?", isPresented: $offerPinning,
@@ -375,6 +352,27 @@ struct ServerEditView: View {
             Text("The connection worked. Pinning means only this exact certificate is accepted from now on, "
                 + "which stops anything else answering for your firewall. "
                 + "You will need to pin again when you renew it.")
+        }
+        .confirmationDialog("Replace the certificate pin?",
+                            isPresented: $showRepinConfirmation,
+                            titleVisibility: .visible) {
+            Button("Replace pin", role: .destructive) {
+                guard let fingerprint = pendingFingerprint,
+                      registry.replaceCertificatePin(fingerprint, for: profile.id) else {
+                    message = "The new certificate pin could not be saved."
+                    messageHealth = .bad
+                    return
+                }
+                profile.pinnedFingerprint = CertificateObservation.normalized(fingerprint)
+                profile.allowUntrustedTLS = false
+                pendingFingerprint = nil
+                message = "Certificate pin replaced. Tap Save to reconnect and verify it."
+                messageHealth = .warn
+            }
+            Button("Cancel", role: .cancel) { pendingFingerprint = nil }
+        } message: {
+            Text("Only continue after comparing the complete SHA-256 fingerprint with pfSense "
+                 + "through a separate trusted path. The changed certificate has not been trusted yet.")
         }
         .confirmationDialog("Remove this firewall?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Remove", role: .destructive) {
@@ -517,14 +515,66 @@ struct ServerEditView: View {
         }
     }
 
-    private var pinnedFingerprintField: some View {
-        TextField("not pinned", text: $profile.pinnedFingerprint)
-            .scaledFont(11, design: .monospaced)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .padding(10)
-            .background(theme.cardRaised)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    private var certificateSlab: some View {
+        let observation = profile.certificateObservation
+        let pinMatches = observation?.matches(pin: profile.pinnedFingerprint) == true
+        let changed = observation != nil && !profile.pinnedFingerprint.isEmpty && !pinMatches
+        let health: Health = changed ? .bad
+            : observation?.expiryState().health ?? (profile.pinnedFingerprint.isEmpty ? .warn : .idle)
+
+        return Slab(rail: health, title: "Certificate") {
+            VStack(alignment: .leading, spacing: 10) {
+                FieldRow(key: "Host", value: profile.host)
+                if let observation {
+                    FieldRow(key: "Subject", value: observation.subject, mono: false)
+                    if let issuer = observation.issuer {
+                        FieldRow(key: "Issuer", value: issuer, mono: false)
+                    }
+                    if let validFrom = observation.validFrom {
+                        HStack {
+                            Text("VALID FROM").scaledFont(9, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                            Spacer()
+                            Text(validFrom, style: .date).scaledFont(12)
+                                .foregroundStyle(theme.label)
+                        }
+                    }
+                    if let validUntil = observation.validUntil {
+                        HStack {
+                            Text("VALID UNTIL").scaledFont(9, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                            Spacer()
+                            Text(validUntil, style: .date).scaledFont(12)
+                                .foregroundStyle(observation.expiryState().health.color(theme))
+                        }
+                    }
+                    FieldRow(key: "SHA-256", value: observation.fingerprint)
+                    FieldRow(key: "Trust", value: changed ? "certificate changed — blocked"
+                             : pinMatches ? "pinned and matched"
+                             : observation.systemTrusted ? "system trusted, not pinned"
+                             : "presented, awaiting explicit pin", mono: false)
+
+                    if changed {
+                        Text("The firewall presented a different certificate. Vaktpost rejected the connection and will not trust it automatically.")
+                            .scaledFont(12)
+                            .foregroundStyle(theme.bad)
+                        Button("Review and replace pin") {
+                            pendingFingerprint = observation.fingerprint
+                            showRepinConfirmation = true
+                        }
+                        .scaledFont(13, weight: .semibold)
+                        .foregroundStyle(theme.warn)
+                    }
+                } else {
+                    Text("Connect to observe the active certificate. Self-signed certificates must be explicitly pinned on first use.")
+                        .scaledFont(12)
+                        .foregroundStyle(theme.labelMuted)
+                    if !profile.pinnedFingerprint.isEmpty {
+                        FieldRow(key: "Pinned SHA-256", value: profile.pinnedFingerprint)
+                    }
+                }
+            }
+        }
     }
 
     private var toggleKeyButton: some View {
@@ -624,6 +674,15 @@ struct ServerEditView: View {
         isTesting = true
         defer { isTesting = false }
 
+        var p = profile
+        p.normalize()
+        guard p.validatedBaseURL != nil else {
+            profile = p
+            message = "Use an HTTPS base URL with only a host and optional port. Credentials, paths, queries, and fragments are not allowed."
+            messageHealth = .bad
+            return
+        }
+
         let hasStoredPassword = Keychain.hasPassword(for: profile.id)
         let mustSavePassword = !hasStoredPassword
             || (!password.isEmpty && password != revealedPassword)
@@ -648,8 +707,6 @@ struct ServerEditView: View {
                 return
             }
         }
-        var p = profile
-        p.normalize()
         profile = p
         await store.saved(p)
         // The trust delegate may have saved a pin during the refresh.
@@ -665,30 +722,12 @@ struct ServerEditView: View {
 
         do {
             let version = try await store.client.ping()
-
-            // Offer to pin what we just connected to.
-            //
-            // pfSense ships a self-signed certificate, so the first connection
-            // is necessarily made with untrusted TLS allowed. That is the one
-            // moment the app knows the certificate is the right one — the
-            // person is looking at the firewall they just typed in — and it is
-            // the moment to fix it in place. Asking rather than pinning
-            // silently, because pinning is a commitment that breaks the
-            // connection when the certificate is renewed.
-            if profile.pinnedFingerprint.isEmpty,
-               profile.allowUntrustedTLS,
-               let seen = await store.client.lastSeenFingerprint {
-                confirmedFingerprint = seen
-                offerPinning = true
-                message = "Connected — pfSense \(version)"
-                messageHealth = .ok
-                return
-            }
-
+            if let saved = registry.servers.first(where: { $0.id == p.id }) { profile = saved }
             message = "Connected — pfSense \(version)"
             messageHealth = .ok
             dismiss()
         } catch {
+            if let saved = registry.servers.first(where: { $0.id == p.id }) { profile = saved }
             // Stays open: the error is the reason to still be here.
             message = error.localizedDescription
             messageHealth = .bad

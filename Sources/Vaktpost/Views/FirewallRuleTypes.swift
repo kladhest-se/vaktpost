@@ -423,6 +423,28 @@ struct RuleDetailView: View {
 
 /// Editable representation of a firewall rule.
 struct RuleEditForm: Equatable, Identifiable {
+    enum LogPrefillError: LocalizedError, Equatable {
+        case notFirewallEvent
+        case outboundDirection
+        case missingInterface
+        case invalidAddress
+        case mixedAddressFamilies
+        case unsupportedProtocol
+        case invalidPort
+
+        var errorDescription: String? {
+            switch self {
+            case .notFirewallEvent: return "This log entry does not contain a complete firewall event."
+            case .outboundDirection:
+                return "Outbound events cannot be mapped safely to a normal interface rule. Create a floating rule manually instead."
+            case .missingInterface: return "The event's interface could not be mapped to a configured pfSense interface."
+            case .invalidAddress: return "The event does not contain two valid literal IP addresses."
+            case .mixedAddressFamilies: return "The source and destination use different IP address families."
+            case .unsupportedProtocol: return "The event protocol cannot be represented safely by the rule editor."
+            case .invalidPort: return "The event contains an invalid transport port."
+            }
+        }
+    }
     /// Identity for `sheet(item:)`. A draft is one thing at a time, and the
     /// interface it is being written for is what distinguishes one draft from
     /// the next.
@@ -478,6 +500,52 @@ struct RuleEditForm: Equatable, Identifiable {
             "source": .object(["any": .bool(true)]),
             "destination": .object(["any": .bool(true)])
         ])))
+        form.isCreating = true
+        form.placementTarget = .last
+        return form
+    }
+
+    /// Builds a disabled, unsaved draft from one inbound filter event. This
+    /// never calls the firewall. The editor, review dialog, write coordinator,
+    /// stale-state checks, audit trail, and Apply Changes remain mandatory.
+    static func prefilled(from line: LogLine, interface: String?) throws -> RuleEditForm {
+        guard let fields = line.filterFields else { throw LogPrefillError.notFirewallEvent }
+        guard (fields.direction ?? "").lowercased() == "in" else {
+            throw LogPrefillError.outboundDirection
+        }
+        guard let interface, !interface.isEmpty else { throw LogPrefillError.missingInterface }
+        guard let source = fields.source, let destination = fields.destination,
+              FieldValidator.isAddress(source), FieldValidator.isAddress(destination) else {
+            throw LogPrefillError.invalidAddress
+        }
+
+        let sourceV6 = FieldValidator.isIPv6(source)
+        guard sourceV6 == FieldValidator.isIPv6(destination) else {
+            throw LogPrefillError.mixedAddressFamilies
+        }
+        let proto = (fields.proto ?? "").lowercased()
+        let supported = ["tcp", "udp", "icmp", "gre", "esp"]
+        guard supported.contains(proto) else { throw LogPrefillError.unsupportedProtocol }
+        if let sourcePort = fields.sourcePort, !sourcePort.isEmpty,
+           !FieldValidator.isPortNumber(sourcePort) { throw LogPrefillError.invalidPort }
+        if let destinationPort = fields.destinationPort, !destinationPort.isEmpty,
+           !FieldValidator.isPortNumber(destinationPort) { throw LogPrefillError.invalidPort }
+
+        var form = blank(interface: interface)
+        form.descr = "From firewall log: \(source) to \(destination)"
+        form.type = "pass"
+        form.proto = proto
+        form.addressFamily = sourceV6 ? "inet6" : "inet"
+        form.sourceAddress = source
+        form.sourceStorageKind = .address
+        form.destinationAddress = destination
+        form.destinationStorageKind = .address
+        if proto == "tcp" || proto == "udp" {
+            form.sourcePort = fields.sourcePort ?? ""
+            form.destinationPort = fields.destinationPort ?? ""
+        }
+        form.disabled = true
+        form.logged = true
         form.isCreating = true
         form.placementTarget = .last
         return form
@@ -594,6 +662,7 @@ struct RuleEditSheet: View {
 
     @State private var edited: RuleEditForm
     @State private var isSaving = false
+    @State private var showSaveReview = false
 
     /// Shown by this sheet itself because it remains the visible screen while
     /// the save is in progress.
@@ -780,7 +849,7 @@ struct RuleEditSheet: View {
                         // through the whole save and a second tap sent a
                         // second write.
                         Button("Save") {
-                            Task { await saveConfirmed() }
+                            showSaveReview = true
                         }
                         // Nothing invalid leaves this screen. pfSense takes
                         // most of it and then quietly fails to load the
@@ -791,6 +860,14 @@ struct RuleEditSheet: View {
                 }
             }
             .interactiveDismissDisabled(isSaving)
+            .confirmationDialog("Review staged rule",
+                                isPresented: $showSaveReview,
+                                titleVisibility: .visible) {
+                Button("Save staged rule") { Task { await saveConfirmed() } }
+                Button("Continue editing", role: .cancel) {}
+            } message: {
+                Text(changePreview + "\n\nThe rule remains inactive until Apply Changes is reviewed and confirmed.")
+            }
             .onChange(of: edited.interface) {
                 // A tracker from the previous interface is not a meaningful
                 // anchor on the new one. Moving interfaces therefore lands at

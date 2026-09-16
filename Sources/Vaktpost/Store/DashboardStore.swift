@@ -184,7 +184,10 @@ final class DashboardStore: Observable {
     private static func makeClient(profile: ServerProfile, registry: ServerRegistry,
                                    generation: BindingGeneration) -> FirewallClient {
         let binding = generation.id
-        return FirewallClient(profile: profile) { [weak registry] expected, fingerprint in
+        return FirewallClient(profile: profile, onObserve: { [weak registry] expected, observation in
+            guard generation.id == binding else { return }
+            registry?.observeCertificate(observation, for: expected)
+        }) { [weak registry] expected, fingerprint in
             guard generation.id == binding else { return false }
             return registry?.pinCertificate(fingerprint, for: expected) ?? false
         }
@@ -247,6 +250,8 @@ final class DashboardStore: Observable {
     var staticMappings: [StaticMapping] = []
     var hostOverrides: [HostOverride] = []
     var firewallLog: [LogLine] = []
+    private(set) var firewallLogRetryAt: Date?
+    private(set) var firewallLogFailureCount = 0
     var systemLog: [LogLine] = []
     var authLog: [LogLine] = []
     var dhcpLog: [LogLine] = []
@@ -591,6 +596,7 @@ final class DashboardStore: Observable {
         store.leases = []; store.arp = []; store.staticMappings = []
         store.hostOverrides = []
         store.firewallLog = []; store.systemLog = []; store.authLog = []; store.dhcpLog = []; store.openvpnLog = []
+        store.firewallLogRetryAt = nil; store.firewallLogFailureCount = 0
         store.openvpnServers = []; store.openvpnClients = []; store.ipsecSAs = []
         store.wireguardTunnels = []; store.wireguardPeers = []
         store.rules = []; store.aliases = []; store.portForwards = []
@@ -1225,19 +1231,32 @@ extension DashboardStore {
     private func fetchLogSection(_ binding: UUID, _ section: Section, client: FirewallClient) async throws {
         switch section {
         case .firewallLog:
-            try await assign(binding, [section], fetcher: { try await client.firewallLog(limit: self.profile.logLimit) }) { self.firewallLog = $0 }
+            try await assign(
+                binding, [section],
+                fetcher: { try await client.firewallLog(limit: self.profile.logLimit) }
+            ) { incoming in
+                self.firewallLog = LogSnapshotMerge.merge(previous: self.firewallLog, incoming: incoming).lines
+            }
             capLogs()
         case .systemLog:
-            try await assign(binding, [section], fetcher: { try await client.systemLog(limit: self.profile.logLimit) }) { self.systemLog = $0 }
+            try await assign(binding, [section], fetcher: { try await client.systemLog(limit: self.profile.logLimit) }) {
+                self.systemLog = LogSnapshotMerge.merge(previous: self.systemLog, incoming: $0).lines
+            }
             capLogs()
         case .authLog:
-            try await assign(binding, [section], fetcher: { try await client.authLog(limit: self.profile.logLimit) }) { self.authLog = $0 }
+            try await assign(binding, [section], fetcher: { try await client.authLog(limit: self.profile.logLimit) }) {
+                self.authLog = LogSnapshotMerge.merge(previous: self.authLog, incoming: $0).lines
+            }
             capLogs()
         case .dhcpLog:
-            try await assign(binding, [section], fetcher: { try await client.dhcpLog(limit: self.profile.logLimit) }) { self.dhcpLog = $0 }
+            try await assign(binding, [section], fetcher: { try await client.dhcpLog(limit: self.profile.logLimit) }) {
+                self.dhcpLog = LogSnapshotMerge.merge(previous: self.dhcpLog, incoming: $0).lines
+            }
             capLogs()
         case .openvpnLog:
-            try await assign(binding, [section], fetcher: { try await client.openvpnLog(limit: self.profile.logLimit) }) { self.openvpnLog = $0 }
+            try await assign(binding, [section], fetcher: { try await client.openvpnLog(limit: self.profile.logLimit) }) {
+                self.openvpnLog = LogSnapshotMerge.merge(previous: self.openvpnLog, incoming: $0).lines
+            }
             capLogs()
         default:
             break
@@ -1357,6 +1376,43 @@ extension DashboardStore {
         await loadSecondaryLogsIfNeeded()
     }
 
+    /// A bounded, section-only live view. Ten seconds is the fastest allowed
+    /// cadence and thirty seconds the slowest while the screen is visible;
+    /// it does not trigger the expensive dashboard batches or secondary logs.
+    func monitorFirewallLog() async {
+        let binding = bindingID
+        defer { if bindingID == binding { firewallLogRetryAt = nil } }
+        while isCurrent(binding) && !Task.isCancelled {
+            let succeeded = await runSection(.firewallLog)
+            if succeeded {
+                firewallLogFailureCount = 0
+            } else if isCurrent(binding) && !Task.isCancelled {
+                firewallLogFailureCount = min(firewallLogFailureCount + 1, 8)
+            }
+            let seconds = FirewallLogPollPolicy.interval(
+                profileRefreshSeconds: profile.refreshSeconds,
+                consecutiveFailures: firewallLogFailureCount
+            )
+            firewallLogRetryAt = Date().addingTimeInterval(TimeInterval(seconds))
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+        }
+    }
+
+    /// A pull-to-refresh on the live log is intentionally scoped to that log.
+    /// It bypasses the automatic delay without refreshing every dashboard
+    /// section, then resets backoff only after a successful response.
+    @discardableResult
+    func refreshFirewallLog() async -> Bool {
+        firewallLogRetryAt = nil
+        let succeeded = await runSection(.firewallLog)
+        if succeeded {
+            firewallLogFailureCount = 0
+        } else if !Task.isCancelled {
+            firewallLogFailureCount = min(firewallLogFailureCount + 1, 8)
+        }
+        return succeeded
+    }
+
     func beginIncidentTimeline() async {
         let binding = bindingID
         let needsSecondaryLogs = !wantsSecondaryLogs
@@ -1391,16 +1447,19 @@ extension DashboardStore {
     }
 
     /// Runs one section outside the main refresh's bookkeeping.
-    private func runSection(_ section: Section) async {
+    @discardableResult
+    private func runSection(_ section: Section) async -> Bool {
         let binding = bindingID
-        guard isConfigured else { return }
+        guard isConfigured else { return false }
         do {
             try await fetchOne(section)
-            guard isCurrent(binding) else { return }
+            guard isCurrent(binding) else { return false }
             errors[section] = nil
+            return true
         } catch {
-            guard isCurrent(binding) else { return }
+            guard isCurrent(binding) else { return false }
             errors[section] = error.localizedDescription
+            return false
         }
     }
 
@@ -1644,6 +1703,14 @@ extension DashboardStore {
     }
 
     var packagesNeedingUpdate: [PackageInfo] { packages.filter(\.updateAvailable) }
+}
+
+enum FirewallLogPollPolicy {
+    static func interval(profileRefreshSeconds: Int, consecutiveFailures: Int = 0) -> Int {
+        let base = min(30, max(10, profileRefreshSeconds))
+        let exponent = min(4, max(0, consecutiveFailures - 1))
+        return min(300, base * (1 << exponent))
+    }
 }
 
 // MARK: - Update checks and history

@@ -172,8 +172,8 @@ enum ICMPProbe {
     /// null-terminated. `inet_ntop` guarantees it here, but truncating at
     /// the terminator explicitly is what the replacement API asks for.
     private static func string(fromNullTerminated buffer: [CChar]) -> String {
-        let bytes = buffer.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }
-        return String(decoding: bytes, as: UTF8.self)
+        let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return String(bytes: bytes, encoding: .utf8) ?? ""
     }
 
     /// The first IPv4 address `host` resolves to, or nil if it resolves only

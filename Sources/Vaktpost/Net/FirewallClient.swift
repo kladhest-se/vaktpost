@@ -11,9 +11,12 @@ actor FirewallClient {
     let rpc: XMLRPCClient
     let administrationEnabled: Bool
 
-    init(profile: ServerProfile, allowsTrustPrompt: Bool = true, onPin: @escaping TrustEvaluator.PinHandler) {
+    init(profile: ServerProfile, allowsTrustPrompt: Bool = true,
+         onObserve: TrustEvaluator.ObservationHandler? = nil,
+         onPin: @escaping TrustEvaluator.PinHandler) {
         self.administrationEnabled = profile.isAdministrationEnabled
-        self.rpc = XMLRPCClient(profile: profile, allowsTrustPrompt: allowsTrustPrompt, onPin: onPin)
+        self.rpc = XMLRPCClient(profile: profile, allowsTrustPrompt: allowsTrustPrompt,
+                                onObserve: onObserve, onPin: onPin)
     }
 
     func invalidate() async {

@@ -34,7 +34,7 @@ struct SpeedtestView: View {
 
                 if let errorMessage {
                     Notice(symbol: "exclamationmark.triangle", title: "Speed test failed",
-                          detail: errorMessage, health: .warn)
+                           detail: errorMessage, health: .warn)
                 }
 
                 if let latest {
@@ -42,8 +42,8 @@ struct SpeedtestView: View {
                         resultSlab(latest)
                     } else {
                         Notice(symbol: "wifi.slash", title: "Not available",
-                              detail: latest.reason ?? "The firewall could not complete a speed test.",
-                              health: .warn)
+                               detail: latest.reason ?? "The firewall could not complete a speed test.",
+                               health: .warn)
                     }
                 }
 

@@ -580,9 +580,9 @@ struct ARPEntry: Identifiable {
 // MARK: - Logs
 
 struct LogLine: Identifiable {
-    enum Kind { case firewall, system, auth, dhcp, openvpn }
+    enum Kind: String, Hashable { case firewall, system, auth, dhcp, openvpn }
 
-    let id = UUID()
+    var id = UUID()
     var kind: Kind
     var text: String
     var timestamp: String?
@@ -616,6 +616,17 @@ struct LogLine: Identifiable {
         } else {
             action = nil
         }
+
+        // Promote safely parsed fields for filtering and summaries. A partial
+        // line leaves unknown values nil; the raw text remains available.
+        if let fields = filterFields {
+            action = fields.action?.lowercased() ?? action
+            interfaceName = fields.interfaceName
+            source = fields.source
+            destination = fields.destination
+            proto = fields.proto?.lowercased()
+            timestamp = syslogFields?.timestamp
+        }
     }
 
     init(_ d: JSONDict, kind: Kind) {
@@ -646,6 +657,70 @@ struct LogLine: Identifiable {
     var portsAndPeers: String? {
         guard source != nil || destination != nil else { return nil }
         return "\(source ?? "?") → \(destination ?? "?")"
+    }
+}
+
+/// Keeps row identity stable when pfSense returns the same tail again. Exact
+/// duplicate lines remain distinct by occurrence, while lines already present
+/// in the previous snapshot retain their IDs so SwiftUI and the unseen counter
+/// do not treat the whole log as new on every poll.
+struct LogSnapshotMerge {
+    var lines: [LogLine]
+    var newCount: Int
+
+    static func merge(previous: [LogLine], incoming: [LogLine]) -> LogSnapshotMerge {
+        struct Signature: Hashable {
+            var kind: LogLine.Kind
+            var text: String
+        }
+
+        var existing: [Signature: [UUID]] = [:]
+        for line in previous {
+            existing[Signature(kind: line.kind, text: line.text), default: []].append(line.id)
+        }
+        var offsets: [Signature: Int] = [:]
+        var additions = 0
+        let merged = incoming.map { incomingLine -> LogLine in
+            var line = incomingLine
+            let signature = Signature(kind: line.kind, text: line.text)
+            let offset = offsets[signature, default: 0]
+            if let identifiers = existing[signature], offset < identifiers.count {
+                line.id = identifiers[offset]
+                offsets[signature] = offset + 1
+            } else {
+                additions += 1
+            }
+            return line
+        }
+        return LogSnapshotMerge(lines: merged, newCount: additions)
+    }
+}
+
+enum LogExport {
+    static func text(for lines: [LogLine], redacted: Bool) -> String {
+        lines.map { line in
+            var raw = line.text
+            if redacted {
+                let fields = line.filterFields
+                let addresses = Set(line.addressesMentioned + [fields?.source, fields?.destination].compactMap { $0 })
+                for address in addresses.sorted(by: { $0.count > $1.count }) {
+                    raw = raw.replacingOccurrences(of: address, with: "<address>")
+                }
+                for port in [fields?.sourcePort, fields?.destinationPort].compactMap({ $0 }) {
+                    raw = raw.replacingOccurrences(of: ",\(port),", with: ",<port>,")
+                    if raw.hasSuffix(",\(port)") {
+                        raw.removeLast(port.count)
+                        raw += "<port>"
+                    }
+                }
+            }
+            var parts: [String] = []
+            if let timestamp = line.timestamp { parts.append(timestamp) }
+            if let action = line.action { parts.append(action) }
+            if let interfaceName = line.interfaceName, !interfaceName.isEmpty { parts.append(interfaceName) }
+            parts.append(raw)
+            return parts.joined(separator: " · ")
+        }.joined(separator: "\n")
     }
 }
 
@@ -681,12 +756,21 @@ extension LogLine {
     var filterFields: FilterFields? {
         guard kind == .firewall else { return nil }
 
-        // Everything after `filterlog[pid]: ` is the CSV.
-        guard let marker = text.range(of: "filterlog[")?.upperBound,
-              let colon = text.range(of: ": ", range: marker..<text.endIndex)?.upperBound
-        else { return nil }
+        // Usually prefixed by syslog, but fixtures and some pfSense readers
+        // return the CSV alone. Accept both without guessing fields from a
+        // non-filter message merely because it contains a comma.
+        let payload: Substring
+        if let marker = text.range(of: "filterlog")?.upperBound,
+           let colon = text.range(of: ":", range: marker..<text.endIndex)?.upperBound {
+            payload = text[colon...]
+        } else {
+            let candidate = text[...]
+            let commas = candidate.reduce(into: 0) { if $1 == "," { $0 += 1 } }
+            guard commas >= 8 else { return nil }
+            payload = candidate
+        }
 
-        let parts = text[colon...].split(separator: ",", omittingEmptySubsequences: false)
+        let parts = payload.split(separator: ",", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count >= 9 else { return nil }
 
@@ -731,6 +815,46 @@ extension LogLine {
         // TCP carries flags after the data length; UDP does not.
         if (f.proto ?? "").lowercased() == "tcp" { f.tcpFlags = at(sourceIndex + 5) }
         return f
+    }
+}
+
+/// Pure filter state for the live firewall log. Keeping matching out of the
+/// view makes malformed-entry behavior deterministic and directly testable.
+struct FirewallLogFilter: Equatable {
+    var query = ""
+    var action: String?
+    var interfaceName: String?
+    var proto: String?
+    var source = ""
+    var destination = ""
+    var port = ""
+
+    func matches(_ line: LogLine) -> Bool {
+        guard line.kind == .firewall else { return false }
+        let fields = line.filterFields
+        if let action, (fields?.action ?? line.action)?.lowercased() != action.lowercased() { return false }
+        if let interfaceName,
+           (fields?.interfaceName ?? line.interfaceName)?.lowercased() != interfaceName.lowercased() { return false }
+        if let proto, (fields?.proto ?? line.proto)?.lowercased() != proto.lowercased() { return false }
+        if !source.isEmpty && !(fields?.source ?? line.source ?? "").localizedCaseInsensitiveContains(source) {
+            return false
+        }
+        if !destination.isEmpty
+            && !(fields?.destination ?? line.destination ?? "").localizedCaseInsensitiveContains(destination) {
+            return false
+        }
+        if !port.isEmpty {
+            let ports = [fields?.sourcePort, fields?.destinationPort].compactMap { $0 }
+            guard ports.contains(where: { $0.localizedCaseInsensitiveContains(port) }) else { return false }
+        }
+        if !query.isEmpty {
+            let searchable = [line.text, fields?.interfaceName, fields?.action, fields?.proto,
+                              fields?.source, fields?.destination, fields?.sourcePort,
+                              fields?.destinationPort]
+                .compactMap { $0 }.joined(separator: " ")
+            guard searchable.localizedCaseInsensitiveContains(query) else { return false }
+        }
+        return true
     }
 }
 

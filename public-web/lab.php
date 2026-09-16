@@ -72,7 +72,9 @@ $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
           <button type="button" data-probe="packages"><span>Packages</span><small>Installed example packages</small></button>
           <button type="button" data-probe="updates"><span>Package updates</span><small>Repository comparison</small></button>
           <button type="button" data-probe="rules"><span>Firewall rules</span><small>Synthetic rule set</small></button>
-          <button type="button" data-probe="logs"><span>Firewall log</span><small>Pass and block examples</small></button>
+          <button type="button" data-probe="logs"><span>Firewall log poll</span><small>Append one live event</small></button>
+          <button type="button" data-probe="logBurst"><span>Firewall log burst</span><small>Append five live events</small></button>
+          <button type="button" data-probe="logReset"><span>Reset firewall log</span><small>Restore the original fixtures</small></button>
         </div>
         <div class="lab-response">
           <div class="lab-response__head"><span>XML-RPC RESPONSE</span><output id="response-status">Not run</output></div>
@@ -87,6 +89,7 @@ $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
     <article><h2>Known calls only</h2><p>The endpoint recognizes Vaktpost’s audited snippets by their signatures. Unknown code receives an XML-RPC fault.</p></article>
     <article><h2>Four useful states</h2><p>Test healthy, outdated, degraded, and deliberate-failure behavior by changing only the profile username.</p></article>
     <article><h2>Updates without risk</h2><p>The Updates profile simulates successful firmware and package completion in an expiring PHP session. No updater runs.</p></article>
+    <article><h2>Live logs</h2><p>Each app session grows its own bounded synthetic log stream as Vaktpost polls it, including deterministic bursts for testing follow and unseen-event behavior.</p></article>
   </section>
 </main>
 

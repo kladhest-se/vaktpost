@@ -76,7 +76,7 @@ final class XmlApiSimulator
             return ['payload' => $this->backupConfig()];
         }
 
-        $log = $this->logRequest($script);
+        $log = $this->logRequest($script, $scenario);
         if ($log !== null) {
             return ['payload' => $log];
         }
@@ -268,8 +268,9 @@ final class XmlApiSimulator
      * configured.
      */
     private const STATE_MAX_AGE_SECONDS = 1200;
+    private const MAX_LOG_ROWS = 500;
 
-    /** @return array{seeded_at: int, rules: list<array<string, mixed>>, nat_rules: list<array<string, mixed>>, aliases: list<array<string, mixed>>, filter_separators: list<array<string, mixed>>, nat_separators: list<array<string, mixed>>} */
+    /** @return array<string, mixed> */
     private function state(): array
     {
         $existing = $_SESSION['vaktpost_state'] ?? null;
@@ -287,10 +288,21 @@ final class XmlApiSimulator
                     ['interface' => 'lan', 'key' => 'sep0', 'text' => 'Application access', 'color' => 'info', 'position' => '0'],
                 ],
                 'nat_separators' => [],
+                'logs' => $this->logs(),
+                'log_sequences' => [],
+                'log_polls' => [],
             ];
             // A reseed clears whatever was pending too — there is nothing
             // meaningful left to apply once the ruleset behind it is gone.
             unset($_SESSION['vaktpost_dirty']);
+        }
+        // Sessions created by a previous simulator build gain live logs
+        // without discarding firewall edits already made in that session.
+        if (!isset($_SESSION['vaktpost_state']['logs'])
+            || !is_array($_SESSION['vaktpost_state']['logs'])) {
+            $_SESSION['vaktpost_state']['logs'] = $this->logs();
+            $_SESSION['vaktpost_state']['log_sequences'] = [];
+            $_SESSION['vaktpost_state']['log_polls'] = [];
         }
         return $_SESSION['vaktpost_state'];
     }
@@ -855,19 +867,135 @@ final class XmlApiSimulator
     }
 
     /** @return array{data: list<string>, path: string, size: int} */
-    private function logRequest(string $script): ?array
+    private function logRequest(string $script, string $scenario): ?array
     {
         if (preg_match('/\\$path\\s*=\\s*"\\/var\\/log\\/(filter|system|auth|dhcpd|openvpn)\\.log"/', $script, $matches) !== 1) {
             return null;
         }
 
         $source = $matches[1];
-        $rows = $this->logs()[$source];
+        $state = $this->state();
+        $reset = str_contains($script, 'VAKTPOST_LAB_LOG_RESET');
+        $burst = str_contains($script, 'VAKTPOST_LAB_LOG_BURST');
+        if ($reset) {
+            $state['logs'] = $this->logs();
+            $state['log_sequences'] = [];
+            $state['log_polls'] = [];
+        } else {
+            $poll = (int) ($state['log_polls'][$source] ?? 0) + 1;
+            $state['log_polls'][$source] = $poll;
+            // Every fifth ordinary filter-log poll is a small burst. It is
+            // deterministic, so the viewer's unseen counter can be tested
+            // without making the lab's automated assertions flaky.
+            $count = $burst ? 5 : (($source === 'filter' && $poll % 5 === 0) ? 3 : 1);
+            $state = $this->appendLogEvents($state, $source, $scenario, $count);
+        }
+        $_SESSION['vaktpost_state'] = $state;
+
+        $limit = 100;
+        if (preg_match('/array_slice\\(\\$lines,\\s*-(\\d+)\\)/', $script, $limitMatch) === 1) {
+            $limit = max(10, min(500, (int) $limitMatch[1]));
+        }
+        $allRows = $state['logs'][$source];
+        $rows = array_slice($allRows, -$limit);
         return [
             'data' => $rows,
             'path' => '/var/log/' . $source . '.log',
-            'size' => strlen(implode(PHP_EOL, $rows)),
+            'size' => strlen(implode(PHP_EOL, $allRows)),
         ];
+    }
+
+    /** @param array<string, mixed> $state @return array<string, mixed> */
+    private function appendLogEvents(array $state, string $source, string $scenario, int $count): array
+    {
+        $sequence = (int) ($state['log_sequences'][$source] ?? 0);
+        $seededAt = (int) ($state['seeded_at'] ?? time());
+        for ($i = 0; $i < $count; $i++) {
+            $sequence++;
+            $state['logs'][$source][] = $this->generatedLogLine($source, $scenario, $sequence, $seededAt);
+        }
+        $state['logs'][$source] = array_slice($state['logs'][$source], -self::MAX_LOG_ROWS);
+        $state['log_sequences'][$source] = $sequence;
+        return $state;
+    }
+
+    private function generatedLogLine(string $source, string $scenario, int $sequence, int $seededAt): string
+    {
+        $timestamp = gmdate('M j H:i:s', $seededAt + $sequence * 7);
+        if ($source === 'filter') {
+            return $this->generatedFilterLine($timestamp, $scenario, $sequence);
+        }
+
+        $pid = 6000 + ($sequence % 3000);
+        $index = $sequence % 3;
+        if ($source === 'system') {
+            $messages = [
+                'dpinger: WAN_DHCP latency sample within threshold',
+                'check_reload_status: Reloading filter',
+                'syslogd: synthetic live-log heartbeat ' . $sequence,
+            ];
+            return $timestamp . ' vaktpost-lab system[' . $pid . ']: ' . $messages[$index];
+        }
+        if ($source === 'auth') {
+            $messages = [
+                'Successful login for user review from 192.0.2.110',
+                'Accepted publickey for lab-admin from 192.0.2.111 port 52108 ssh2',
+                'Authentication test event ' . $sequence . ' completed',
+            ];
+            return $timestamp . ' vaktpost-lab auth[' . $pid . ']: ' . $messages[$index];
+        }
+        if ($source === 'dhcpd') {
+            $host = 110 + ($sequence % 10);
+            return $timestamp . ' vaktpost-lab dhcpd[' . $pid . ']: DHCPACK on 192.0.2.' . $host
+                . ' to 02:00:00:10:01:' . str_pad((string) ($sequence % 100), 2, '0', STR_PAD_LEFT)
+                . ' (live-client-' . $sequence . ') via vtnet1';
+        }
+
+        $messages = [
+            'peer info: IV_PLAT=iOS',
+            'friend-test/203.0.113.42:51820 MULTI_sva: pool returned IPv4=192.0.2.210',
+            'synthetic tunnel keepalive sequence ' . $sequence,
+        ];
+        return $timestamp . ' vaktpost-lab openvpn[' . $pid . ']: ' . $messages[$index];
+    }
+
+    private function generatedFilterLine(string $timestamp, string $scenario, int $sequence): string
+    {
+        $tracker = 1800000000 + $sequence;
+        $sourcePort = 50000 + ($sequence % 1000);
+        $index = $sequence % 6;
+        $forceBlock = $scenario === 'degraded' && $index % 2 === 0;
+
+        if ($index === 0) {
+            $action = $forceBlock ? 'block' : 'pass';
+            return $timestamp . ' filterlog[4711]: 5,,,' . $tracker
+                . ',vtnet1,match,' . $action . ',in,4,0x0,,64,0,0,DF,6,tcp,60,'
+                . '192.0.2.110,192.0.2.20,' . $sourcePort . ',443,0,S,';
+        }
+        if ($index === 1) {
+            return $timestamp . ' filterlog[4711]: 5,,,' . $tracker
+                . ',vtnet0,match,block,in,4,0x0,,51,44210,0,none,6,tcp,60,'
+                . '203.0.113.66,198.51.100.24,' . $sourcePort . ',22,0,S,';
+        }
+        if ($index === 2) {
+            $action = $forceBlock ? 'block' : 'pass';
+            return $timestamp . ' filterlog[4711]: 5,,,' . $tracker
+                . ',ovpns1,match,' . $action . ',in,4,0x0,,64,0,0,none,17,udp,74,'
+                . '192.0.2.210,192.0.2.53,' . $sourcePort . ',53,54';
+        }
+        if ($index === 3) {
+            return $timestamp . ' filterlog[4711]: 5,,,' . $tracker
+                . ',vtnet0,match,block,in,6,0x00,0x00000,64,6,tcp,60,'
+                . '2001:db8:1::10,2001:db8:2::20,' . $sourcePort . ',443,0,S,';
+        }
+        if ($index === 4) {
+            return $timestamp . ' filterlog[4711]: 5,,,' . $tracker
+                . ',vtnet0,match,block,in,4,0x0,,48,0,0,none,1,icmp,84,'
+                . '198.51.100.50,192.0.2.1';
+        }
+        return $timestamp . ' filterlog[4711]: 5,,,' . $tracker
+            . ',vtnet1,match,pass,out,4,0x0,,64,0,0,DF,6,tcp,60,'
+            . '192.0.2.20,198.51.100.80,443,' . $sourcePort . ',0,SA,';
     }
 
     /** @return array<string, list<string>> */

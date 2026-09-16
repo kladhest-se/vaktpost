@@ -3,6 +3,7 @@ import SwiftUI
 struct LogsView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
+    @Environment(\.scenePhase) private var scenePhase
 
     enum Source: String, CaseIterable, Identifiable {
         case firewall = "Filter", system = "System", auth = "Auth"
@@ -18,7 +19,22 @@ struct LogsView: View {
     @State private var source: Source = .firewall
     @State private var action: ActionFilter = .all
     @State private var query = ""
+    @State private var interfaceFilter: String?
+    @State private var protocolFilter: String?
+    @State private var sourceFilter = ""
+    @State private var destinationFilter = ""
+    @State private var portFilter = ""
     @State private var filteredLines: [LogLine] = []
+    @State private var isPaused = false
+    @State private var followsNewest = true
+    @State private var unseenCount = 0
+    @State private var knownFirewallIDs: Set<UUID> = []
+
+    private struct PollID: Hashable {
+        var profileID: UUID?
+        var active: Bool
+        var paused: Bool
+    }
 
     private var errorKey: DashboardStore.Section {
         switch source {
@@ -43,108 +59,245 @@ struct LogsView: View {
         case .dhcp:     list = store.dhcpLog
         case .openvpn:  list = store.openvpnLog
         }
-        if showsActionFilter {
-            switch action {
-            case .all: break
-            case .blocked: list = list.filter { $0.health == .bad }
-            case .passed: list = list.filter { $0.action == "pass" }
-            }
+        guard showsActionFilter else {
+            filteredLines = query.isEmpty ? list
+                : list.filter { $0.text.localizedCaseInsensitiveContains(query) }
+            return
         }
-        guard !query.isEmpty else { filteredLines = list; return }
-        let q = query.lowercased()
-        filteredLines = list.filter { $0.text.lowercased().contains(q) }
+        let actionValue: String?
+        switch action {
+        case .all: actionValue = nil
+        case .blocked: actionValue = "block"
+        case .passed: actionValue = "pass"
+        }
+        let filter = FirewallLogFilter(query: query, action: actionValue,
+                                       interfaceName: interfaceFilter, proto: protocolFilter,
+                                       source: sourceFilter, destination: destinationFilter,
+                                       port: portFilter)
+        filteredLines = list.filter(filter.matches)
     }
 
     var body: some View {
-        ScrollView {
-            PageHeader(title: "Logs", subtitle: nil)
-            VStack(spacing: 8) {
-                InlineSearchField(text: $query, prompt: "Search log text")
-                    .padding(.horizontal, 16)
+        ScrollViewReader { proxy in
+            ScrollView {
+                PageHeader(title: "Logs", subtitle: nil)
+                VStack(spacing: 8) {
+                    InlineSearchField(text: $query, prompt: "Search log text")
+                        .padding(.horizontal, 16)
 
-                Picker("", selection: $source) {
-                    ForEach(Source.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-
-                if showsActionFilter {
-                    Picker("", selection: $action) {
-                        ForEach(ActionFilter.allCases) { Text($0.rawValue).tag($0) }
+                    Picker("", selection: $source) {
+                        ForEach(Source.allCases) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
 
-            FreshnessView(sections: [errorKey]).padding(.horizontal, 16)
-            LazyVStack(alignment: .leading, spacing: 8) {
-                if let err = store.errors[errorKey] {
-                    Notice(symbol: "exclamationmark.triangle",
-                           title: "Log unavailable", detail: err, health: .warn)
-                } else if filteredLines.isEmpty {
-                    Notice(
-                        symbol: "doc.text.magnifyingglass",
-                        title: query.isEmpty ? "No log lines" : "No matches",
-                        detail: query.isEmpty && (source == .dhcp || source == .openvpn)
-                            ? "This log is empty when the service isn't running."
-                            : nil
-                    )
-                } else {
-                    ForEach(filteredLines) { line in
-                        // Every line opens. A filter line becomes fields;
-                        // anything else gets its syslog prefix split off
-                        // and its message given room to wrap, which is all
-                        // a long DHCP or OpenVPN line needs.
-                        NavigationLink {
-                            LogDetailView(line: line)
-                        } label: {
-                            LogRow(line: line)
+                    if showsActionFilter {
+                        liveControls(proxy)
+
+                        Picker("", selection: $action) {
+                            ForEach(ActionFilter.allCases) { Text($0.rawValue).tag($0) }
                         }
-                        .buttonStyle(.plain)
+                        .pickerStyle(.segmented)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                filterMenu("Interface", value: interfaceFilter,
+                                           options: firewallInterfaces) { interfaceFilter = $0 }
+                                filterMenu("Protocol", value: protocolFilter,
+                                           options: firewallProtocols) { protocolFilter = $0 }
+                                if !sourceFilter.isEmpty || !destinationFilter.isEmpty || !portFilter.isEmpty {
+                                    Button("Clear endpoints") {
+                                        sourceFilter = ""; destinationFilter = ""; portFilter = ""
+                                    }
+                                    .scaledFont(11, weight: .medium)
+                                }
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            compactFilterField("Source", text: $sourceFilter)
+                            compactFilterField("Destination", text: $destinationFilter)
+                            compactFilterField("Port", text: $portFilter)
+                        }
                     }
                 }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 28)
-        }
-        .background(theme.bg.ignoresSafeArea())
-        .refreshable { await store.refreshManually() }
-        .task(id: store.activeProfile?.id) { await store.beginSecondaryLogs(); filterLines() }
-        .onChange(of: source) { filterLines() }
-        .onChange(of: action) { filterLines() }
-        .onChange(of: query) { filterLines() }
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                // One document, not one item per line.
-                //
-                // The old sheet handed `UIActivityViewController` an array of
-                // a hundred-odd separate strings, which it renders as an empty
-                // page with a placeholder icon — it is trying to preview a
-                // hundred documents at once. A log excerpt is one thing you
-                // are sharing, so it travels as one string.
-                ShareLink(
-                    item: formattedLines.joined(separator: "\n"),
-                    preview: SharePreview(
-                        "\(source.rawValue) log — \(filteredLines.count) lines"
-                    )
-                ) {
-                    Image(systemName: "square.and.arrow.up")
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                FreshnessView(sections: [errorKey]).padding(.horizontal, 16)
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    if let err = store.errors[errorKey] {
+                        Notice(symbol: "exclamationmark.triangle",
+                               title: "Log unavailable", detail: err, health: .warn)
+                    } else if filteredLines.isEmpty {
+                        Notice(
+                            symbol: "doc.text.magnifyingglass",
+                            title: query.isEmpty ? "No log lines" : "No matches",
+                            detail: query.isEmpty && (source == .dhcp || source == .openvpn)
+                                ? "This log is empty when the service isn't running."
+                                : nil
+                        )
+                    } else {
+                        ForEach(filteredLines) { line in
+                            NavigationLink {
+                                LogDetailView(line: line)
+                            } label: {
+                                LogRow(line: line)
+                            }
+                            .buttonStyle(.plain)
+                            .id(line.id)
+                        }
+                    }
                 }
-                .disabled(filteredLines.isEmpty)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 28)
+            }
+            .background(theme.bg.ignoresSafeArea())
+            .refreshable {
+                if source == .firewall { await store.refreshFirewallLog() }
+                else { await store.fetch(errorKey) }
+            }
+            .task(id: PollID(profileID: store.activeProfile?.id,
+                             active: scenePhase == .active, paused: isPaused)) {
+                guard scenePhase == .active else { return }
+                await store.beginSecondaryLogs()
+                filterLines()
+                if !isPaused { await store.monitorFirewallLog() }
+            }
+            .onAppear {
+                knownFirewallIDs = Set(store.firewallLog.map(\.id))
+                filterLines()
+            }
+            .onChange(of: store.firewallLog.map(\.id)) {
+                let current = Set(store.firewallLog.map(\.id))
+                let additions = knownFirewallIDs.isEmpty ? 0 : current.subtracting(knownFirewallIDs).count
+                knownFirewallIDs = current
+                filterLines()
+                if followsNewest, source == .firewall {
+                    unseenCount = 0
+                    scrollToNewest(proxy)
+                } else {
+                    unseenCount += additions
+                }
+            }
+            .onChange(of: source) { unseenCount = 0; filterLines() }
+            .onChange(of: followsNewest) {
+                guard followsNewest else { return }
+                unseenCount = 0
+                scrollToNewest(proxy)
+            }
+            .onChange(of: action) { filterLines() }
+            .onChange(of: query) { filterLines() }
+            .onChange(of: interfaceFilter) { filterLines() }
+            .onChange(of: protocolFilter) { filterLines() }
+            .onChange(of: sourceFilter) { filterLines() }
+            .onChange(of: destinationFilter) { filterLines() }
+            .onChange(of: portFilter) { filterLines() }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        ShareLink(
+                            item: LogExport.text(for: filteredLines, redacted: false),
+                            preview: SharePreview("\(source.rawValue) log — full")
+                        ) { Label("Share full log", systemImage: "doc.text") }
+                        ShareLink(
+                            item: "Addresses and ports redacted\n\n"
+                                + LogExport.text(for: filteredLines, redacted: true),
+                            preview: SharePreview("\(source.rawValue) log — redacted")
+                        ) { Label("Share redacted log", systemImage: "eye.slash") }
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .disabled(filteredLines.isEmpty)
+                }
             }
         }
     }
 
-    private var formattedLines: [String] {
-        filteredLines.map { line in
-            var parts: [String] = []
-            if let ts = line.timestamp { parts.append(ts) }
-            if let a = line.action { parts.append(a) }
-            if let iface = line.interfaceName, !iface.isEmpty { parts.append(iface) }
-            parts.append(line.text)
-            return parts.joined(separator: " · ")
+    @ViewBuilder
+    private func liveControls(_ proxy: ScrollViewProxy) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                isPaused.toggle()
+            } label: {
+                Label(isPaused ? "Resume" : "Pause", systemImage: isPaused ? "play.fill" : "pause.fill")
+            }
+            .accessibilityHint(isPaused ? "Resume automatic filter log updates" : "Pause automatic filter log updates")
+
+            Button {
+                followsNewest.toggle()
+                if followsNewest { scrollToNewest(proxy) }
+            } label: {
+                Label("Follow", systemImage: followsNewest ? "arrow.up.circle.fill" : "arrow.up.circle")
+            }
+
+            if unseenCount > 0 {
+                Button("\(unseenCount) new") {
+                    followsNewest = true
+                    unseenCount = 0
+                    scrollToNewest(proxy)
+                }
+                .foregroundStyle(theme.accentColor)
+            }
+            Spacer()
         }
+        .scaledFont(11, weight: .medium)
+
+        TimelineView(.periodic(from: .now, by: 5)) { context in
+            HStack(spacing: 4) {
+                if isPaused {
+                    Text("Live updates paused")
+                } else if let fetched = store.freshness[.firewallLog]?.lastSuccess {
+                    Text("Last fetched")
+                    Text(fetched, style: .relative)
+                    Text("ago")
+                } else {
+                    Text("Waiting for first filter log update")
+                }
+                if !isPaused, let retryAt = store.firewallLogRetryAt,
+                   retryAt > context.date, store.firewallLogFailureCount > 0 {
+                    Text("· retry")
+                    Text(retryAt, style: .relative)
+                }
+                Spacer()
+            }
+            .scaledFont(10)
+            .foregroundStyle(theme.labelFaint)
+        }
+    }
+
+    private func scrollToNewest(_ proxy: ScrollViewProxy) {
+        guard let first = filteredLines.first?.id else { return }
+        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(first, anchor: .top) }
+    }
+
+    private var firewallInterfaces: [String] {
+        Array(Set(store.firewallLog.compactMap { $0.filterFields?.interfaceName })).sorted()
+    }
+
+    private var firewallProtocols: [String] {
+        Array(Set(store.firewallLog.compactMap { $0.filterFields?.proto?.lowercased() })).sorted()
+    }
+
+    private func filterMenu(_ title: String, value: String?, options: [String],
+                            set: @escaping (String?) -> Void) -> some View {
+        Menu {
+            Button("All") { set(nil) }
+            ForEach(options, id: \.self) { option in Button(option) { set(option) } }
+        } label: {
+            Text(value.map { "\(title): \($0)" } ?? "\(title): All")
+                .scaledFont(11, weight: .medium)
+                .padding(.horizontal, 9).padding(.vertical, 6)
+                .background(theme.cardRaised, in: Capsule())
+        }
+    }
+
+    private func compactFilterField(_ title: String, text: Binding<String>) -> some View {
+        TextField(title, text: text)
+            .scaledFont(11, design: .monospaced)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .padding(8)
+            .background(theme.cardRaised, in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -206,6 +359,8 @@ struct LogDetailView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
     let line: LogLine
+    @State private var ruleDraft: RuleEditForm?
+    @State private var prefillError: String?
 
     var body: some View {
         ScrollView {
@@ -224,6 +379,26 @@ struct LogDetailView: View {
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle("Log entry")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $ruleDraft) { form in
+            RuleEditSheet(
+                form: form,
+                interfaces: store.interfaces,
+                aliases: store.aliases,
+                ruleset: store.rules,
+                subject: form.apply(to: FirewallRule(JSONDict([
+                    "tracker": .string(""),
+                    "interface": .string(form.interface)
+                ])))
+            ) { saved in
+                let dict = saved.toDict(tracker: "", interface: saved.interface)
+                _ = try await store.writeCoordinator.execute(
+                    .saveRule(rule: dict,
+                              displayName: saved.descr.isEmpty
+                                  ? "new rule on \(saved.interface)" : saved.descr)
+                )
+                await store.refreshManually()
+            }
+        }
     }
 
     /// Anything that is not the filter log: a syslog line, split into its
@@ -355,6 +530,44 @@ struct LogDetailView: View {
                 .scaledFont(11, design: .monospaced)
                 .foregroundStyle(theme.labelFaint)
                 .textSelection(.enabled)
+        }
+
+        Button {
+            stageRule(from: f)
+        } label: {
+            HStack {
+                Image(systemName: "plus.shield")
+                Text("Create staged rule from this")
+                Spacer()
+                Image(systemName: "chevron.right")
+            }
+            .scaledFont(13, weight: .semibold)
+            .foregroundStyle(theme.accentColor)
+            .padding(12)
+            .background(theme.card, in: RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+
+        if let prefillError {
+            Notice(symbol: "exclamationmark.triangle",
+                   title: "Cannot prefill this event safely",
+                   detail: prefillError, health: .warn)
+        }
+    }
+
+    private func stageRule(from fields: LogLine.FilterFields) {
+        let raw = fields.interfaceName ?? ""
+        let interface = store.interfaces.first {
+            $0.device.caseInsensitiveCompare(raw) == .orderedSame
+                || $0.internalName?.caseInsensitiveCompare(raw) == .orderedSame
+                || $0.name.caseInsensitiveCompare(raw) == .orderedSame
+        }?.internalName
+        do {
+            ruleDraft = try RuleEditForm.prefilled(from: line, interface: interface)
+            prefillError = nil
+        } catch {
+            ruleDraft = nil
+            prefillError = error.localizedDescription
         }
     }
 

@@ -3013,7 +3013,9 @@ struct PHPSnippet: Sendable {
               if (isset($vaktpost_r["ip"])) { $vaktpost_value = strval($vaktpost_r["ip"]); }
               elseif (isset($vaktpost_r["ipv6"])) { $vaktpost_value = strval($vaktpost_r["ipv6"]); }
               elseif (isset($vaktpost_r["txt"])) { $vaktpost_value = strval($vaktpost_r["txt"]); }
-              elseif (isset($vaktpost_r["target"]) && isset($vaktpost_r["pri"])) { $vaktpost_value = strval($vaktpost_r["pri"]) . " " . strval($vaktpost_r["target"]); }
+              elseif (isset($vaktpost_r["target"]) && isset($vaktpost_r["pri"])) {
+                $vaktpost_value = strval($vaktpost_r["pri"]) . " " . strval($vaktpost_r["target"]);
+              }
               elseif (isset($vaktpost_r["target"])) { $vaktpost_value = strval($vaktpost_r["target"]); }
               elseif (isset($vaktpost_r["mname"])) { $vaktpost_value = strval($vaktpost_r["mname"]); }
               $toreturn["records"][] = ["name" => $vaktpost_rname, "class" => "IN", "type" => $vaktpost_rtype, "value" => $vaktpost_value];

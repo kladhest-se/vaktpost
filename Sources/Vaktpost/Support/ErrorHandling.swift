@@ -71,7 +71,8 @@ enum WriteErrorFormatter {
         case .transport:
             return "Check your network connection and try again. If the problem persists, verify firewall connectivity."
         case .tls:
-            return "Verify the firewall's certificate is valid, or enable untrusted TLS in Settings if in a lab environment."
+            return "Open this firewall's Settings, review the presented certificate and compare its full SHA-256 "
+                + "fingerprint through a separate trusted path. Replace the pin only when the change is expected."
         case .fault:
             return "Check the firewall system logs for details about the rejected operation."
         case .malformed:
