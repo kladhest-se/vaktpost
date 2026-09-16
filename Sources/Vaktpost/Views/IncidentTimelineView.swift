@@ -38,6 +38,7 @@ struct IncidentTimelineView: View {
     @State private var refreshing = false
     @State private var allEvents: [IncidentEvent] = []
     @State private var filteredEvents: [IncidentEvent] = []
+    @State private var groups: [IncidentGroup] = []
     @State private var incidentCount: Int = 0
     @State private var selection: String?
 
@@ -65,7 +66,7 @@ struct IncidentTimelineView: View {
         .background(theme.bg.ignoresSafeArea())
         .navigationTitle("Incident timeline")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
+        .task(id: "\(store.activeProfile?.id.uuidString ?? "")|\(store.lastRefresh?.timeIntervalSince1970 ?? 0)") {
             allEvents = IncidentTimeline.build([
                 (.firewall, store.firewallLog),
                 (.system, store.systemLog),
@@ -145,13 +146,10 @@ struct IncidentTimelineView: View {
                     )
                 } else {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(filteredEvents) { event in
-                            Button {
-                                selection = event.id
-                            } label: {
-                                IncidentTimelineRow(event: event)
+                        ForEach(groups) { group in
+                            IncidentGroupRow(group: group) { eventID in
+                                selection = eventID
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -205,7 +203,147 @@ struct IncidentTimelineView: View {
             }
         }
         filteredEvents = result
+        groups = IncidentGrouping.group(result)
         incidentCount = count
+    }
+}
+
+private struct IncidentGroupRow: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
+    let group: IncidentGroup
+    let onSelect: (String) -> Void
+    @State private var isExpanded = false
+    @State private var showQuickBlock = false
+
+    private var health: Health {
+        switch group.severity {
+        case .attention: return .bad
+        case .warning: return .warn
+        case .information: return .info
+        }
+    }
+
+    private var sourceAddress: String? {
+        guard let key = group.groupKey, case .sourceAddress(let address) = key else { return nil }
+        return address
+    }
+
+    var body: some View {
+        // A group nothing else joined is shown exactly as a single event
+        // always has been — there's no pattern here to summarize, so no
+        // summary chrome to show for it.
+        if group.count == 1, let event = group.events.first {
+            Button {
+                onSelect(event.id)
+            } label: {
+                IncidentTimelineRow(event: event)
+            }
+            .buttonStyle(.plain)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    summaryRow
+                }
+                .buttonStyle(.plain)
+
+                // Hidden, not disabled, on a monitor-only profile — matching
+                // how Quick Block's own entry point in More already behaves,
+                // rather than showing a button here that would just fail.
+                if let address = sourceAddress, store.canAdminister {
+                    Button {
+                        showQuickBlock = true
+                    } label: {
+                        Label("Block this source", systemImage: "shield.slash")
+                            .scaledFont(12, weight: .semibold)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(theme.bad)
+                    .padding(.leading, 21)
+                    .padding(.bottom, 10)
+                    .sheet(isPresented: $showQuickBlock) {
+                        NavigationStack {
+                            QuickBlockView(
+                                prefillAddress: address,
+                                prefillDescription: "Repeated blocks from incident timeline (\(group.count) attempts)"
+                            )
+                        }
+                    }
+                }
+
+                if isExpanded {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(group.events) { event in
+                            Button {
+                                onSelect(event.id)
+                            } label: {
+                                IncidentTimelineRow(event: event)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.leading, 21)
+                }
+            }
+        }
+    }
+
+    private var summaryRow: some View {
+        HStack(alignment: .top, spacing: 11) {
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(health.color(theme))
+                    .frame(width: 10, height: 10)
+                    .padding(.top, 7)
+                Rectangle()
+                    .fill(theme.hairline)
+                    .frame(width: 1)
+                    .frame(minHeight: 58)
+            }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    if let address = sourceAddress {
+                        Label(address, systemImage: IncidentSource.firewall.symbol)
+                            .scaledFont(11, weight: .semibold)
+                            .foregroundStyle(theme.labelMuted)
+                    }
+                    StatusPill(text: group.severity.rawValue, health: health)
+                    if group.isOngoing {
+                        Circle()
+                            .fill(theme.bad)
+                            .frame(width: 6, height: 6)
+                        Text("Ongoing")
+                            .scaledFont(10, weight: .semibold)
+                            .foregroundStyle(theme.bad)
+                    }
+                    Spacer()
+                }
+                Text("\(group.count) attempts")
+                    .scaledFont(13, weight: .semibold)
+                    .foregroundStyle(theme.label)
+                HStack {
+                    if let first = group.firstSeen, let last = group.lastSeen {
+                        if first == last {
+                            Text(last, style: .relative)
+                        } else {
+                            Text(first, format: .dateTime.hour().minute())
+                            Text("–")
+                            Text(last, format: .dateTime.hour().minute())
+                        }
+                    } else {
+                        Text("Time unavailable")
+                    }
+                    Spacer()
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                }
+                .scaledFont(10, design: .monospaced)
+                .foregroundStyle(theme.labelFaint)
+            }
+            .padding(.bottom, 12)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

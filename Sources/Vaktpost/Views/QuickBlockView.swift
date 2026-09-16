@@ -17,6 +17,17 @@ struct QuickBlockView: View {
     @State private var showErrorAlert = false
     @State private var writeError: WriteError?
 
+    /// `prefillDescription` exists alongside `prefillAddress` so a caller
+    /// that already knows *why* it's suggesting a block — a repeated
+    /// source in the incident timeline, say — can leave that reason on the
+    /// rule itself, rather than the description defaulting to blank and
+    /// the context only existing in whatever screen suggested this in the
+    /// first place.
+    init(prefillAddress: String? = nil, prefillDescription: String? = nil) {
+        _address = State(initialValue: prefillAddress ?? "")
+        _description = State(initialValue: prefillDescription ?? "")
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {

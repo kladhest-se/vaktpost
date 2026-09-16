@@ -29,6 +29,38 @@ struct SettingsView: View {
                     lockScreenSlab
                 }
 
+                GroupHeading(text: "Administration")
+                Slab(rail: store.auditTrail.persistenceError == nil ? .info : .bad) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.shield")
+                            .scaledFont(15)
+                            .foregroundStyle(store.auditTrail.persistenceError == nil
+                                             ? theme.info : theme.bad)
+                            .scaledFrame(width: 22)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Administrative history")
+                                .scaledFont(14, weight: .medium)
+                                .foregroundStyle(theme.label)
+                            Text(store.auditTrail.persistenceError == nil
+                                 ? "\(store.auditTrail.entries.count) protected record\(store.auditTrail.entries.count == 1 ? "" : "s") for this firewall"
+                                 : "Protected history is unavailable")
+                                .scaledFont(11)
+                                .foregroundStyle(store.auditTrail.persistenceError == nil
+                                                 ? theme.labelFaint : theme.bad)
+                        }
+                        Spacer()
+                        ShareLink(
+                            item: store.auditTrail.redactedExport(),
+                            preview: SharePreview("Redacted Vaktpost administrative history")
+                        ) {
+                            Image(systemName: "square.and.arrow.up")
+                                .scaledFont(15)
+                                .foregroundStyle(theme.accentColor)
+                        }
+                        .disabled(store.auditTrail.entries.isEmpty)
+                    }
+                }
+
                 GroupHeading(text: "Diagnostics")
                 NavigationLink { DiagnosticsView() } label: {
                     Slab(rail: store.errors.isEmpty ? .idle : .warn) {

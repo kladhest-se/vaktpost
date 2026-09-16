@@ -73,7 +73,7 @@ struct FirewallView: View {
                 }
             }
         )
-        .task { updateInterfaceOptions() }
+        .task(id: store.activeProfile?.id) { updateInterfaceOptions() }
         .onChange(of: store.rules.count) { updateInterfaceOptions() }
     }
 
