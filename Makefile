@@ -194,23 +194,30 @@ c=[((ver(k), model(v["name"])), v) for k,vs in d.items() for v in vs if v["name"
 c.sort(key=lambda pair: pair[0]);\
 print(c[-1][1]["udid"] if c else "")' 2>/dev/null)
 
-# The newest booted-or-bootable iPad, by udid — same runtime-version sort as
-# SIM_ID above, without the model-number tie-break.
+# The newest booted-or-bootable 13" iPad, by udid — Apple's own required
+# class for a submission whenever the app runs on iPad, not just any
+# installed iPad.
 #
-# iPad names don't carry a comparable generation number the way "iPhone 17"
-# vs "iPhone 18 Pro" do: "iPad Pro 11-inch (M4)", "iPad Air 13-inch (M3)",
-# "iPad (10th generation)" and "iPad mini (A17 Pro)" each embed a number
-# that means something different — screen size, chip name, or generation —
-# so reusing SIM_ID's leading-number heuristic here would as often compare
-# the wrong field as the right one. Narrowing to the newest runtime and
-# leaving the tie unresolved is the honest version of this: correct about
-# what it claims (the runtime), silent about what it doesn't (which iPad
-# model within it, when more than one is installed on the same runtime).
+# "Any iPad" was the first version of this and it was wrong in practice:
+# it picked whatever the newest runtime happened to list last, which one
+# real run resolved to an iPad (A16) — an 11"-class device, since that
+# model has never shipped in a 13" size. Screenshots taken against it
+# don't satisfy Apple's requirement no matter how good they look; only
+# iPad Pro and iPad Air ever ship as 13" hardware, so those are the only
+# two lines this matches, and only the "13-inch" or "12.9-inch" size
+# within each line — both current and older Pro/Air generations use one
+# of the two in their simulator name, while the same lines' 11-inch
+# siblings, and every plain iPad or iPad mini, correctly fall through and
+# are never picked. Nothing installed in that class is a real "cannot
+# proceed" rather than a silent wrong answer, so it fails the same way
+# SIM_ID does when nothing matches: empty, caught by the same check in
+# ipados-run below.
 IPAD_SIM_ID := $(shell xcrun simctl list devices available -j 2>/dev/null | \
 python3 -c 'import json,re,sys;\
 ver=lambda k: tuple(map(int, re.search(r"iOS-(\d+)-(\d+)", k).groups())) if re.search(r"iOS-(\d+)-(\d+)", k) else (0,0);\
+is13=lambda n: bool(re.match(r"iPad (Pro|Air)\b", n)) and bool(re.search(r"13-inch|12\.9-inch", n));\
 d=json.load(sys.stdin)["devices"];\
-c=[(ver(k), v) for k,vs in d.items() for v in vs if v["name"].startswith("iPad")];\
+c=[(ver(k), v) for k,vs in d.items() for v in vs if is13(v["name"])];\
 c.sort(key=lambda pair: pair[0]);\
 print(c[-1][1]["udid"] if c else "")' 2>/dev/null)
 
@@ -243,7 +250,7 @@ ios-run: build
 	$(call run_on_simulator,$(SIM_ID),iPhone)
 
 ipados-run: build
-	$(call run_on_simulator,$(IPAD_SIM_ID),iPad)
+	$(call run_on_simulator,$(IPAD_SIM_ID),iPad Pro or iPad Air 13-inch)
 
 install:
 	@$(REQUIRE_TEAM)
