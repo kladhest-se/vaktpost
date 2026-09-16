@@ -131,6 +131,20 @@ h1 {
 .status-line b { color: var(--subtext1); font-weight: 600; }
 .status-line .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--surface2); flex: none; }
 
+/* A dashed border reads as "not filled in yet" on its own, without needing
+   a "(coming soon)" qualifier inside the label itself. */
+.store-badge {
+  display: inline-flex; align-items: center; gap: .5rem;
+  margin-top: var(--sp-2);
+  padding: .55rem .9rem;
+  border: 1px dashed var(--surface2);
+  border-radius: 9px;
+  font: 600 .82rem/1 var(--sans);
+  color: var(--subtext0);
+  text-decoration: none;
+}
+.store-badge:hover { border-color: var(--overlay0); color: var(--text); }
+
 /* ── Device rendering ──────────────────────────────────────────────────── */
 
 .device {

@@ -47,6 +47,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
         <a class="btn btn--solid" href="#setup">Set it up</a>
         <a class="btn btn--ghost" href="#features">See the features</a>
       </div>
+      <a class="store-badge" href="#">Coming to the App Store — iPhone &amp; iPad</a>
       <p class="status-line">
         <span>Version <?= htmlspecialchars($releaseVersion, ENT_QUOTES, 'UTF-8') ?></span>
         <span class="dot" aria-hidden="true"></span>
@@ -170,16 +171,11 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 
     <div class="lab-callout">
       <h3>Try it without a firewall</h3>
-      <p class="lede">A public endpoint returns healthy, outdated, degraded, and failure scenarios without exposing a real firewall or accepting executable PHP. Make a separate firewall profile in the app and use the website address — not the <code>/xmlrpc.php</code> path — as its base URL.</p>
       <dl class="lab-details">
         <div><dt>Base URL</dt><dd><code><?= htmlspecialchars($labOrigin, ENT_QUOTES, 'UTF-8') ?></code></dd></div>
         <div><dt>Username</dt><dd><code>review</code> for a healthy firewall, <code>updates</code> for outdated firmware and packages, <code>degraded</code> for gateway/VPN/service problems, or <code>fault</code> to see how the app handles a firewall that stops responding partway through</dd></div>
         <div><dt>Password</dt><dd><code>vaktpost-demo</code></dd></div>
       </dl>
-      <p style="margin-top:1rem">Rules, aliases, and port forwards can be created, edited, and deleted to try the app's write flow — nothing to undo afterward. Each session's changes reset to the original fixtures after 20 minutes of inactivity.</p>
-      <div class="actions">
-        <a class="btn btn--ghost" href="lab.php">Explore it in your browser first</a>
-      </div>
     </div>
 
   </div>
@@ -188,7 +184,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 <section id="build">
   <div class="wrap">
     <h2>Building it</h2>
-    <p>The project is SwiftUI, targets iOS 17, and uses <a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a>. Clone the source, run <code>make build</code>, and pass your development team when installing on a device.</p>
+    <p>The project is SwiftUI, targets iOS 17, and uses <a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a>. Clone <a href="https://github.com/kladhest-se/vaktpost">the source</a>, run <code>make build</code>, and pass your development team when installing on a device.</p>
     <p>The Catppuccin palettes are used under their MIT licence. Everything else — the layout, the design language, the code — is original to this project.</p>
     <div class="actions" style="margin-top:1.6rem">
       <a class="btn btn--solid" href="#setup">Review setup</a>
@@ -203,6 +199,9 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
   <div class="wrap">
     <p>Vaktpost is not affiliated with Netgate or with the Catppuccin project. pfSense is a trademark of Netgate.</p>
     <p>Made in Stockholm.</p>
+    <div class="actions" style="margin-top:1.2rem">
+      <a class="btn btn--ghost" href="https://ko-fi.com/R7P325M7NE">Support me on Ko-fi</a>
+    </div>
   </div>
 </footer>
 
