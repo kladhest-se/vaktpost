@@ -42,7 +42,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
   <div class="wrap hero__grid">
     <div>
       <h1>Your firewall,<br>on your phone.</h1>
-      <p class="hero__sub">Vaktpost is an open-source iOS app for monitoring and administering pfSense CE and pfSense Plus.</p>
+      <p class="hero__sub">Vaktpost is an open-source iOS companion for pfSense CE and pfSense Plus — for checking in and making careful changes from your phone, not for replacing the web interface.</p>
       <div class="actions">
         <a class="btn btn--solid" href="#setup">Set it up</a>
         <a class="btn btn--ghost" href="#features">See the features</a>
