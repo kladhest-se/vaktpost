@@ -59,8 +59,6 @@ limiting.
 - Add the canonical public repository URL when it has been chosen. The current
   page contains no placeholder or dead source link.
 - Add an `og:image` when a public release image is available.
-- The device rendering in the hero is built from the same design tokens as
-  the app. It is a rendering, not a product screenshot.
 - Keep the version 0.1 feature and deferred-scope lists aligned with the root
   `README.md` before publishing.
 - Confirm that the public host passes the `Authorization` header to PHP and
@@ -68,12 +66,11 @@ limiting.
 
 ## Theming
 
-`styles.css` carries all four Catppuccin flavours as custom-property sets
-selected by `:root[data-flavor]`, and all fourteen accents by
-`:root[data-accent]`. `theme.js` sets those attributes and remembers the
-choice in `localStorage`, defaulting to Latte for visitors whose system is in
-light mode and Mocha otherwise.
-
-Because the whole page reads from those variables, adding a flavour means
-adding one block to the top of the stylesheet and one entry to the `FLAVORS`
-array — nothing else changes.
+`styles.css` carries one Catppuccin flavour — Macchiato — with mauve as the
+one accent, both applied unconditionally to `:root`. The site is not
+switchable: earlier versions carried all four flavours and all fourteen
+accents behind a picker (`theme.js`), removed since a marketing page gains
+nothing from a control the app itself doesn't require. `--red` and `--green`
+stay defined alongside the rest of the palette even though nothing on this
+page uses them directly — the lab page's own stylesheet (`lab.css`) reads
+them as functional error/success colours.

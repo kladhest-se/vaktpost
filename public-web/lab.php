@@ -4,16 +4,16 @@ declare(strict_types=1);
 $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
 ?>
 <!doctype html>
-<html lang="en" data-flavor="mocha" data-accent="sapphire">
+<html lang="en" data-flavor="macchiato" data-accent="mauve">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>XMLAPI Lab — Vaktpost</title>
 <meta name="description" content="A public synthetic pfSense XML-RPC endpoint for safely testing the Vaktpost iOS app.">
-<meta name="color-scheme" content="dark light">
+<meta name="color-scheme" content="dark">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="icon" type="image/png" href="icons/coral.png">
-<link rel="apple-touch-icon" href="icons/coral.png">
+<link rel="icon" type="image/png" href="app-icons/lavender.png">
+<link rel="apple-touch-icon" href="app-icons/lavender.png">
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="lab.css">
 </head>
@@ -22,16 +22,10 @@ $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
 <header class="bar">
   <div class="wrap bar__inner">
     <a class="mark" href="index.php">
-      <img class="mark__icon" id="mark-icon" src="icons/coral.png" alt="" width="26" height="26">
+      <img class="mark__icon" src="app-icons/lavender.png" alt="" width="26" height="26">
       Vaktpost
     </a>
     <nav class="site-nav" aria-label="Primary"><a href="index.php">App</a><a href="lab.php" aria-current="page">XMLAPI Lab</a></nav>
-    <div class="picker">
-      <span class="picker__label" id="flavor-label">Flavour</span>
-      <div class="flavors" role="group" aria-labelledby="flavor-label" id="flavors"></div>
-      <span class="picker__label" id="accent-label">Accent</span>
-      <div class="accents" role="group" aria-labelledby="accent-label" id="accents"></div>
-    </div>
   </div>
 </header>
 
@@ -101,7 +95,6 @@ $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
   <div class="wrap"><p>All XMLAPI Lab data is synthetic. Vaktpost is not affiliated with Netgate.</p><p><a href="index.php">Back to Vaktpost</a></p></div>
 </footer>
 
-<script src="theme.js"></script>
 <script src="lab.js"></script>
 </body>
 </html>

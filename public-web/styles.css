@@ -1,67 +1,21 @@
-/* ── Catppuccin palettes ─────────────────────────────────────────────────
-   All four flavours. The page is themed by the product's own palette, so
-   switching flavour on the site is a demonstration rather than a gimmick. */
+/* ── Catppuccin Macchiato ────────────────────────────────────────────────
+   The page is themed with the same palette the app defaults to, so this is
+   a demonstration of the product rather than site chrome. Locked to one
+   flavour and one accent rather than switchable, since a marketing page
+   gains nothing from a picker the app itself doesn't require. --red and
+   --green stay defined alongside it — the lab page's own stylesheet uses
+   them as functional error/success colours, not as picker options. */
 
-:root[data-flavor="mocha"] {
-  --base:#1e1e2e; --mantle:#181825; --crust:#11111b;
-  --surface0:#313244; --surface1:#45475a; --surface2:#585b70;
-  --overlay0:#6c7086; --overlay1:#7f849c;
-  --subtext0:#a6adc8; --subtext1:#bac2de; --text:#cdd6f4;
-  --rosewater:#f5e0dc; --flamingo:#f2cdcd; --pink:#f5c2e7; --mauve:#cba6f7;
-  --red:#f38ba8; --maroon:#eba0ac; --peach:#fab387; --yellow:#f9e2af;
-  --green:#a6e3a1; --teal:#94e2d5; --sky:#89dceb; --sapphire:#74c7ec;
-  --blue:#89b4fa; --lavender:#b4befe;
-  color-scheme: dark;
-}
-:root[data-flavor="macchiato"] {
+:root {
   --base:#24273a; --mantle:#1e2030; --crust:#181926;
   --surface0:#363a4f; --surface1:#494d64; --surface2:#5b6078;
   --overlay0:#6e738d; --overlay1:#8087a2;
   --subtext0:#a5adcb; --subtext1:#b8c0e0; --text:#cad3f5;
-  --rosewater:#f4dbd6; --flamingo:#f0c6c6; --pink:#f5bde6; --mauve:#c6a0f6;
-  --red:#ed8796; --maroon:#ee99a0; --peach:#f5a97f; --yellow:#eed49f;
-  --green:#a6da95; --teal:#8bd5ca; --sky:#91d7e3; --sapphire:#7dc4e4;
-  --blue:#8aadf4; --lavender:#b7bdf8;
+  --peach:#f5a97f; --mauve:#c6a0f6; --red:#ed8796; --green:#a6da95;
   color-scheme: dark;
-}
-:root[data-flavor="frappe"] {
-  --base:#303446; --mantle:#292c3c; --crust:#232634;
-  --surface0:#414559; --surface1:#51576d; --surface2:#626880;
-  --overlay0:#737994; --overlay1:#838ba7;
-  --subtext0:#a5adce; --subtext1:#b5bfe2; --text:#c6d0f5;
-  --rosewater:#f2d5cf; --flamingo:#eebebe; --pink:#f4b8e4; --mauve:#ca9ee6;
-  --red:#e78284; --maroon:#ea999c; --peach:#ef9f76; --yellow:#e5c890;
-  --green:#a6d189; --teal:#81c8be; --sky:#99d1db; --sapphire:#85c1dc;
-  --blue:#8caaee; --lavender:#babbf1;
-  color-scheme: dark;
-}
-:root[data-flavor="latte"] {
-  --base:#eff1f5; --mantle:#e6e9ef; --crust:#dce0e8;
-  --surface0:#ccd0da; --surface1:#bcc0cc; --surface2:#acb0be;
-  --overlay0:#9ca0b0; --overlay1:#8c8fa1;
-  --subtext0:#6c6f85; --subtext1:#5c5f77; --text:#4c4f69;
-  --rosewater:#dc8a78; --flamingo:#dd7878; --pink:#ea76cb; --mauve:#8839ef;
-  --red:#d20f39; --maroon:#e64553; --peach:#fe640b; --yellow:#df8e1d;
-  --green:#40a02b; --teal:#179299; --sky:#04a5e5; --sapphire:#209fb5;
-  --blue:#1e66f5; --lavender:#7287fd;
-  color-scheme: light;
 }
 
-:root { --accent: var(--sapphire); }
-:root[data-accent="rosewater"]{--accent:var(--rosewater)}
-:root[data-accent="flamingo"] {--accent:var(--flamingo)}
-:root[data-accent="pink"]     {--accent:var(--pink)}
-:root[data-accent="mauve"]    {--accent:var(--mauve)}
-:root[data-accent="red"]      {--accent:var(--red)}
-:root[data-accent="maroon"]   {--accent:var(--maroon)}
-:root[data-accent="peach"]    {--accent:var(--peach)}
-:root[data-accent="yellow"]   {--accent:var(--yellow)}
-:root[data-accent="green"]    {--accent:var(--green)}
-:root[data-accent="teal"]     {--accent:var(--teal)}
-:root[data-accent="sky"]      {--accent:var(--sky)}
-:root[data-accent="sapphire"] {--accent:var(--sapphire)}
-:root[data-accent="blue"]     {--accent:var(--blue)}
-:root[data-accent="lavender"] {--accent:var(--lavender)}
+:root { --accent: var(--mauve); }
 
 /* ── Type & base ───────────────────────────────────────────────────────── */
 
@@ -131,34 +85,6 @@ a:hover { text-decoration-thickness: 2px; }
 .site-nav a:hover { color:var(--text); background:var(--surface0); }
 .site-nav a[aria-current="page"] { color:var(--crust); background:var(--accent); }
 
-.picker { display: flex; align-items: center; gap: 1rem; margin-left: auto; flex-wrap: wrap; }
-.picker__label { font-size: .78rem; color: var(--overlay1); }
-
-.flavors { display: flex; gap: .3rem; }
-.flavors button {
-  font: 500 .78rem/1 var(--mono);
-  padding: .42rem .6rem;
-  border: 1px solid var(--surface1);
-  border-radius: 999px;
-  background: transparent; color: var(--subtext0);
-  cursor: pointer;
-  transition: background-color .2s ease, color .2s ease, border-color .2s ease;
-}
-.flavors button:hover { border-color: var(--surface2); color: var(--text); }
-.flavors button[aria-pressed="true"] {
-  background: var(--accent); border-color: var(--accent); color: var(--crust);
-}
-
-.accents { display: flex; gap: .3rem; }
-.accents button {
-  width: 17px; height: 17px; border-radius: 50%;
-  border: 2px solid transparent; padding: 0; cursor: pointer;
-  background: var(--swatch);
-  transition: transform .15s ease;
-}
-.accents button:hover { transform: scale(1.18); }
-.accents button[aria-pressed="true"] { border-color: var(--text); }
-
 /* ── Hero ──────────────────────────────────────────────────────────────── */
 
 .hero { padding-block: clamp(3rem, 9vw, 6rem) clamp(2.5rem, 7vw, 5rem); }
@@ -211,7 +137,7 @@ h1 {
 .lab-details dt { flex:none; width:6.5rem; color:var(--subtext0); font:700 .76rem/1.4 var(--mono); letter-spacing:.04em; text-transform:uppercase; }
 .lab-details dd { margin:0; flex:1 1 16rem; font-size:.88rem; color:var(--text); }
 .lab-details code { font-family:var(--mono); font-size:.85em; background:var(--surface0); padding:.1em .35em; border-radius:4px; }
-@media(max-width:680px){.site-nav{order:2;width:100%}.picker{margin-left:0}.lab-details dt{width:100%}}
+@media(max-width:680px){.site-nav{order:2;width:100%}.lab-details dt{width:100%}}
 
 /* ── Device rendering ──────────────────────────────────────────────────── */
 
@@ -230,7 +156,36 @@ h1 {
 .device__shot {
   display: block; width: 100%; height: auto;
   border-radius: 21px;
+  cursor: zoom-in;
 }
+
+/* ── Lightbox ──────────────────────────────────────────────────────────── */
+/* A native <dialog>, not a hand-rolled overlay: showModal() traps focus and
+   handles Escape on its own, so this only styles what it draws blank —
+   the backdrop's dimming and the frame around the enlarged image. */
+#lightbox {
+  position: relative;
+  border: none; padding: 0; background: transparent; overflow: visible;
+  max-width: none; max-height: none;
+}
+#lightbox::backdrop { background: color-mix(in srgb, var(--crust) 88%, transparent); }
+#lightbox img {
+  display: block;
+  max-width: 92vw; max-height: 92vh;
+  border-radius: 14px;
+  cursor: zoom-out;
+  box-shadow: 0 30px 80px -30px rgba(0,0,0,.8);
+}
+#lightbox-close {
+  position: absolute; top: -16px; right: -16px;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid var(--surface1);
+  background: var(--crust); color: var(--text);
+  font: 400 20px/1 var(--sans);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+#lightbox-close:hover { border-color: var(--surface2); }
 
 /* ── Sections ──────────────────────────────────────────────────────────── */
 
@@ -277,20 +232,15 @@ h3 { font: 600 1.02rem/1.3 var(--sans); margin: 0 0 .35rem; }
 
 .limit { padding-left: 1rem; border-left: var(--rail) solid var(--peach); }
 .limit p { font-size: .93rem; color: var(--subtext0); margin: 0; max-width: 44ch; }
+.limit ul { margin: 0; padding-left: 1.1rem; font-size: .93rem; color: var(--subtext0); max-width: 44ch; }
+.limit li { margin-bottom: .3rem; }
+.limit li:last-child { margin-bottom: 0; }
 
 table { border-collapse: collapse; width: 100%; font-size: .88rem; }
 th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--surface0); vertical-align: top; }
 th { font: 600 .74rem/1.3 var(--sans); letter-spacing: .05em; color: var(--overlay1); }
 td:first-child { white-space: nowrap; font-weight: 600; }
 td code { font-family: var(--mono); font-size: .92em; color: var(--subtext0); }
-
-.readonly {
-  border-left: var(--rail) solid var(--green);
-  padding: 1.1rem 0 1.1rem 1.2rem;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--green) 8%, transparent), transparent 60%);
-  border-radius: 0 var(--r) var(--r) 0;
-}
-.readonly p:last-child { margin-bottom: 0; }
 
 footer {
   border-top: 1px solid var(--surface0);

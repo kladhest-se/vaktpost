@@ -313,7 +313,7 @@ destinations:
 # public-web/ uses a small PHP entry point and has no build step.
 web-check:
 	@find public-web -name '*.php' -print0 | xargs -0 -n1 php -l
-	@node --check public-web/theme.js
+	@node --check public-web/lightbox.js
 	@node --check public-web/lab.js
 	@php ../vaktpost-tools/tests/xmlapi-lab.php
 

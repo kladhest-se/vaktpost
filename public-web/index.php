@@ -2,21 +2,20 @@
 declare(strict_types=1);
 
 $releaseVersion = '0.1.0';
-$releaseStatus = 'preparing for its first public release';
 $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https://' : 'http://')
     . ($_SERVER['HTTP_HOST'] ?? 'this site');
 ?>
 <!doctype html>
-<html lang="en" data-flavor="mocha" data-accent="sapphire">
+<html lang="en" data-flavor="macchiato" data-accent="mauve">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vaktpost — pfSense monitoring and administration for iOS</title>
 <meta name="description" content="Vaktpost is an open-source iOS app for monitoring a pfSense firewall and performing a constrained set of confirmed administrative actions.">
-<meta name="color-scheme" content="dark light">
+<meta name="color-scheme" content="dark">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="icon" type="image/png" href="app-icons/coral.png">
-<link rel="apple-touch-icon" href="app-icons/coral.png">
+<link rel="icon" type="image/png" href="app-icons/lavender.png">
+<link rel="apple-touch-icon" href="app-icons/lavender.png">
 <link rel="stylesheet" href="styles.css">
 <meta property="og:title" content="Vaktpost">
 <meta property="og:description" content="An iOS app for monitoring and administering a pfSense firewall. Open source, Catppuccin-themed.">
@@ -27,18 +26,12 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 <header class="bar">
   <div class="wrap bar__inner">
     <a class="mark" href="#top">
-      <img class="mark__icon" id="mark-icon" src="app-icons/coral.png" alt="" width="26" height="26">
+      <img class="mark__icon" src="app-icons/lavender.png" alt="" width="26" height="26">
       Vaktpost
     </a>
     <nav class="site-nav" aria-label="Primary">
       <a href="#top" aria-current="page">App</a>
     </nav>
-    <div class="picker">
-      <span class="picker__label" id="flavor-label">Flavour</span>
-      <div class="flavors" role="group" aria-labelledby="flavor-label" id="flavors"></div>
-      <span class="picker__label" id="accent-label">Accent</span>
-      <div class="accents" role="group" aria-labelledby="accent-label" id="accents"></div>
-    </div>
   </div>
 </header>
 
@@ -48,13 +41,13 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
   <div class="wrap hero__grid">
     <div>
       <h1>Your firewall,<br>on your phone.</h1>
-      <p class="hero__sub">Vaktpost is an open-source iOS app for monitoring and carefully administering pfSense CE and pfSense Plus.</p>
-      <p class="needs">Version <?= htmlspecialchars($releaseVersion, ENT_QUOTES, 'UTF-8') ?> is <?= htmlspecialchars($releaseStatus, ENT_QUOTES, 'UTF-8') ?>. Its feature set is frozen while compatibility, safety, accessibility, and release quality are finished.</p>
+      <p class="hero__sub">Vaktpost is an open-source iOS app for monitoring and administering pfSense CE and pfSense Plus.</p>
+      <p class="needs">Version <?= htmlspecialchars($releaseVersion, ENT_QUOTES, 'UTF-8') ?> — feature-frozen while final polish and testing wrap up.</p>
       <div class="actions">
         <a class="btn btn--solid" href="#setup">Set it up</a>
         <a class="btn btn--ghost" href="#features">See the features</a>
       </div>
-      <p class="needs">Every firewall starts in monitor-only mode. Administration is enabled separately for each firewall. Nothing is installed on pfSense. Requires iOS 17 or later.</p>
+      <p class="needs">Every firewall starts in monitor-only mode — nothing is installed on pfSense. Requires iOS 17 or later.</p>
     </div>
 
     <div class="device">
@@ -67,7 +60,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 <section class="section--sunken" id="features">
   <div class="wrap">
     <h2>Vaktpost Features</h2>
-    <p class="lede">A focused first release: broad visibility, a deliberately small administration surface, and no unattended changes.</p>
+    <p class="lede">Broad visibility, a small administration surface, and no unattended changes.</p>
 
     <div class="features">
       <div class="feature">
@@ -76,7 +69,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
                alt="The DNSBL section of Overview: a donut chart of blocked domains by count, a legend of the busiest ones, and the busiest hour.">
         </div>
         <h3>Health and traffic</h3>
-        <p>A configurable overview, live and historical interface traffic, gateways, resources, services, freshness, and alerts derived on the phone.</p>
+        <p>Live and historical traffic, resources, gateways, and alerts — all in one overview.</p>
       </div>
 
       <div class="feature">
@@ -85,7 +78,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
                alt="The Clients screen on iPad, traffic view: live bandwidth per device, sorted by bandwidth in, with a search field and interface picker.">
         </div>
         <h3>Clients, in one list</h3>
-        <p>DHCP leases, ARP, and static mappings joined into one searchable inventory with offline MAC-vendor names and related traffic.</p>
+        <p>DHCP leases, ARP, and static mappings in one searchable list, with vendor names and live traffic.</p>
       </div>
 
       <div class="feature">
@@ -94,7 +87,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
                alt="The incident timeline on iPad, split-view: the list of incidents on the left, a full log entry — traffic, matched rule, and raw log line — on the right.">
         </div>
         <h3>Logs and investigation</h3>
-        <p>Filter, system, authentication, DHCP, and OpenVPN logs, plus a combined incident timeline and network diagnostics.</p>
+        <p>Firewall, system, and VPN logs combined into one incident timeline, plus network diagnostics.</p>
       </div>
 
       <div class="feature">
@@ -103,7 +96,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
                alt="The VPN screen on iPad, split-view: OpenVPN server and client instances on the left, the selected instance's connected clients on the right.">
         </div>
         <h3>VPN and services</h3>
-        <p>OpenVPN, WireGuard and IPsec on their own tabs, with connected peers under each instance.</p>
+        <p>OpenVPN, WireGuard, and IPsec, each with its connected peers.</p>
       </div>
 
       <div class="feature">
@@ -112,7 +105,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
                alt="The Firewall rules screen on iPad, split-view: the LAN rule list with a pending-changes banner on the left, one rule's full detail — source, destination, and every rule field — on the right.">
         </div>
         <h3>Firewall editing</h3>
-        <p>Create, edit, duplicate, delete, and reorder filter rules and NAT port forwards, including coloured separators and host, network, and port aliases.</p>
+        <p>Create, edit, and reorder filter rules and NAT port forwards, with aliases and separators.</p>
       </div>
 
       <div class="feature">
@@ -121,7 +114,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
                alt="The Apply Changes screen on iPad listing pending edits made through the app, each with a summary and a timestamp, above an Apply Changes button.">
         </div>
         <h3>Staged changes</h3>
-        <p>Edits stay inactive until Apply Changes. The review names identifiable Vaktpost edits and warns that pfSense may include other administrators' pending work.</p>
+        <p>Edits stay inactive until you apply them — the review also flags any other administrators' pending work.</p>
       </div>
 
       <div class="feature">
@@ -130,12 +123,12 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
                alt="The All firewalls screen: a connected profile showing CPU, memory and disk, uptime, gateway and service health, and certificate status.">
         </div>
         <h3>More than one firewall</h3>
-        <p>Each profile has its own Keychain credential, TLS settings, refresh interval, monitoring history, and administration switch.</p>
+        <p>Each firewall gets its own credential, TLS settings, and administration switch.</p>
       </div>
     </div>
 
     <h3 class="ipad-callout">Also built for iPad</h3>
-    <p class="lede">Network, Aliases, VPN, and Incident Timeline get dedicated split-view layouts on iPad — the list and its detail side by side, not a phone screen stretched wider.</p>
+    <p class="lede">Network, Aliases, VPN, and Incident Timeline get dedicated split-view layouts — list and detail side by side, not a stretched phone screen.</p>
 
     <div class="features">
       <div class="feature">
@@ -144,7 +137,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
                alt="The Network screen on iPad, split-view: the interface list on the left, the selected interface's live throughput and history charts on the right.">
         </div>
         <h3>Network, side by side</h3>
-        <p>Pick an interface from the list and its charts stay on screen next to it, instead of pushing to a new page.</p>
+        <p>Pick an interface and its charts stay on screen beside it.</p>
       </div>
 
       <div class="feature">
@@ -164,7 +157,14 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     <h2>Kept out of the first release</h2>
     <p class="lede">Version 0.1 is not intended to replace the complete pfSense WebUI.</p>
     <div class="limit">
-      <p>Outbound and 1:1 NAT, virtual IPs, schedules, traffic shaping, package configuration, backups and restores, bulk editing, templates, automation, and unattended writes are deliberately deferred.</p>
+      <ul>
+        <li>Outbound and 1:1 NAT, virtual IPs</li>
+        <li>Schedules and traffic shaping</li>
+        <li>Package configuration</li>
+        <li>Backups and restores</li>
+        <li>Bulk editing, templates, and automation</li>
+        <li>Unattended writes</li>
+      </ul>
     </div>
   </div>
 </section>
@@ -217,6 +217,11 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
   </div>
 </footer>
 
-<script src="theme.js"></script>
+<dialog id="lightbox" aria-label="Enlarged screenshot">
+  <button type="button" id="lightbox-close" aria-label="Close">&times;</button>
+  <img id="lightbox-img" src="" alt="">
+</dialog>
+
+<script src="lightbox.js"></script>
 </body>
 </html>
