@@ -125,7 +125,8 @@ Common targets:
 make                 # list available commands
 make build           # compile without starting a simulator
 make test            # run tests on an installed iOS simulator
-make run             # build and launch on a simulator
+make ios-run         # build and launch on an iPhone simulator
+make ipados-run      # build and launch on an iPad simulator
 make open            # generate and open the Xcode project
 make archive TEAM_ID=ABCDE12345
 make install DEVICE=00008132-… TEAM_ID=ABCDE12345

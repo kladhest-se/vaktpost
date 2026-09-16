@@ -1,6 +1,8 @@
 # Vaktpost — pfSense monitoring and administration for iOS.
 #
-# One platform, so the verbs are unprefixed: `make build`, `make run`,
+# One platform, but two idioms Xcode simulates as genuinely different
+# devices: `make ios-run` for iPhone, `make ipados-run` for iPad. Everything
+# else stays unprefixed, since there is only one of it: `make build`,
 # `make archive`. The .xcodeproj is generated and never committed, so every
 # target that needs one depends on `project`.
 #
@@ -8,7 +10,7 @@
 # xcodebuild invocations, which is why `build` must stay the target that
 # compiles without booting anything.
 
-.PHONY: help project open build lint test run install archive clean oui \
+.PHONY: help project open build lint test ios-run ipados-run install archive clean oui \
 	destinations devices teams web web-check
 
 PROJECT := Vaktpost.xcodeproj
@@ -18,7 +20,8 @@ help:
 	@echo "  make build           does the app compile"
 	@echo "  make lint            SwiftLint checks"
 	@echo "  make test            the app's tests, on a simulator"
-	@echo "  make run             build and launch on a simulator, logs here"
+	@echo "  make ios-run         build and launch on an iPhone simulator, logs here"
+	@echo "  make ipados-run      build and launch on an iPad simulator, logs here"
 	@echo "  make install         build signed and install on the device in DEVICE"
 	@echo "  make archive         archive, signed, with a real build number"
 	@echo "  make open            generate and open the project in Xcode"
@@ -155,9 +158,10 @@ archive:
 
 # ── Running ──────────────────────────────────────────────────────────────────
 #
-# `install` means the device in your hand; `run` means a simulator on this Mac.
-# The verbs say what they do, because getting that backwards means
-# `make install DEVICE=…` quietly builds for a simulator and ignores the id.
+# `install` means the device in your hand; `ios-run`/`ipados-run` mean a
+# simulator on this Mac. The verbs say what they do, because getting that
+# backwards means `make install DEVICE=…` quietly builds for a simulator and
+# ignores the id.
 
 # The newest booted-or-bootable iPhone, by udid.
 #
@@ -190,26 +194,56 @@ c=[((ver(k), model(v["name"])), v) for k,vs in d.items() for v in vs if v["name"
 c.sort(key=lambda pair: pair[0]);\
 print(c[-1][1]["udid"] if c else "")' 2>/dev/null)
 
+# The newest booted-or-bootable iPad, by udid — same runtime-version sort as
+# SIM_ID above, without the model-number tie-break.
+#
+# iPad names don't carry a comparable generation number the way "iPhone 17"
+# vs "iPhone 18 Pro" do: "iPad Pro 11-inch (M4)", "iPad Air 13-inch (M3)",
+# "iPad (10th generation)" and "iPad mini (A17 Pro)" each embed a number
+# that means something different — screen size, chip name, or generation —
+# so reusing SIM_ID's leading-number heuristic here would as often compare
+# the wrong field as the right one. Narrowing to the newest runtime and
+# leaving the tie unresolved is the honest version of this: correct about
+# what it claims (the runtime), silent about what it doesn't (which iPad
+# model within it, when more than one is installed on the same runtime).
+IPAD_SIM_ID := $(shell xcrun simctl list devices available -j 2>/dev/null | \
+python3 -c 'import json,re,sys;\
+ver=lambda k: tuple(map(int, re.search(r"iOS-(\d+)-(\d+)", k).groups())) if re.search(r"iOS-(\d+)-(\d+)", k) else (0,0);\
+d=json.load(sys.stdin)["devices"];\
+c=[(ver(k), v) for k,vs in d.items() for v in vs if v["name"].startswith("iPad")];\
+c.sort(key=lambda pair: pair[0]);\
+print(c[-1][1]["udid"] if c else "")' 2>/dev/null)
+
 APP_INFO = \
 	settings=$$(xcodebuild -project $(PROJECT) -scheme $(SCHEME) \
 		-sdk iphonesimulator -showBuildSettings 2>/dev/null); \
 	app="$$(echo "$$settings" | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $$2; exit}')/Vaktpost.app"; \
 	bundle=$$(echo "$$settings" | awk -F' = ' '/ PRODUCT_BUNDLE_IDENTIFIER /{print $$2; exit}')
 
-run: build
-	@test -n "$(SIM_ID)" || { echo "No iPhone simulator installed. make destinations"; exit 1; }
+# Shared by ios-run and ipados-run: everything past "which udid" is
+# identical between the two idioms, so it lives here once. $(1) is the
+# udid, $(2) is the label used only in the "none installed" message.
+define run_on_simulator
+	@test -n "$(1)" || { echo "No $(2) simulator installed. make destinations"; exit 1; }
 	@set -e; $(APP_INFO); \
 	test -d "$$app" || { echo "No app at $$app"; exit 1; }; \
-	sim_name="$$(xcrun simctl list devices 2>/dev/null | grep "$(SIM_ID)" | sed -E 's/^[[:space:]]*(.+) \([0-9A-Fa-f-]+\).*/\1/')"; \
-	xcrun simctl boot $(SIM_ID) 2>/dev/null || true; \
+	sim_name="$$(xcrun simctl list devices 2>/dev/null | grep "$(1)" | sed -E 's/^[[:space:]]*(.+) \([0-9A-Fa-f-]+\).*/\1/')"; \
+	xcrun simctl boot $(1) 2>/dev/null || true; \
 	dev_apps="$$(xcode-select -p)/Applications"; \
 	{ open "$$dev_apps/Simulator.app" 2>/dev/null \
 		|| open "$$dev_apps/Device Hub.app" 2>/dev/null \
 		|| open -a Simulator 2>/dev/null \
 		|| open -a "Device Hub" 2>/dev/null; } 2>/dev/null || true; \
 	echo "If a device window didn't appear on its own, click Start on \"$${sim_name:-this device}\" in the window that just opened."; \
-	xcrun simctl install $(SIM_ID) "$$app"; \
-	xcrun simctl launch --console-pty $(SIM_ID) "$$bundle"
+	xcrun simctl install $(1) "$$app"; \
+	xcrun simctl launch --console-pty $(1) "$$bundle"
+endef
+
+ios-run: build
+	$(call run_on_simulator,$(SIM_ID),iPhone)
+
+ipados-run: build
+	$(call run_on_simulator,$(IPAD_SIM_ID),iPad)
 
 install:
 	@$(REQUIRE_TEAM)
@@ -264,7 +298,8 @@ teams:
 destinations:
 	@xcrun simctl list devices available 2>/dev/null | grep -E 'iPhone|iPad' | sed 's/^ */  /'
 	@echo ""
-	@echo "  make test and make run use $(SIM_ID)"
+	@echo "  make test uses $(SIM_ID)"
+	@echo "  make ios-run uses $(SIM_ID), make ipados-run uses $(IPAD_SIM_ID)"
 
 # ── The website ──────────────────────────────────────────────────────────────
 

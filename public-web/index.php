@@ -57,88 +57,9 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
       <p class="needs">Every firewall starts in monitor-only mode. Administration is enabled separately for each firewall. Nothing is installed on pfSense. Requires iOS 17 or later.</p>
     </div>
 
-    <div class="device" role="img" aria-label="A rendering of the Vaktpost overview screen showing a health banner, an uplink throughput chart, CPU and memory meters, and two gateway rows.">
-      <div class="screen">
-        <div class="screen__head">
-          <span class="screen__title">Overview</span>
-          <span class="screen__time">14:02</span>
-        </div>
-
-        <div class="banner">
-          <div class="banner__row">
-            <span class="dot"></span>
-            <span class="banner__text">All monitored paths healthy</span>
-          </div>
-          <div class="banner__meta">fw01 — Stockholm &nbsp; 2.8.1</div>
-        </div>
-
-        <div class="group"><span>UPLINK</span><i></i></div>
-        <div class="slab">
-          <div class="slab__rail" style="background:var(--green)"></div>
-          <div class="slab__body">
-            <div class="slab__label">WAN <b>igb0</b></div>
-            <svg class="spark" viewBox="0 0 240 44" preserveAspectRatio="none" aria-hidden="true">
-              <path d="M0 40 L0 31 L20 26 L40 30 L60 17 L80 22 L100 12 L120 20 L140 9 L160 16 L180 11 L200 21 L220 14 L240 19 L240 44 L0 44 Z"
-                    fill="var(--green)" fill-opacity=".18"/>
-              <path d="M0 31 L20 26 L40 30 L60 17 L80 22 L100 12 L120 20 L140 9 L160 16 L180 11 L200 21 L220 14 L240 19"
-                    fill="none" stroke="var(--green)" stroke-width="1.6" stroke-linejoin="round"/>
-              <path d="M0 39 L20 41 L40 38 L60 40 L80 36 L100 39 L120 35 L140 38 L160 34 L180 37 L200 33 L220 36 L240 34"
-                    fill="none" stroke="var(--sky)" stroke-width="1.6" stroke-linejoin="round"/>
-            </svg>
-            <div class="legend">
-              <div><b style="background:var(--green)"></b><span style="color:var(--text)">18.4 Mbit/s</span></div>
-              <div><b style="background:var(--sky)"></b><span style="color:var(--text)">2.1 Mbit/s</span></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="group"><span>SYSTEM</span><i></i></div>
-        <div class="slab">
-          <div class="slab__rail" style="background:var(--sky)"></div>
-          <div class="slab__body">
-            <div class="slab__label">RESOURCES <b>up 41d 6h</b></div>
-            <div class="meter">
-              <div class="meter__row"><span>CPU</span><b>12%</b></div>
-              <div class="meter__track"><div class="meter__fill" style="width:12%;background:var(--green)"></div></div>
-            </div>
-            <div class="meter">
-              <div class="meter__row"><span>Memory</span><b>38%</b></div>
-              <div class="meter__track"><div class="meter__fill" style="width:38%;background:var(--green)"></div></div>
-            </div>
-            <div class="meter" style="margin-bottom:0">
-              <div class="meter__row"><span>States</span><b>4 102 / 98 000</b></div>
-              <div class="meter__track"><div class="meter__fill" style="width:5%;background:var(--green)"></div></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="group"><span>GATEWAYS</span><i></i></div>
-        <div class="slab">
-          <div class="slab__rail" style="background:var(--green)"></div>
-          <div class="slab__body">
-            <div class="gw">
-              <div>
-                <div class="gw__name">WAN_DHCP</div>
-                <div class="gw__stat">8.4 ms &nbsp; 0% loss</div>
-              </div>
-              <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">ONLINE</span>
-            </div>
-          </div>
-        </div>
-        <div class="slab" style="margin-bottom:0">
-          <div class="slab__rail" style="background:var(--yellow)"></div>
-          <div class="slab__body">
-            <div class="gw">
-              <div>
-                <div class="gw__name">VPN_BACKUP</div>
-                <div class="gw__stat">112 ms &nbsp; 6% loss</div>
-              </div>
-              <span class="pill" style="color:var(--yellow);background:color-mix(in srgb,var(--yellow) 18%,transparent)">HIGH LOSS</span>
-            </div>
-          </div>
-        </div>
-
-      </div>
+    <div class="device">
+      <img class="device__shot" src="screenshots/overview.png"
+           alt="The Vaktpost Overview screen: a status summary, system resource meters, and a gateway list.">
     </div>
   </div>
 </section>
@@ -150,36 +71,9 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 
     <div class="features">
       <div class="feature">
-        <div class="device device--small" role="img" aria-label="The DNSBL section of Overview: a donut chart of blocked domains by count, a legend of the busiest ones, and the busiest hour.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">Overview</span><span class="screen__time">14:02</span></div>
-            <div class="slab" style="margin-bottom:0">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="slab__label">DNSBL <b>248</b></div>
-                <div class="donutrow">
-                  <svg class="donut" width="88" height="88" viewBox="0 0 120 120">
-                    <circle cx="60" cy="60" r="42" fill="none" stroke="var(--surface1)" stroke-width="14"/>
-                    <g transform="rotate(-90 60 60)">
-                      <circle cx="60" cy="60" r="42" fill="none" stroke="var(--red)" stroke-width="14" stroke-dasharray="110.8 263.9"/>
-                      <circle cx="60" cy="60" r="42" fill="none" stroke="var(--peach)" stroke-width="14" stroke-dasharray="71.3 263.9" stroke-dashoffset="-110.8"/>
-                      <circle cx="60" cy="60" r="42" fill="none" stroke="var(--yellow)" stroke-width="14" stroke-dasharray="47.5 263.9" stroke-dashoffset="-182.1"/>
-                      <circle cx="60" cy="60" r="42" fill="none" stroke="var(--mauve)" stroke-width="14" stroke-dasharray="34.3 263.9" stroke-dashoffset="-229.6"/>
-                    </g>
-                    <text x="60" y="57" text-anchor="middle" class="donut__center-value">248</text>
-                    <text x="60" y="70" text-anchor="middle" class="donut__center-label">BLOCKED</text>
-                  </svg>
-                  <div class="donutlegend">
-                    <div><b style="background:var(--red)"></b><span>ads.trk-serv.net</span></div>
-                    <div><b style="background:var(--peach)"></b><span>metrics.adnet.io</span></div>
-                    <div><b style="background:var(--yellow)"></b><span>telemetry.iotcloud.cn</span></div>
-                    <div><b style="background:var(--mauve)"></b><span>other</span></div>
-                  </div>
-                </div>
-                <div class="gw__stat" style="margin-top:8px">Busiest hour 21:00 with 64.</div>
-              </div>
-            </div>
-          </div>
+        <div class="device device--small">
+          <img class="device__shot" src="screenshots/dnsbl.png"
+               alt="The DNSBL section of Overview: a donut chart of blocked domains by count, a legend of the busiest ones, and the busiest hour.">
         </div>
         <h3>Health and traffic</h3>
         <p>A configurable overview, live and historical interface traffic, gateways, resources, services, freshness, and alerts derived on the phone.</p>
@@ -423,29 +317,9 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
       </div>
 
       <div class="feature">
-        <div class="device device--small" role="img" aria-label="The All firewalls screen: a connected profile showing CPU, memory and disk, uptime, gateway and service health, and certificate status.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">All firewalls</span><span class="screen__time">14:02</span></div>
-            <div class="slab" style="margin-bottom:0">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div class="gw__name">fw01 — Stockholm</div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">CONNECTED</span>
-                </div>
-                <div class="gw__stat" style="margin-top:2px">https://10.10.20.1:2443</div>
-                <div class="statrow">
-                  <div><b>CPU</b><span>5%</span></div>
-                  <div><b>MEMORY</b><span>9%</span></div>
-                  <div><b>DISK</b><span>5%</span></div>
-                </div>
-                <div class="gw__stat">Uptime: 5d 0h 11m</div>
-                <div class="gw__stat" style="margin-top:6px">0 gateway issues · 0 stopped services</div>
-                <div class="gw__stat">0 certificates expired or due within 30 days</div>
-                <div class="gw__stat" style="margin-top:6px;color:var(--overlay1)">Updated 6 secs ago</div>
-              </div>
-            </div>
-          </div>
+        <div class="device device--small">
+          <img class="device__shot" src="screenshots/all-firewalls.png"
+               alt="The All firewalls screen: a connected profile showing CPU, memory and disk, uptime, gateway and service health, and certificate status.">
         </div>
         <h3>More than one firewall</h3>
         <p>Each profile has its own Keychain credential, TLS settings, refresh interval, monitoring history, and administration switch.</p>

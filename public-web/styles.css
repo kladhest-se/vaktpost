@@ -228,6 +228,13 @@ h1 {
   padding: 1rem .85rem 1.6rem;
   transition: background-color .35s ease;
 }
+/* A real screenshot filling the .device frame in place of a hand-drawn
+   .screen — no padding or background of its own, since the screenshot
+   already carries its own status bar and content edge-to-edge. */
+.device__shot {
+  display: block; width: 100%; height: auto;
+  border-radius: 21px;
+}
 .screen__head {
   display: flex; align-items: baseline; justify-content: space-between;
   margin-bottom: .85rem;
