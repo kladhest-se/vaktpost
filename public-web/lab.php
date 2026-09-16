@@ -32,7 +32,6 @@ $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
 <main class="lab-shell">
   <section class="wrap lab-intro">
     <div>
-      <p class="lab-kicker">PFSENSE PROTOCOL SIMULATOR</p>
       <h1>XMLAPI Lab</h1>
       <p class="lab-lede">Connect Vaktpost to realistic pfSense-shaped test data without putting a firewall on the public internet.</p>
     </div>
@@ -85,9 +84,9 @@ $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
   </section>
 
   <section class="wrap lab-explainer">
-    <article><span>01</span><h2>Known calls only</h2><p>The endpoint recognizes Vaktpost’s audited snippets by their signatures. Unknown code receives an XML-RPC fault.</p></article>
-    <article><span>02</span><h2>Four useful states</h2><p>Test healthy, outdated, degraded, and deliberate-failure behavior by changing only the profile username.</p></article>
-    <article><span>03</span><h2>Updates without risk</h2><p>The Updates profile simulates successful firmware and package completion in an expiring PHP session. No updater runs.</p></article>
+    <article><h2>Known calls only</h2><p>The endpoint recognizes Vaktpost’s audited snippets by their signatures. Unknown code receives an XML-RPC fault.</p></article>
+    <article><h2>Four useful states</h2><p>Test healthy, outdated, degraded, and deliberate-failure behavior by changing only the profile username.</p></article>
+    <article><h2>Updates without risk</h2><p>The Updates profile simulates successful firmware and package completion in an expiring PHP session. No updater runs.</p></article>
   </section>
 </main>
 

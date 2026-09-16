@@ -25,6 +25,10 @@
   --measure: 66ch;
   --rail: 3px;
   --r: 12px;
+  /* One spacing scale, used throughout rather than ad-hoc rem values, so
+     the page's vertical rhythm reads as chosen rather than accumulated. */
+  --sp-1: .5rem; --sp-2: 1rem; --sp-3: 1.6rem; --sp-4: 2.4rem;
+  --sp-5: 3.6rem; --sp-6: 5.2rem;
 }
 
 * { box-sizing: border-box; }
@@ -40,9 +44,7 @@ body {
   font-size: 17px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
-  transition: background-color .35s ease, color .35s ease;
 }
-@media (prefers-reduced-motion: reduce) { body { transition: none; } }
 
 p { max-width: var(--measure); }
 
@@ -66,7 +68,7 @@ a:hover { text-decoration-thickness: 2px; }
   border-bottom: 1px solid var(--surface0);
 }
 .bar__inner {
-  display: flex; align-items: center; gap: 1.5rem;
+  display: flex; align-items: center; gap: var(--sp-3);
   padding-block: .7rem;
   flex-wrap: wrap;
 }
@@ -75,8 +77,9 @@ a:hover { text-decoration-thickness: 2px; }
   font-family: var(--mono); font-size: .95rem; font-weight: 600;
   letter-spacing: -.02em; color: var(--text); text-decoration: none;
 }
+.mark__icon { width: 26px; height: 26px; border-radius: 7px; vertical-align: -6px; margin-right: 8px; }
 
-.site-nav { display:flex; align-items:center; gap:.35rem; }
+.site-nav { display:flex; align-items:center; gap:.35rem; margin-left: auto; }
 .site-nav a {
   padding:.42rem .65rem; border-radius:8px;
   color:var(--subtext0); text-decoration:none;
@@ -84,6 +87,8 @@ a:hover { text-decoration-thickness: 2px; }
 }
 .site-nav a:hover { color:var(--text); background:var(--surface0); }
 .site-nav a[aria-current="page"] { color:var(--crust); background:var(--accent); }
+
+@media (max-width: 680px) { .bar__inner { gap: .75rem; } }
 
 /* ── Hero ──────────────────────────────────────────────────────────────── */
 
@@ -101,12 +106,11 @@ h1 {
   line-height: 1.02;
   letter-spacing: -.045em;
   font-weight: 600;
-  margin: 0 0 1.1rem;
+  margin: 0 0 var(--sp-2);
 }
-.hero__sub { font-size: 1.14rem; color: var(--subtext1); margin: 0 0 1rem; }
-.hero__etym { font-size: .95rem; color: var(--subtext0); margin: 0 0 2rem; }
+.hero__sub { font-size: 1.14rem; color: var(--subtext1); margin: 0 0 var(--sp-3); }
 
-.actions { display: flex; gap: .7rem; flex-wrap: wrap; margin-bottom: 1.6rem; }
+.actions { display: flex; gap: .7rem; flex-wrap: wrap; }
 .btn {
   display: inline-block;
   font: 600 .95rem/1 var(--sans);
@@ -119,25 +123,13 @@ h1 {
 .btn--ghost { border-color: var(--surface1); color: var(--text); }
 .btn--ghost:hover { border-color: var(--overlay0); }
 
-.needs {
-  font-family: var(--mono); font-size: .82rem;
-  color: var(--overlay1); max-width: 46ch; line-height: 1.5;
+.status-line {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem;
+  margin-top: var(--sp-3);
+  font-family: var(--mono); font-size: .82rem; color: var(--overlay1);
 }
-
-.lab-callout {
-  margin-top:2.4rem; padding:1.5rem;
-  border:1px solid color-mix(in srgb,var(--accent) 38%,var(--surface0));
-  border-radius:var(--r); background:var(--mantle);
-}
-.lab-callout span { color:var(--accent); font:700 .76rem/1 var(--mono); letter-spacing:.08em; }
-.lab-callout h3 { margin:.65rem 0 .35rem; }
-.lab-callout p { margin:0; color:var(--subtext0); font-size:.92rem; }
-.lab-details { margin:1.2rem 0 0; display:flex; flex-direction:column; gap:.6rem; }
-.lab-details > div { display:flex; gap:.9rem; flex-wrap:wrap; }
-.lab-details dt { flex:none; width:6.5rem; color:var(--subtext0); font:700 .76rem/1.4 var(--mono); letter-spacing:.04em; text-transform:uppercase; }
-.lab-details dd { margin:0; flex:1 1 16rem; font-size:.88rem; color:var(--text); }
-.lab-details code { font-family:var(--mono); font-size:.85em; background:var(--surface0); padding:.1em .35em; border-radius:4px; }
-@media(max-width:680px){.site-nav{order:2;width:100%}.lab-details dt{width:100%}}
+.status-line b { color: var(--subtext1); font-weight: 600; }
+.status-line .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--surface2); flex: none; }
 
 /* ── Device rendering ──────────────────────────────────────────────────── */
 
@@ -149,15 +141,12 @@ h1 {
   padding: 11px;
   box-shadow: 0 24px 60px -28px rgba(0,0,0,.7);
 }
-/* Every card in #features and the hero now carries a real screenshot
-   rather than a hand-drawn approximation of one, so this frame is a
-   plain border and padding around an <img> — no inner .screen background
-   or component classes of its own to draw a fake UI with. */
 .device__shot {
   display: block; width: 100%; height: auto;
   border-radius: 21px;
   cursor: zoom-in;
 }
+.device--small { max-width: none; }
 
 /* ── Lightbox ──────────────────────────────────────────────────────────── */
 /* A native <dialog>, not a hand-rolled overlay: showModal() traps focus and
@@ -190,31 +179,55 @@ h1 {
 /* ── Sections ──────────────────────────────────────────────────────────── */
 
 section { padding-block: clamp(2.6rem, 6vw, 4.2rem); }
-.section--sunken { background: var(--mantle); transition: background-color .35s ease; }
+.section--sunken { background: var(--mantle); }
 
 h2 {
   font-family: var(--mono);
   font-size: clamp(1.35rem, 3vw, 1.75rem);
   letter-spacing: -.03em; font-weight: 600;
-  margin: 0 0 1.6rem;
+  margin: 0 0 var(--sp-2);
   padding-left: 1rem;
   border-left: var(--rail) solid var(--accent);
 }
 h3 { font: 600 1.02rem/1.3 var(--sans); margin: 0 0 .35rem; }
 
-.lede { font-size: 1.05rem; color: var(--subtext1); margin-bottom: 2.2rem; }
+.lede { font-size: 1.05rem; color: var(--subtext1); margin-bottom: var(--sp-4); max-width: 56ch; }
 
-.features { display: grid; gap: 2.6rem 2rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.feature { display: flex; flex-direction: column; }
-.feature .device { margin-bottom: 1.1rem; }
-.feature h3 { padding-left: 1rem; border-left: var(--rail) solid var(--surface2); }
-.feature p { font-size: .93rem; color: var(--subtext0); margin: 0; padding-left: 1rem; max-width: 46ch; }
-
-.ipad-callout {
-  margin: 1.4rem 0 1.6rem; padding-left: 1rem;
-  border-left: var(--rail) solid var(--accent);
-  font-family: var(--mono); font-size: 1.15rem; letter-spacing: -.02em; font-weight: 600;
+/* ── Showcase ──────────────────────────────────────────────────────────── *
+ * A handful of the app's strongest screens, each given real room — a
+ * screenshot and its own paragraph, alternating sides down the page —
+ * rather than nine equal-sized cards tiled in a grid. The alternation
+ * isn't decorative rhythm for its own sake: it keeps the reading path
+ * moving between image and text instead of settling into one column
+ * the eye can skim without looking at either. */
+.showcase { display: grid; gap: clamp(3.5rem, 9vw, 6rem); margin-top: var(--sp-5); }
+.showcase__panel {
+  display: grid; gap: clamp(2rem, 5vw, 3.5rem);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
 }
+.showcase__panel--reverse .showcase__media { order: 2; }
+.showcase__text h3 {
+  font-family: var(--mono); font-size: 1.3rem; letter-spacing: -.02em;
+  font-weight: 600; margin: 0 0 .6rem;
+}
+.showcase__text p { color: var(--subtext0); font-size: 1rem; max-width: 40ch; }
+@media (max-width: 780px) {
+  .showcase__panel { grid-template-columns: 1fr; }
+  .showcase__panel--reverse .showcase__media { order: 0; }
+}
+
+/* ── Capabilities ──────────────────────────────────────────────────────── *
+ * Everything the showcase doesn't have room for, named plainly rather than
+ * given a screenshot and a card each — a screen doesn't need a picture to
+ * be worth a sentence, and not every feature can be the memorable one. */
+.capabilities {
+  display: grid; gap: var(--sp-4) var(--sp-4);
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  margin-top: var(--sp-4);
+}
+.capability h4 { margin: 0 0 .3rem; font: 600 .97rem/1.3 var(--sans); color: var(--text); }
+.capability p { margin: 0; font-size: .89rem; color: var(--subtext0); }
 
 .steps { list-style: none; counter-reset: s; padding: 0; margin: 0; display: grid; gap: 1.1rem; }
 .steps li { counter-increment: s; display: grid; grid-template-columns: 1.9rem 1fr; gap: .85rem; align-items: start; }
@@ -231,16 +244,25 @@ h3 { font: 600 1.02rem/1.3 var(--sans); margin: 0 0 .35rem; }
 }
 
 .limit { padding-left: 1rem; border-left: var(--rail) solid var(--peach); }
-.limit p { font-size: .93rem; color: var(--subtext0); margin: 0; max-width: 44ch; }
-.limit ul { margin: 0; padding-left: 1.1rem; font-size: .93rem; color: var(--subtext0); max-width: 44ch; }
-.limit li { margin-bottom: .3rem; }
-.limit li:last-child { margin-bottom: 0; }
+.limit ul { margin: 0; padding-left: 1.1rem; font-size: .93rem; color: var(--subtext0); max-width: 44ch; columns: 2; column-gap: 2rem; }
+.limit li { margin-bottom: .3rem; break-inside: avoid; }
+@media (max-width: 560px) { .limit ul { columns: 1; } }
 
-table { border-collapse: collapse; width: 100%; font-size: .88rem; }
-th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--surface0); vertical-align: top; }
-th { font: 600 .74rem/1.3 var(--sans); letter-spacing: .05em; color: var(--overlay1); }
-td:first-child { white-space: nowrap; font-weight: 600; }
-td code { font-family: var(--mono); font-size: .92em; color: var(--subtext0); }
+.lab-callout {
+  margin-top: var(--sp-4); padding: var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--surface0));
+  border-radius: var(--r); background: var(--mantle);
+}
+.lab-callout h3 { margin: 0 0 .35rem; }
+.lab-callout p { margin: 0; color: var(--subtext0); font-size: .92rem; }
+.lab-callout .lede { margin-bottom: 0; }
+.lab-details { margin: 1.2rem 0 0; display: flex; flex-direction: column; gap: .6rem; }
+.lab-details > div { display: flex; gap: .9rem; flex-wrap: wrap; }
+.lab-details dt { flex: none; width: 6.5rem; color: var(--subtext0); font: 700 .76rem/1.4 var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.lab-details dd { margin: 0; flex: 1 1 16rem; font-size: .88rem; color: var(--text); }
+.lab-details code { font-family: var(--mono); font-size: .85em; background: var(--surface0); padding: .1em .35em; border-radius: 4px; }
+.lab-callout .actions { margin-top: var(--sp-2); }
+@media (max-width: 680px) { .lab-details dt { width: 100%; } }
 
 footer {
   border-top: 1px solid var(--surface0);
@@ -248,49 +270,3 @@ footer {
   font-size: .85rem; color: var(--overlay1);
 }
 footer p { max-width: 62ch; margin: 0 0 .6rem; }
-
-
-
-
-/* Three renderings sat here for the old "What each screen shows" gallery;
-   every feature card in #features now carries its own device rendering
-   instead, so this grid and its captions are gone. Every hand-drawn
-   mockup that grid's replacement cards briefly carried in its place has
-   since been swapped for a real screenshot too, so .device--small itself
-   is all that remains — nothing nested under it draws a fake screen
-   anymore. */
-.device--small { max-width: none; }
-
-/* The app icon in the header, in place of the drawn mark it replaces. */
-.mark__icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  vertical-align: -6px;
-  margin-right: 8px;
-}
-
-/* Three small stat columns — CPU / Memory / Disk — for the All-firewalls
-   fleet card. Plain numbers, not meters: at this size a bar for three values
-   side by side reads as noise, and the number alone is what's being scanned.
-   Block-stacked label-over-value rather than a nested flex column: nested
-   flex containers render inconsistently in some engines, block display does
-   not. */
-.statrow { display: flex; margin: 7px 0; }
-.statrow > div { margin-right: 22px; }
-.statrow > div:last-child { margin-right: 0; }
-.statrow b { display: block; font: 600 9px/1 var(--sans); letter-spacing: .05em; color: var(--overlay1); margin-bottom: 3px; }
-.statrow span { display: block; font: 600 13px/1 var(--mono); color: var(--text); }
-
-/* ── Donut rendering (DNSBL) ───────────────────────────────────────────── */
-.donutrow { display: flex; align-items: center; gap: 14px; }
-.donut { flex: none; }
-.donut__center-value { font: 700 17px/1 var(--sans); fill: var(--text); }
-.donut__center-label { font: 500 8px/1 var(--sans); fill: var(--overlay1); }
-.donutlegend { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.donutlegend div { display: flex; align-items: center; gap: 6px; }
-.donutlegend b { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.donutlegend span {
-  font: 500 11px/1.2 var(--sans); color: var(--subtext0);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}

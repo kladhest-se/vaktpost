@@ -31,6 +31,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     </a>
     <nav class="site-nav" aria-label="Primary">
       <a href="#top" aria-current="page">App</a>
+      <a href="lab.php">XMLAPI Lab</a>
     </nav>
   </div>
 </header>
@@ -42,12 +43,17 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     <div>
       <h1>Your firewall,<br>on your phone.</h1>
       <p class="hero__sub">Vaktpost is an open-source iOS app for monitoring and administering pfSense CE and pfSense Plus.</p>
-      <p class="needs">Version <?= htmlspecialchars($releaseVersion, ENT_QUOTES, 'UTF-8') ?> — feature-frozen while final polish and testing wrap up.</p>
       <div class="actions">
         <a class="btn btn--solid" href="#setup">Set it up</a>
         <a class="btn btn--ghost" href="#features">See the features</a>
       </div>
-      <p class="needs">Every firewall starts in monitor-only mode — nothing is installed on pfSense. Requires iOS 17 or later.</p>
+      <p class="status-line">
+        <span>Version <?= htmlspecialchars($releaseVersion, ENT_QUOTES, 'UTF-8') ?></span>
+        <span class="dot" aria-hidden="true"></span>
+        <span>Requires iOS 17+</span>
+        <span class="dot" aria-hidden="true"></span>
+        <span><b>Monitor-only by default</b> — nothing is installed on pfSense</span>
+      </p>
     </div>
 
     <div class="device">
@@ -62,90 +68,71 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     <h2>Vaktpost Features</h2>
     <p class="lede">Broad visibility, a small administration surface, and no unattended changes.</p>
 
-    <div class="features">
-      <div class="feature">
-        <div class="device device--small">
+    <div class="showcase">
+      <div class="showcase__panel">
+        <div class="showcase__media device">
           <img class="device__shot" src="screenshots/dnsbl.png"
                alt="The DNSBL section of Overview: a donut chart of blocked domains by count, a legend of the busiest ones, and the busiest hour.">
         </div>
-        <h3>Health and traffic</h3>
-        <p>Live and historical traffic, resources, gateways, and alerts — all in one overview.</p>
-      </div>
-
-      <div class="feature">
-        <div class="device device--small">
-          <img class="device__shot" src="screenshots/ipad-clients-traffic.png"
-               alt="The Clients screen on iPad, traffic view: live bandwidth per device, sorted by bandwidth in, with a search field and interface picker.">
+        <div class="showcase__text">
+          <h3>Everything, in one overview</h3>
+          <p>Live and historical traffic, resource meters, gateway status, alerts, and blocked-domain activity — all in one screen, not spread across several pfSense pages.</p>
         </div>
-        <h3>Clients, in one list</h3>
-        <p>DHCP leases, ARP, and static mappings in one searchable list, with vendor names and live traffic.</p>
       </div>
 
-      <div class="feature">
-        <div class="device device--small">
-          <img class="device__shot" src="screenshots/ipad-incident-timeline.png"
-               alt="The incident timeline on iPad, split-view: the list of incidents on the left, a full log entry — traffic, matched rule, and raw log line — on the right.">
-        </div>
-        <h3>Logs and investigation</h3>
-        <p>Firewall, system, and VPN logs combined into one incident timeline, plus network diagnostics.</p>
-      </div>
-
-      <div class="feature">
-        <div class="device device--small">
-          <img class="device__shot" src="screenshots/ipad-vpn.png"
-               alt="The VPN screen on iPad, split-view: OpenVPN server and client instances on the left, the selected instance's connected clients on the right.">
-        </div>
-        <h3>VPN and services</h3>
-        <p>OpenVPN, WireGuard, and IPsec, each with its connected peers.</p>
-      </div>
-
-      <div class="feature">
-        <div class="device device--small">
-          <img class="device__shot" src="screenshots/ipad-firewall-rules.png"
-               alt="The Firewall rules screen on iPad, split-view: the LAN rule list with a pending-changes banner on the left, one rule's full detail — source, destination, and every rule field — on the right.">
-        </div>
-        <h3>Firewall editing</h3>
-        <p>Create, edit, and reorder filter rules and NAT port forwards, with aliases and separators.</p>
-      </div>
-
-      <div class="feature">
-        <div class="device device--small">
-          <img class="device__shot" src="screenshots/ipad-apply-changes.png"
-               alt="The Apply Changes screen on iPad listing pending edits made through the app, each with a summary and a timestamp, above an Apply Changes button.">
-        </div>
-        <h3>Staged changes</h3>
-        <p>Edits stay inactive until you apply them — the review also flags any other administrators' pending work.</p>
-      </div>
-
-      <div class="feature">
-        <div class="device device--small">
-          <img class="device__shot" src="screenshots/all-firewalls.png"
-               alt="The All firewalls screen: a connected profile showing CPU, memory and disk, uptime, gateway and service health, and certificate status.">
-        </div>
-        <h3>More than one firewall</h3>
-        <p>Each firewall gets its own credential, TLS settings, and administration switch.</p>
-      </div>
-    </div>
-
-    <h3 class="ipad-callout">Also built for iPad</h3>
-    <p class="lede">Network, Aliases, VPN, and Incident Timeline get dedicated split-view layouts — list and detail side by side, not a stretched phone screen.</p>
-
-    <div class="features">
-      <div class="feature">
-        <div class="device device--small">
+      <div class="showcase__panel showcase__panel--reverse">
+        <div class="showcase__media device">
           <img class="device__shot" src="screenshots/ipad-network.png"
                alt="The Network screen on iPad, split-view: the interface list on the left, the selected interface's live throughput and history charts on the right.">
         </div>
-        <h3>Network, side by side</h3>
-        <p>Pick an interface and its charts stay on screen beside it.</p>
+        <div class="showcase__text">
+          <h3>Built for iPad, not just resized</h3>
+          <p>Network, Aliases, VPN, and Incident Timeline get their own split-view layouts. Pick something from the list and its detail stays on screen beside it.</p>
+        </div>
       </div>
 
-      <div class="feature">
-        <div class="device device--small">
-          <img class="device__shot" src="screenshots/ipad-aliases.png"
-               alt="The Aliases screen on iPad, split-view: the alias list on the left, the selected alias's members and a pending-changes note on the right.">
+      <div class="showcase__panel">
+        <div class="showcase__media device">
+          <img class="device__shot" src="screenshots/ipad-firewall-rules.png"
+               alt="The Firewall rules screen on iPad, split-view: the LAN rule list with a pending-changes banner on the left, one rule's full detail — source, destination, and every rule field — on the right.">
         </div>
-        <h3>Aliases, side by side</h3>
+        <div class="showcase__text">
+          <h3>Edits stay reversible</h3>
+          <p>Create, edit, and reorder filter rules and NAT port forwards. Nothing takes effect until you review and apply — pfSense's own workflow, not a shortcut around it.</p>
+        </div>
+      </div>
+
+      <div class="showcase__panel showcase__panel--reverse">
+        <div class="showcase__media device">
+          <img class="device__shot" src="screenshots/ipad-clients-traffic.png"
+               alt="The Clients screen on iPad, traffic view: live bandwidth per device, sorted by bandwidth in, with a search field and interface picker.">
+        </div>
+        <div class="showcase__text">
+          <h3>Every device, one list</h3>
+          <p>DHCP leases, ARP, and static mappings combined into one searchable inventory, with vendor names and live traffic per device.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="capabilities">
+      <div class="capability">
+        <h4>Logs and investigation</h4>
+        <p>Firewall, system, and VPN logs combined into one incident timeline, plus network diagnostics.</p>
+      </div>
+      <div class="capability">
+        <h4>VPN and services</h4>
+        <p>OpenVPN, WireGuard, and IPsec, each with its connected peers.</p>
+      </div>
+      <div class="capability">
+        <h4>Staged changes</h4>
+        <p>The review also flags any other administrators' pending work before you apply.</p>
+      </div>
+      <div class="capability">
+        <h4>More than one firewall</h4>
+        <p>Each firewall gets its own credential, TLS settings, and administration switch.</p>
+      </div>
+      <div class="capability">
+        <h4>Aliases, side by side</h4>
         <p>The same split-view treatment for host, network, and port aliases.</p>
       </div>
     </div>
@@ -182,15 +169,17 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     </ol>
 
     <div class="lab-callout">
-      <span>NO FIREWALL REQUIRED</span>
-      <h3>Try Vaktpost against synthetic pfSense data</h3>
-      <p>A public endpoint returns healthy, outdated, degraded, and failure scenarios without exposing a real firewall or accepting executable PHP. Make a separate firewall profile in the app and use the website address — not the <code>/xmlrpc.php</code> path — as its base URL.</p>
+      <h3>Try it without a firewall</h3>
+      <p class="lede">A public endpoint returns healthy, outdated, degraded, and failure scenarios without exposing a real firewall or accepting executable PHP. Make a separate firewall profile in the app and use the website address — not the <code>/xmlrpc.php</code> path — as its base URL.</p>
       <dl class="lab-details">
         <div><dt>Base URL</dt><dd><code><?= htmlspecialchars($labOrigin, ENT_QUOTES, 'UTF-8') ?></code></dd></div>
         <div><dt>Username</dt><dd><code>review</code> for a healthy firewall, <code>updates</code> for outdated firmware and packages, <code>degraded</code> for gateway/VPN/service problems, or <code>fault</code> to see how the app handles a firewall that stops responding partway through</dd></div>
         <div><dt>Password</dt><dd><code>vaktpost-demo</code></dd></div>
       </dl>
       <p style="margin-top:1rem">Rules, aliases, and port forwards can be created, edited, and deleted to try the app's write flow — nothing to undo afterward. Each session's changes reset to the original fixtures after 20 minutes of inactivity.</p>
+      <div class="actions">
+        <a class="btn btn--ghost" href="lab.php">Explore it in your browser first</a>
+      </div>
     </div>
 
   </div>
