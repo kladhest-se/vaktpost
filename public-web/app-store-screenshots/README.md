@@ -1,7 +1,7 @@
 # App Store screenshots
 
-Source: real captures from the iPhone 18 Pro Max simulator, 2026-09-16.
-Verified against Apple's own current spec:
+Source: real captures from the iPhone 18 Pro Max and iPad Air 13-inch (M4)
+simulators, 2026-09-16. Verified against Apple's own current spec:
 https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications
 
 ## iphone-6.9-in/ — done
@@ -37,19 +37,50 @@ worth a look before submitting; it may be worth swapping for something
 more visually dense if a better capture becomes available. Everything else
 is unchanged from the original simulator capture.
 
-## Still needed — iPad
+## ipad-13-in/ — done
 
-Vaktpost runs on iPad (the app has dedicated split-view layouts for
-Network, Aliases, VPN, and Incident Timeline), and Apple's spec marks the
-13" iPad class as "Required if app runs on iPad" — this is not optional
-the way smaller iPhone classes are. None of the 10 screenshots in this
-upload are from an iPad simulator or device, so this set does not exist
-yet.
+9 screenshots, 2048 x 2732 px, RGB (alpha stripped the same way as the
+iPhone set — the originals came out of the simulator as RGBA with a
+fully-opaque channel, verified before stripping).
 
-Accepted sizes, straight from Apple's page:
-- 2064 x 2752 px (portrait) — current default (iPad Pro M5/M4, Air M4/M3/M2)
-- 2048 x 2732 px (portrait) — also accepted (older Pro/Air generations)
+Source: real captures from the iPad Air 13-inch (M4) simulator,
+2026-09-16, via `make ipados-run`. This size is Apple's "also accepted
+(older Pro/Air generations)" option rather than the "current default"
+2064 x 2752 — both are valid within the same required 13" class; which
+one a capture produces depends on the specific Pro/Air model simulated,
+not on anything wrong with the capture. An earlier attempt at this set
+was taken against an "iPad (A16)" simulator, which is an 11"-class
+device despite being an iPad — at the time, `ipados-run` picked
+whichever iPad happened to be newest without regard to class, and only
+iPad Pro and iPad Air ever ship as 13" hardware. That gap is now fixed
+in the Makefile; this set was captured after the fix, against whatever
+Pro/Air simulator that narrower selection found. The earlier attempt's
+screenshots were discarded rather than uploaded here; Apple's cascading
+only fills smaller classes in from a larger set that was provided, not
+the other way, so 11" screenshots would not have satisfied this required
+slot no matter how they were labeled.
 
-Capture these the same way as the iPhone set — `make ipados-run`, or `xcrun simctl io booted screenshot` — and drop them in a new
-`ipad-13-in/` folder alongside this one, following the same numbering
-convention.
+Same visual-density ordering as the iPhone set:
+
+1. Overview
+2. Network — interface detail with throughput and history charts
+3. Clients — traffic view
+4. Client investigation
+5. Firewall — NAT rule detail, with the Apply Changes banner visible
+6. VPN — OpenVPN
+7. Aliases
+8. Incident timeline
+9. Apply firewall changes — the staged-changes review screen
+
+Two things worth a look before submitting, neither fixed here:
+
+- Screenshots 5-8 (and to a lesser extent 9) have a lot of empty space
+  below the content — a function of how tall this size is (2732px)
+  combined with how little the lab data populates each of these screens
+  (one rule, two aliases, one incident). Not wrong, just sparse; worth
+  recapturing against richer lab data if a denser look is wanted.
+- Screenshot 9 lists a change named "Add rule dsffd" — reads like
+  incidental test input rather than a deliberate demo value, unlike the
+  named rules and aliases everywhere else in this set. Worth a recapture
+  of just that one screen if it's noticeable at the size Apple displays
+  these at.
