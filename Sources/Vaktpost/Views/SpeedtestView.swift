@@ -22,9 +22,8 @@ struct SpeedtestView: View {
 
     var body: some View {
         ScrollView {
+            PageHeader(title: "Speed Test", subtitle: "Measured from the firewall's own WAN")
             VStack(alignment: .leading, spacing: 14) {
-                PageHeader(title: "Speed Test", subtitle: "Measured from the firewall's own WAN")
-
                 Text("Downloads and uploads a fixed test file over HTTPS and times it — the same "
                     + "approach a browser-based speed test uses, run from the firewall itself so the "
                     + "result reflects its WAN link rather than this phone's own connection back to it.")

@@ -96,12 +96,11 @@ struct IncidentTimelineView: View {
 
     private var listColumn: some View {
         ScrollView {
+            PageHeader(
+                title: "Incident timeline",
+                subtitle: allEvents.isEmpty ? nil : "\(incidentCount) incidents · \(allEvents.count) events fetched"
+            )
             VStack(alignment: .leading, spacing: 12) {
-                PageHeader(
-                    title: "Incident timeline",
-                    subtitle: allEvents.isEmpty ? nil : "\(incidentCount) incidents · \(allEvents.count) events fetched"
-                )
-
                 FreshnessView(sections: sections, showNames: true)
 
                 InlineSearchField(text: $query, prompt: "Search timeline")

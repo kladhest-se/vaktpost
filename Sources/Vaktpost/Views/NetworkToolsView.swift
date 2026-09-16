@@ -44,9 +44,8 @@ struct NetworkToolsView: View {
 
     var body: some View {
         ScrollView {
+            PageHeader(title: "Network Tools", subtitle: "Ping, traceroute and DNS lookup")
             VStack(alignment: .leading, spacing: 14) {
-                PageHeader(title: "Network Tools", subtitle: "Ping, traceroute and DNS lookup")
-
                 Picker("", selection: $tool) {
                     ForEach(Tool.allCases) { Text($0.rawValue).tag($0) }
                 }

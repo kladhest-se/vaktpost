@@ -19,9 +19,8 @@ struct ConfigBackupView: View {
 
     var body: some View {
         ScrollView {
+            PageHeader(title: "Configuration Backup", subtitle: "A copy of config.xml, straight from the firewall")
             VStack(alignment: .leading, spacing: 14) {
-                PageHeader(title: "Configuration Backup", subtitle: "A copy of config.xml, straight from the firewall")
-
                 Notice(
                     symbol: "exclamationmark.shield",
                     title: "Contains real secrets",

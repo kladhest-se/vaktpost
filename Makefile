@@ -162,15 +162,33 @@ archive:
 # The newest booted-or-bootable iPhone, by udid.
 #
 # By name is ambiguous the moment two runtimes are installed: the same device
-# then exists twice and xcodebuild refuses to choose. No model is written down
-# here on purpose — a name pinned in a Makefile goes stale as soon as Apple
-# stops shipping it, and the failure is a wall of destinations rather than an
-# answer.
+# then exists twice and xcodebuild refuses to choose. No specific model is
+# pinned here on purpose — a name written down in a Makefile goes stale as
+# soon as Apple stops shipping it, and the failure is a wall of destinations
+# rather than an answer.
+#
+# "Newest" has two parts, sorted in order: the runtime's own parsed version
+# first, then the leading number in the device's own name second — neither
+# is whichever happens to come last in simctl's own JSON key or list order,
+# which it has never documented as version- or recency-sorted. Two runtimes
+# installed in a different order than expected, or more than one iPhone
+# model available under the same runtime, would otherwise pick a plausible
+# but wrong device with nothing to notice it by — as happened here: iPhone
+# 17 booted over iPhone 18 Pro under the same iOS 27.0 runtime, since the
+# runtime-only sort correctly narrowed to that runtime but had nothing to
+# say about which iPhone within it. A name with no number at all (an
+# "iPhone Air"-style name, not yet a real model when this was written)
+# sorts behind any numbered one rather than crashing on the missing match —
+# an imperfect tie-break for a name Apple hasn't shipped, not a wrong one
+# for a name it has.
 SIM_ID := $(shell xcrun simctl list devices available -j 2>/dev/null | \
-python3 -c 'import json,sys;\
+python3 -c 'import json,re,sys;\
+ver=lambda k: tuple(map(int, re.search(r"iOS-(\d+)-(\d+)", k).groups())) if re.search(r"iOS-(\d+)-(\d+)", k) else (0,0);\
+model=lambda n: int(re.search(r"(\d+)", n).group(1)) if re.search(r"(\d+)", n) else -1;\
 d=json.load(sys.stdin)["devices"];\
-c=[v for k,vs in d.items() for v in vs if v["name"].startswith("iPhone")];\
-print(c[-1]["udid"] if c else "")' 2>/dev/null)
+c=[((ver(k), model(v["name"])), v) for k,vs in d.items() for v in vs if v["name"].startswith("iPhone")];\
+c.sort(key=lambda pair: pair[0]);\
+print(c[-1][1]["udid"] if c else "")' 2>/dev/null)
 
 APP_INFO = \
 	settings=$$(xcodebuild -project $(PROJECT) -scheme $(SCHEME) \
@@ -182,8 +200,14 @@ run: build
 	@test -n "$(SIM_ID)" || { echo "No iPhone simulator installed. make destinations"; exit 1; }
 	@set -e; $(APP_INFO); \
 	test -d "$$app" || { echo "No app at $$app"; exit 1; }; \
+	sim_name="$$(xcrun simctl list devices 2>/dev/null | grep "$(SIM_ID)" | sed -E 's/^[[:space:]]*(.+) \([0-9A-Fa-f-]+\).*/\1/')"; \
 	xcrun simctl boot $(SIM_ID) 2>/dev/null || true; \
-	open -a Simulator; \
+	dev_apps="$$(xcode-select -p)/Applications"; \
+	{ open "$$dev_apps/Simulator.app" 2>/dev/null \
+		|| open "$$dev_apps/Device Hub.app" 2>/dev/null \
+		|| open -a Simulator 2>/dev/null \
+		|| open -a "Device Hub" 2>/dev/null; } 2>/dev/null || true; \
+	echo "If a device window didn't appear on its own, click Start on \"$${sim_name:-this device}\" in the window that just opened."; \
 	xcrun simctl install $(SIM_ID) "$$app"; \
 	xcrun simctl launch --console-pty $(SIM_ID) "$$bundle"
 

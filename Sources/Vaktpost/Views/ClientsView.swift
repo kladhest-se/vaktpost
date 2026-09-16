@@ -284,8 +284,8 @@ struct ClientDetailView: View {
 
     var body: some View {
         ScrollView {
+            PageHeader(title: "Client investigation", subtitle: client.name)
             VStack(alignment: .leading, spacing: 14) {
-                PageHeader(title: "Client investigation", subtitle: client.name)
                 FreshnessView(sections: [.leases, .arp, .statics, .hostOverrides, .aliases], showNames: true)
                 Slab(rail: client.health, title: "Identity and names") {
                     VStack(alignment: .leading, spacing: 8) {

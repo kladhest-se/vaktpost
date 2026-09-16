@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Manages the set of firewalls and which one is on screen.
 ///
@@ -189,6 +190,7 @@ struct ServerEditView: View {
     @Environment(\.dashboardStore) private var store: DashboardStore
     @Environment(\.serverRegistry) private var registry: ServerRegistry
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var offerPinning = false
     @State private var confirmedFingerprint: String?
     @State private var pendingFingerprint: String?
@@ -201,6 +203,15 @@ struct ServerEditView: View {
     @State private var isAuthenticatingCredential = false
     @State private var message: String?
     @State private var messageHealth: Health = .idle
+    /// Set only by `.unavailable` — biometry that cannot run at all right
+    /// now (none enrolled, none set up, locked out) rather than one attempt
+    /// that failed. The difference is what to do next: a failed attempt
+    /// invites tapping the same button again, since the same prompt might
+    /// succeed the second time. Unavailable won't, no matter how many times
+    /// it's tapped, until something changes outside this screen — so that
+    /// case gets a way there instead of a button that would just fail the
+    /// same way again.
+    @State private var showOpenSettingsButton = false
     @State private var confirmDelete = false
     @State private var showAdministrationRisk = false
 
@@ -342,11 +353,11 @@ struct ServerEditView: View {
         // when nothing has actually retried it yet. Clearing it here isn't
         // itself a retry — Save still is, via saveAndTest() — it just stops
         // the screen from looking like a fix already made didn't work.
-        .onChange(of: profile.baseURL) { message = nil }
-        .onChange(of: profile.username) { message = nil }
-        .onChange(of: profile.allowUntrustedTLS) { message = nil }
-        .onChange(of: profile.pinnedFingerprint) { message = nil }
-        .onChange(of: password) { message = nil }
+        .onChange(of: profile.baseURL) { message = nil; showOpenSettingsButton = false }
+        .onChange(of: profile.username) { message = nil; showOpenSettingsButton = false }
+        .onChange(of: profile.allowUntrustedTLS) { message = nil; showOpenSettingsButton = false }
+        .onChange(of: profile.pinnedFingerprint) { message = nil; showOpenSettingsButton = false }
+        .onChange(of: password) { message = nil; showOpenSettingsButton = false }
         .confirmationDialog("Pin this certificate?", isPresented: $offerPinning,
                             titleVisibility: .visible) {
             Button("Pin it") {
@@ -493,6 +504,14 @@ struct ServerEditView: View {
                         .scaledFont(12, weight: .medium)
                         .foregroundStyle(theme.accentColor)
                     }
+                    if showOpenSettingsButton {
+                        Button("Open Settings") {
+                            guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                            openURL(url)
+                        }
+                        .scaledFont(12, weight: .medium)
+                        .foregroundStyle(theme.accentColor)
+                    }
                 }
             }
         }
@@ -554,10 +573,19 @@ struct ServerEditView: View {
                 revealedPassword = stored
             }
             showKey = true
-        case let .failed(text), let .unavailable(text):
+            message = nil
+            showOpenSettingsButton = false
+        case let .unavailable(text):
+            showKey = false
+            message = "Password remains hidden. \(text) Set up Face ID or Touch ID in "
+                + "Settings, then try again."
+            messageHealth = .bad
+            showOpenSettingsButton = true
+        case let .failed(text):
             showKey = false
             message = "Password remains hidden. \(text)"
             messageHealth = .bad
+            showOpenSettingsButton = false
         case .cancelled:
             showKey = false
         }
@@ -573,10 +601,19 @@ struct ServerEditView: View {
             allowPasscode: false
         ) {
         case .success:
+            message = nil
+            showOpenSettingsButton = false
             return true
-        case let .failed(text), let .unavailable(text):
+        case let .unavailable(text):
+            message = "Password was not changed. \(text) Set up Face ID or Touch ID in "
+                + "Settings, then try again."
+            messageHealth = .bad
+            showOpenSettingsButton = true
+            return false
+        case let .failed(text):
             message = "Password was not changed. \(text)"
             messageHealth = .bad
+            showOpenSettingsButton = false
             return false
         case .cancelled:
             return false
