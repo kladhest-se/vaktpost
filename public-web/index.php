@@ -80,240 +80,48 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
       </div>
 
       <div class="feature">
-        <div class="device device--small" role="img" aria-label="The Clients screen: a search field, a filter, and rows of devices with their names, addresses and interfaces.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">Clients</span><span class="screen__time">14:02</span></div>
-            <div class="fakefield">Name, IP or MAC</div>
-            <div class="segments"><span class="is-on">All</span><span>Seen</span><span>Static</span></div>
-            <div class="slab">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">nas001.example.se</div>
-                    <div class="gw__stat">172.16.1.31 &nbsp; 00:11:32:c1:73:88</div>
-                  </div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">IN ARP</span>
-                </div>
-              </div>
-            </div>
-            <div class="slab" style="margin-bottom:0">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">Living Room Soundbar</div>
-                    <div class="gw__stat">172.16.1.56 &nbsp; VLAN_100</div>
-                  </div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">STATIC</span>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="device device--small">
+          <img class="device__shot" src="screenshots/ipad-clients-traffic.png"
+               alt="The Clients screen on iPad, traffic view: live bandwidth per device, sorted by bandwidth in, with a search field and interface picker.">
         </div>
         <h3>Clients, in one list</h3>
         <p>DHCP leases, ARP, and static mappings joined into one searchable inventory with offline MAC-vendor names and related traffic.</p>
       </div>
 
       <div class="feature">
-        <div class="device device--small" role="img" aria-label="The incident timeline: firewall, VPN and system events from separate logs merged into one prioritised, connected list with severity pills.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">Incident timeline</span><span class="screen__time">14:02</span></div>
-            <div class="segments"><span class="is-on">Incidents</span><span>Attention</span><span>All</span></div>
-            <div class="tl-row">
-              <div class="tl-rail">
-                <span class="tl-dot" style="background:var(--red)"></span>
-                <span class="tl-line"></span>
-              </div>
-              <div class="tl-body">
-                <div class="tl-head">
-                  <span class="tl-source">Firewall</span>
-                  <span class="pill" style="color:var(--red);background:color-mix(in srgb,var(--red) 18%,transparent)">ATTENTION</span>
-                </div>
-                <div class="tl-msg">block,in,4,,tcp,60,GUEST,any,44122,22801</div>
-                <div class="tl-time">Sep 13 19:51 · 2 hrs ago</div>
-              </div>
-            </div>
-            <div class="tl-row">
-              <div class="tl-rail">
-                <span class="tl-dot" style="background:var(--peach)"></span>
-                <span class="tl-line"></span>
-              </div>
-              <div class="tl-body">
-                <div class="tl-head">
-                  <span class="tl-source">VPN</span>
-                  <span class="pill" style="color:var(--peach);background:color-mix(in srgb,var(--peach) 18%,transparent)">ATTENTION</span>
-                </div>
-                <div class="tl-msg">TLS Error: cannot locate HMAC in packet</div>
-                <div class="tl-time">Sep 13 19:20 · 2 hrs ago</div>
-              </div>
-            </div>
-            <div class="tl-row">
-              <div class="tl-rail">
-                <span class="tl-dot" style="background:var(--yellow)"></span>
-              </div>
-              <div class="tl-body">
-                <div class="tl-head">
-                  <span class="tl-source">System</span>
-                  <span class="pill" style="color:var(--yellow);background:color-mix(in srgb,var(--yellow) 18%,transparent)">WARNING</span>
-                </div>
-                <div class="tl-msg">config warning: invalid path</div>
-                <div class="tl-time">Sep 13 20:23 · 1 hr ago</div>
-              </div>
-            </div>
-          </div>
+        <div class="device device--small">
+          <img class="device__shot" src="screenshots/ipad-incident-timeline.png"
+               alt="The incident timeline on iPad, split-view: the list of incidents on the left, a full log entry — traffic, matched rule, and raw log line — on the right.">
         </div>
         <h3>Logs and investigation</h3>
         <p>Filter, system, authentication, DHCP, and OpenVPN logs, plus a combined incident timeline and network diagnostics.</p>
       </div>
 
       <div class="feature">
-        <div class="device device--small" role="img" aria-label="The VPN screen: tabs for OpenVPN, WireGuard and IPsec, with each tunnel showing how many clients are connected.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">VPN</span><span class="screen__time">14:02</span></div>
-            <div class="segments"><span class="is-on">OpenVPN</span><span>WireGuard</span><span>IPsec</span></div>
-            <div class="slab">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">openvpn1 UDP4:1194</div>
-                    <div class="gw__stat">2 clients connected</div>
-                  </div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">2 CONNECTED</span>
-                </div>
-              </div>
-            </div>
-            <div class="slab" style="margin-bottom:0">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">wireguard1</div>
-                    <div class="gw__stat">1 of 1 connected &nbsp; 26s ago</div>
-                  </div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">UP</span>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="device device--small">
+          <img class="device__shot" src="screenshots/ipad-vpn.png"
+               alt="The VPN screen on iPad, split-view: OpenVPN server and client instances on the left, the selected instance's connected clients on the right.">
         </div>
         <h3>VPN and services</h3>
         <p>OpenVPN, WireGuard and IPsec on their own tabs, with connected peers under each instance.</p>
       </div>
 
       <div class="feature">
-        <div class="device device--small" role="img" aria-label="The Firewall rules screen for one interface, showing a drag handle beside each rule, labelled FROM/TO/PORT/DESC fields, a coloured separator between two rules, and a caption explaining where the ordering comes from.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">Firewall</span><span class="screen__time">14:02</span></div>
-            <div class="segments"><span>All</span><span class="is-on">LAN</span><span>GUEST</span></div>
-            <p class="reorder-hint">Drag ≡ to reorder. Position here is pfSense's own.</p>
-            <div class="reorder-row">
-              <span class="draghandle">≡</span>
-              <div class="slab">
-                <div class="slab__rail" style="background:var(--green)"></div>
-                <div class="slab__body">
-                  <div class="rulecard__head">
-                    <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">PASS</span>
-                    <span class="rulecard__proto">TCP</span>
-                    <span class="rulecard__iface">LAN</span>
-                    <span class="rulecard__chevron">›</span>
-                  </div>
-                  <div class="rfield"><b>FROM</b><span>any</span></div>
-                  <div class="rfield"><b>TO</b><span>alias_host_nas002</span></div>
-                  <div class="rfield"><b>DESC</b><span class="prose">Allow NAS backup</span></div>
-                </div>
-              </div>
-            </div>
-            <div class="reorder-row">
-              <span class="draghandle">≡</span>
-              <div class="separator" style="background:color-mix(in srgb,var(--teal) 18%,transparent)">Guest devices</div>
-            </div>
-            <div class="reorder-row" style="margin-bottom:0">
-              <span class="draghandle">≡</span>
-              <div class="slab" style="margin-bottom:0">
-                <div class="slab__rail" style="background:var(--red)"></div>
-                <div class="slab__body">
-                  <div class="rulecard__head">
-                    <span class="pill" style="color:var(--red);background:color-mix(in srgb,var(--red) 18%,transparent)">REJECT</span>
-                    <span class="rulecard__proto">ANY</span>
-                    <span class="rulecard__iface">GUEST</span>
-                    <span class="rulecard__chevron">›</span>
-                  </div>
-                  <div class="rfield"><b>FROM</b><span>GUEST net</span></div>
-                  <div class="rfield"><b>TO</b><span>any</span></div>
-                  <div class="rfield"><b>DESC</b><span class="prose">Block unapproved networks</span></div>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="device device--small">
+          <img class="device__shot" src="screenshots/ipad-firewall-rules.png"
+               alt="The Firewall rules screen on iPad, split-view: the LAN rule list with a pending-changes banner on the left, one rule's full detail — source, destination, and every rule field — on the right.">
         </div>
         <h3>Firewall editing</h3>
         <p>Create, edit, duplicate, delete, and reorder filter rules and NAT port forwards, including coloured separators and host, network, and port aliases.</p>
       </div>
 
       <div class="feature">
-        <div class="device device--small" role="img" aria-label="The Apply Changes screen listing two pending edits made through the app, each with a summary, its target, and a timestamp, above an Apply Changes button.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">Apply Changes</span><span class="screen__time">14:02</span></div>
-            <div class="group"><span>CHANGES TO APPLY</span><i></i></div>
-            <div class="slab" style="display:block;background:var(--surface0);padding:2px 12px">
-              <div class="pending">
-                <span class="pending__icon">↕</span>
-                <div style="flex:1">
-                  <div class="pending__name">Reordered rules on LAN</div>
-                  <div class="pending__meta">3 rules, 1 separator</div>
-                </div>
-                <span class="pending__time">14:01</span>
-              </div>
-              <div class="pending">
-                <span class="pending__icon">+</span>
-                <div style="flex:1">
-                  <div class="pending__name">Added rule to GUEST</div>
-                  <div class="pending__meta">Block unapproved networks</div>
-                </div>
-                <span class="pending__time">13:58</span>
-              </div>
-            </div>
-            <div class="applybar"><span>Apply Changes</span><span>2</span></div>
-          </div>
+        <div class="device device--small">
+          <img class="device__shot" src="screenshots/ipad-apply-changes.png"
+               alt="The Apply Changes screen on iPad listing pending edits made through the app, each with a summary and a timestamp, above an Apply Changes button.">
         </div>
         <h3>Staged changes</h3>
         <p>Edits stay inactive until Apply Changes. The review names identifiable Vaktpost edits and warns that pfSense may include other administrators' pending work.</p>
-      </div>
-
-      <div class="feature">
-        <div class="device device--small" role="img" aria-label="The audit trail: two verified entries, each with a summary, who made the change, and what it affected.">
-          <div class="screen">
-            <div class="screen__head"><span class="screen__title">Audit trail</span><span class="screen__time">14:02</span></div>
-            <div class="slab">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">Reordered rules on LAN</div>
-                    <div class="gw__stat">frossmant &nbsp; 3 rules, 1 separator</div>
-                  </div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">VERIFIED</span>
-                </div>
-              </div>
-            </div>
-            <div class="slab" style="margin-bottom:0">
-              <div class="slab__rail" style="background:var(--green)"></div>
-              <div class="slab__body">
-                <div class="gw">
-                  <div>
-                    <div class="gw__name">Added rule to GUEST</div>
-                    <div class="gw__stat">frossmant &nbsp; Block unapproved networks</div>
-                  </div>
-                  <span class="pill" style="color:var(--green);background:color-mix(in srgb,var(--green) 18%,transparent)">VERIFIED</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <h3>Audited actions</h3>
-        <p>Writes are sent once, read back, attributed to the authenticated pfSense user, and recorded in a protected per-firewall audit trail.</p>
       </div>
 
       <div class="feature">
@@ -323,6 +131,29 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
         </div>
         <h3>More than one firewall</h3>
         <p>Each profile has its own Keychain credential, TLS settings, refresh interval, monitoring history, and administration switch.</p>
+      </div>
+    </div>
+
+    <h3 class="ipad-callout">Also built for iPad</h3>
+    <p class="lede">Network, Aliases, VPN, and Incident Timeline get dedicated split-view layouts on iPad — the list and its detail side by side, not a phone screen stretched wider.</p>
+
+    <div class="features">
+      <div class="feature">
+        <div class="device device--small">
+          <img class="device__shot" src="screenshots/ipad-network.png"
+               alt="The Network screen on iPad, split-view: the interface list on the left, the selected interface's live throughput and history charts on the right.">
+        </div>
+        <h3>Network, side by side</h3>
+        <p>Pick an interface from the list and its charts stay on screen next to it, instead of pushing to a new page.</p>
+      </div>
+
+      <div class="feature">
+        <div class="device device--small">
+          <img class="device__shot" src="screenshots/ipad-aliases.png"
+               alt="The Aliases screen on iPad, split-view: the alias list on the left, the selected alias's members and a pending-changes note on the right.">
+        </div>
+        <h3>Aliases, side by side</h3>
+        <p>The same split-view treatment for host, network, and port aliases.</p>
       </div>
     </div>
   </div>
