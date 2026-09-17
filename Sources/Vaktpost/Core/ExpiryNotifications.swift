@@ -2,6 +2,15 @@ import Foundation
 import Observation
 import UserNotifications
 
+enum ExpiryNotificationReconcilePolicy {
+    /// An empty successful result is meaningful: it removes notifications for
+    /// certificates that no longer exist. Only a failed fetch lacks enough
+    /// information to change the existing schedule safely.
+    static func shouldReconcile(_ certificates: [CertificateInfo], fetchError: String?) -> Bool {
+        fetchError == nil
+    }
+}
+
 /// One notification the app intends to have delivered.
 ///
 /// Kept as a value type so the decision of *what* to schedule can be made and

@@ -9,6 +9,10 @@ First public release.
 
 ### Monitoring
 
+- Top Talkers persistence is ordered, reports storage failures, and cannot
+  restore an older snapshot after a newer save or clear.
+- Certificate notification cleanup now runs after a successful empty result,
+  and Top Talkers chooses a valid interface after switching firewalls.
 - Multiple pfSense CE and pfSense Plus firewalls, each with its own credential,
   certificate pin and refresh interval.
 - A configurable overview of health, interfaces, gateways, resources, services,
@@ -24,7 +28,6 @@ First public release.
 - System notices, certificates, ACME, Dynamic DNS, HAProxy, pfBlockerNG,
   package and firmware status.
 - Ping, traceroute, DNS lookup, a speed test and traffic investigation.
-- Download of the firewall's configuration file.
 
 ### Administration
 
@@ -56,7 +59,7 @@ First public release.
 ### Platforms and design
 
 - iPhone and iPad, with split-view layouts on iPad.
-- Apple Silicon Macs, as a Designed for iPad app with a ⌘R refresh command.
+- The first release is distributed for iPhone and iPad; Mac availability is disabled.
 - All four Catppuccin flavours, accent colours and alternate app icons.
 - Dynamic Type, and status never shown by colour alone.
 

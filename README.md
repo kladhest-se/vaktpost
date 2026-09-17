@@ -111,7 +111,7 @@ scenarios. To host it yourself, serve `public-web/` over HTTPS; see
 
 ## Requirements
 
-- iOS or iPadOS 17 or later, or an Apple Silicon Mac
+- iOS or iPadOS 17 or later
 - pfSense CE or pfSense Plus with the WebUI reachable over HTTPS
 
 ## Building from source
@@ -129,7 +129,6 @@ make build
 | `make build` | Compile without starting a simulator |
 | `make test` | Run the tests on a simulator |
 | `make ios-run` / `make ipados-run` | Run on an iPhone or iPad simulator |
-| `make mac-run TEAM_ID=…` | Run on this Apple Silicon Mac |
 | `make install DEVICE=… TEAM_ID=…` | Install on a connected device |
 | `make archive TEAM_ID=…` | Build an App Store archive |
 | `make web` | Serve the website on port 8000 |

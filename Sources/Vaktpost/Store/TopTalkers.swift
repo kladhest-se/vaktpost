@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// What one address did on one interface during one hour.
-struct TalkerStat: Codable, Identifiable, Equatable {
+struct TalkerStat: Codable, Identifiable, Equatable, Sendable {
     var address: String
     /// The best name the firewall knew at the time. Kept rather than resolved
     /// on display: a device that has since changed address or left the network
@@ -61,7 +61,7 @@ struct TalkerStat: Codable, Identifiable, Equatable {
 /// it is almost never a whole hour — and a "busiest device between 2 and 3am"
 /// derived from four captures at 2:05 is a different claim from one derived
 /// from two hundred captures spread across the hour. The screen says which.
-struct TalkerHour: Codable, Identifiable, Equatable {
+struct TalkerHour: Codable, Identifiable, Equatable, Sendable {
     /// Firewall this was recorded against.
     var serverID: String
     /// pfSense's internal handle — "lan", "opt3".
@@ -85,6 +85,50 @@ struct TalkerHour: Codable, Identifiable, Equatable {
     var span: TimeInterval { lastSample.timeIntervalSince(firstSample) }
 
     var busiest: [TalkerStat] { talkers.sorted { $0.peak > $1.peak } }
+}
+
+/// Chooses a valid interface after a firewall switch. A view can retain its
+/// local picker selection while the active firewall changes underneath it;
+/// carrying an interface that the new firewall has never recorded makes a
+/// populated history look empty.
+enum TopTalkerSelection {
+    static func resolve(preferred: String?, available: [String]) -> String? {
+        if let preferred, available.contains(preferred) { return preferred }
+        return available.first
+    }
+}
+
+/// One ordered persistence boundary for every Top Talkers snapshot.
+///
+/// Generation checks matter even with an actor: an older snapshot can be
+/// enqueued after a newer one. Once generation 12 has been requested,
+/// generation 11 must never be allowed to put old history back on disk.
+actor TopTalkerPersistenceWriter {
+    enum Outcome: Equatable, Sendable {
+        case written
+        case superseded
+    }
+
+    private let store: URL?
+    private var latestGeneration = 0
+
+    init(store: URL?) {
+        self.store = store
+    }
+
+    func save(_ snapshot: [String: TalkerHour], generation: Int) throws -> Outcome {
+        guard generation >= latestGeneration else { return .superseded }
+        latestGeneration = generation
+        guard let store else { return .written }
+
+        let data = try JSONEncoder().encode(snapshot)
+        try FileManager.default.createDirectory(
+            at: store.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: store, options: .atomic)
+        return .written
+    }
 }
 
 /// A rolling record of the busiest addresses per interface per hour.
@@ -129,14 +173,19 @@ final class TopTalkerRecorder {
     static let maxHours = 600
 
     private(set) var hours: [String: TalkerHour] = [:]
+    private(set) var persistenceError: String?
 
     private let store: URL?
+    private let writer: TopTalkerPersistenceWriter
     private var saveTask: Task<Void, Never>?
+    private var saveGeneration = 0
 
     init(directory: URL? = nil) {
         let base = directory ?? FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        store = base?.appendingPathComponent("vaktpost-top-talkers.json")
+        let resolvedStore = base?.appendingPathComponent("vaktpost-top-talkers.json")
+        store = resolvedStore
+        writer = TopTalkerPersistenceWriter(store: resolvedStore)
         load()
     }
 
@@ -257,20 +306,26 @@ final class TopTalkerRecorder {
     /// devices were busy and when is the most personal thing this app keeps.
     func clear() {
         hours = [:]
-        scheduleSave()
+        saveTask?.cancel()
+        saveTask = nil
+        save()
     }
 
     // MARK: Persistence
 
     private func load() {
-        guard let store, let data = try? Data(contentsOf: store) else { return }
-        guard let decoded = try? JSONDecoder().decode([String: TalkerHour].self, from: data) else {
+        guard let store, FileManager.default.fileExists(atPath: store.path) else { return }
+        do {
+            let data = try Data(contentsOf: store)
+            hours = try JSONDecoder().decode([String: TalkerHour].self, from: data)
+            persistenceError = nil
+        } catch {
             // A file this app cannot read is a file from an older shape of
             // this type. Losing a week of it is better than refusing to record
-            // anything until somebody deletes it by hand.
-            return
+            // anything, but the loss must not be silent.
+            hours = [:]
+            persistenceError = "Top Talkers history could not be opened: \(error.localizedDescription)"
         }
-        hours = decoded
     }
 
     /// Debounced, because recording happens on every capture and a capture can
@@ -285,31 +340,38 @@ final class TopTalkerRecorder {
         }
     }
 
-    /// Encode and write away from the main actor.
-    ///
-    /// This was doing both on the main actor every five seconds while a
-    /// capture loop was running. The record is a dictionary of value types, so
-    /// a copy can be handed to a detached task and encoded there — and the one
-    /// moment this cost the most was the one where the app is drawing a live
-    /// trace, which is the worst possible time to stall the main thread.
+    /// Send an immutable snapshot through the ordered background writer.
     func save() {
-        guard let store else { return }
         let snapshot = hours
-        Task.detached(priority: .utility) {
-            guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            try? FileManager.default.createDirectory(
-                at: store.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: store, options: .atomic)
+        saveGeneration += 1
+        let generation = saveGeneration
+        Task { [weak self, writer] in
+            do {
+                let outcome = try await writer.save(snapshot, generation: generation)
+                guard let self, generation == self.saveGeneration, outcome == .written else { return }
+                self.persistenceError = nil
+            } catch {
+                guard let self, generation == self.saveGeneration else { return }
+                self.persistenceError = "Top Talkers history could not be saved: \(error.localizedDescription)"
+            }
         }
     }
 
-    /// Encode and write here and now, for a test that needs the file on disk
-    /// before it reads it back.
-    func saveSynchronously() {
-        guard let store else { return }
-        guard let data = try? JSONEncoder().encode(hours) else { return }
-        try? FileManager.default.createDirectory(
-            at: store.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: store, options: .atomic)
+    /// Wait for the ordered writer, for tests and lifecycle boundaries that
+    /// need the file to be durable before continuing.
+    func saveSynchronously() async {
+        saveTask?.cancel()
+        saveTask = nil
+        let snapshot = hours
+        saveGeneration += 1
+        let generation = saveGeneration
+        do {
+            let outcome = try await writer.save(snapshot, generation: generation)
+            guard generation == saveGeneration, outcome == .written else { return }
+            persistenceError = nil
+        } catch {
+            guard generation == saveGeneration else { return }
+            persistenceError = "Top Talkers history could not be saved: \(error.localizedDescription)"
+        }
     }
 }

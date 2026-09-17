@@ -49,14 +49,10 @@ struct MoreView: View {
                     link("System Status", "server.rack", badge: 0) { SystemView() }
                     link("Certificates", "lock.doc", badge: store.expiringCertificateCount) { CertificatesView() }
                     link("ACME", "checkmark.seal", badge: store.stalledACME.count) { ACMEView() }
-                    // Contains everything on the firewall including
-                    // passwords and private keys, so this stays behind the
-                    // same administration gate as an actual write rather
-                    // than sitting next to Certificates and ACME as if it
-                    // were an equally low-stakes read.
-                    if store.canAdminister {
-                        link("Configuration Backup", "arrow.down.doc", badge: 0) { ConfigBackupView() }
-                    }
+                    // Configuration backup is intentionally hidden for the
+                    // first release. The implementation remains available for
+                    // later hardening without exposing its sensitive export in
+                    // the current navigation.
                 }
             }
             .padding(.horizontal, 16)

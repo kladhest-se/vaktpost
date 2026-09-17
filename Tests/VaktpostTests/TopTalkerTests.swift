@@ -283,7 +283,7 @@ final class TopTalkerTests: XCTestCase {
 
     // MARK: Persistence
 
-    func testTheRecordSurvivesARelaunch() {
+    func testTheRecordSurvivesARelaunch() async {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("toptalkers-\(UUID())")
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
@@ -292,7 +292,7 @@ final class TopTalkerTests: XCTestCase {
         first.record([host("172.16.1.10", in: 100, out: 0)], serverID: "FW1",
                      interface: "lan", interfaceName: "VLAN_100",
                      names: { _ in nil }, at: at(2, 5), calendar: calendar, now: at(2, 5))
-        first.saveSynchronously()
+        await first.saveSynchronously()
 
         let second = TopTalkerRecorder(directory: dir)
         XCTAssertEqual(second.history(serverID: "FW1", interface: "lan").count, 1)
@@ -314,5 +314,53 @@ final class TopTalkerTests: XCTestCase {
                  interface: "lan", interfaceName: "VLAN_100",
                  names: { _ in nil }, at: at(2, 5), calendar: calendar, now: at(2, 5))
         XCTAssertFalse(r.isEmpty(serverID: "FW1"))
+    }
+
+    func testAnOlderSaveCannotOverwriteANewerSnapshot() async throws {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("toptalkers-writer-\(UUID())")
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("history.json")
+        let writer = TopTalkerPersistenceWriter(store: file)
+
+        let newer = TalkerHour(serverID: "FW1", interface: "lan", interfaceName: "LAN",
+                               hour: at(3), firstSample: at(3), lastSample: at(3),
+                               samples: 2, talkers: [])
+        let older = TalkerHour(serverID: "FW1", interface: "lan", interfaceName: "LAN",
+                               hour: at(2), firstSample: at(2), lastSample: at(2),
+                               samples: 1, talkers: [])
+
+        let newerOutcome = try await writer.save([newer.id: newer], generation: 2)
+        let olderOutcome = try await writer.save([older.id: older], generation: 1)
+        XCTAssertEqual(newerOutcome, .written)
+        XCTAssertEqual(olderOutcome, .superseded)
+
+        let data = try Data(contentsOf: file)
+        let stored = try JSONDecoder().decode([String: TalkerHour].self, from: data)
+        XCTAssertEqual(stored.values.first?.hour, newer.hour)
+    }
+
+    func testPersistenceFailureIsVisible() async throws {
+        let file = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("toptalkers-blocked-\(UUID())")
+        addTeardownBlock { try? FileManager.default.removeItem(at: file) }
+        try Data("not a directory".utf8).write(to: file)
+
+        let recorder = TopTalkerRecorder(directory: file)
+        record(recorder, [host("172.16.1.10", in: 100, out: 0)], at: at(2, 5))
+        await recorder.saveSynchronously()
+
+        XCTAssertNotNil(recorder.persistenceError)
+    }
+
+    func testSelectionFallsBackWhenTheNewFirewallLacksTheOldInterface() {
+        XCTAssertEqual(
+            TopTalkerSelection.resolve(preferred: "opt9", available: ["lan", "wan"]),
+            "lan"
+        )
+        XCTAssertEqual(
+            TopTalkerSelection.resolve(preferred: "wan", available: ["lan", "wan"]),
+            "wan"
+        )
     }
 }

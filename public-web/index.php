@@ -55,11 +55,11 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
         <a class="btn btn--ghost" href="#features">See the features</a>
         <a class="btn btn--ghost" href="https://github.com/kladhest-se/vaktpost">View on GitHub</a>
       </div>
-      <a class="store-badge" href="#">Coming to the App Store — iPhone, iPad &amp; Mac</a>
+      <a class="store-badge" href="#">Coming to the App Store — iPhone &amp; iPad</a>
       <p class="status-line">
         <a class="version-badge" href="https://github.com/kladhest-se/vaktpost/tags" aria-label="Latest version <?= htmlspecialchars($latestVersion, ENT_QUOTES, 'UTF-8') ?>"><span>latest</span><b>v<?= htmlspecialchars($latestVersion, ENT_QUOTES, 'UTF-8') ?></b></a>
         <span class="dot" aria-hidden="true"></span>
-        <span>iOS 17+ · Apple Silicon Macs</span>
+        <span>iOS and iPadOS 17+</span>
         <span class="dot" aria-hidden="true"></span>
         <span><b>Monitor-only by default</b> — nothing is installed on pfSense</span>
       </p>

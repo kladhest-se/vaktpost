@@ -36,6 +36,14 @@ final class ExpiryNotificationTests: XCTestCase {
                                 now: now(), calendar: calendar)
     }
 
+    func testSuccessfulEmptyCertificateRefreshStillReconciles() {
+        XCTAssertTrue(ExpiryNotificationReconcilePolicy.shouldReconcile([], fetchError: nil))
+    }
+
+    func testFailedCertificateRefreshPreservesExistingSchedule() {
+        XCTAssertFalse(ExpiryNotificationReconcilePolicy.shouldReconcile([], fetchError: "offline"))
+    }
+
     // MARK: What gets scheduled
 
     func testAllFiveThresholdsAreScheduledForADistantExpiry() {

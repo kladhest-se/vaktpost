@@ -1080,12 +1080,14 @@ extension DashboardStore {
     /// more code than reconciling, and the reconcile is a local operation with
     /// nothing on the wire.
     ///
-    /// Skipped when the certificate section failed. An empty list from a
-    /// failed fetch looks exactly like a firewall with no certificates, and
-    /// acting on it would cancel every pending notification for this server
-    /// because one request timed out.
+    /// Skipped when the certificate section failed. A successful empty list
+    /// must still reconcile: it means certificates were removed and their old
+    /// notifications are now stale.
     func scheduleExpiryNotifications() {
-        guard errors[.certificates] == nil, !certificates.isEmpty else { return }
+        guard ExpiryNotificationReconcilePolicy.shouldReconcile(
+            certificates,
+            fetchError: errors[.certificates]
+        ) else { return }
         let certificates = self.certificates
         let id = profile.id.uuidString
         let name = profile.displayName

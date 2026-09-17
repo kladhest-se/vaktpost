@@ -109,8 +109,17 @@ final class LatestRelease
             'timeout' => self::TIMEOUT,
             'ignore_errors' => true,
         ]]);
-        $body = @file_get_contents($url, false, $context);
-        $status = isset($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $m) === 1
+        $stream = @fopen($url, 'rb', false, $context);
+        if (!is_resource($stream)) {
+            return null;
+        }
+        $body = stream_get_contents($stream);
+        $metadata = stream_get_meta_data($stream);
+        fclose($stream);
+
+        $responseHeaders = $metadata['wrapper_data'] ?? [];
+        $statusLine = is_array($responseHeaders) ? ($responseHeaders[0] ?? '') : $responseHeaders;
+        $status = is_string($statusLine) && preg_match('/\s(\d{3})\s/', $statusLine, $m) === 1
             ? (int) $m[1] : 0;
         return is_string($body) && $status === 200 ? $body : null;
     }

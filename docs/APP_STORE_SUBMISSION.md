@@ -13,7 +13,7 @@ The website is `https://vaktpost.kladhest.se`.
 | Usage descriptions | Face ID and local network, in `Info.plist` |
 | App icon | 1024 × 1024, no transparency, in `Resources/Assets.xcassets` |
 | Screenshots | `public-web/app-store-screenshots/` — 6.9-inch iPhone and 13-inch iPad |
-| Mac availability | Designed for iPad, enabled in `Config/iOS.xcconfig` |
+| Mac availability | Disabled for 1.0.0 in `Config/iOS.xcconfig` and App Store Connect |
 | Licence compatibility | [APP_STORE_EXCEPTION.md](APP_STORE_EXCEPTION.md) |
 
 ## App information
@@ -79,9 +79,10 @@ steps in the note, and confirm the review profile loads every tab.
 
 ## Mac
 
-Under **Pricing and Availability**, leave **Make this app available on Mac
-computers with Apple silicon** enabled. Run `make mac-run` first and check the
-ping and traceroute tools, which have not yet been tried on macOS.
+Under **Pricing and Availability**, turn off **Make this app available on Mac
+computers with Apple silicon**. The build setting also disables Designed for
+iPad availability. Reconsider Mac distribution only after a separate macOS
+validation pass, including ping and traceroute.
 
 ## Each release
 

@@ -10,7 +10,7 @@
 # xcodebuild invocations, which is why `build` must stay the target that
 # compiles without booting anything.
 
-.PHONY: help project open build lint test ios-run ipados-run mac-run install archive clean oui \
+.PHONY: help project open build lint test ios-run ipados-run install archive clean oui \
 	destinations devices teams set-team web web-check
 
 # Per-machine settings: TEAM_ID, and DEVICE if you like. Written by
@@ -27,7 +27,6 @@ help:
 	@echo "  make test            the app's tests, on a simulator"
 	@echo "  make ios-run         build and launch on an iPhone simulator, logs here"
 	@echo "  make ipados-run      build and launch on an iPad simulator, logs here"
-	@echo "  make mac-run         build and launch on this Mac as Designed for iPad"
 	@echo "  make install         build signed and install on the device in DEVICE"
 	@echo "  make archive         archive, signed, with a real build number"
 	@echo "  make open            generate and open the project in Xcode"
@@ -37,7 +36,7 @@ help:
 	@echo "  make set-team TEAM_ID=…  remember the team on this Mac (local.mk)"
 	@echo "  make destinations    simulators available to run on"
 	@echo ""
-	@echo "  install, archive and mac-run need TEAM_ID; install also needs DEVICE."
+	@echo "  install and archive need TEAM_ID; install also needs DEVICE."
 	@echo "  Set TEAM_ID once with make set-team, or pass it each time."
 	@echo "  Both are printed by the commands above:"
 	@echo "    make install DEVICE=FA371128-… TEAM_ID=ABCDE12345"
@@ -260,48 +259,6 @@ ios-run: build
 
 ipados-run: build
 	$(call run_on_simulator,$(IPAD_SIM_ID),iPad Pro or iPad Air 13-inch)
-
-# The iPad binary, run natively on this Mac.
-#
-# Not a simulator and not Catalyst: the same arm64 iphoneos build that ships,
-# launched under macOS. That makes it a signed build — there is no unsigned
-# path to running an iOS binary outside the simulator — and the Mac has to be
-# a registered device on the team, which -allowProvisioningDeviceRegistration
-# takes care of on the first run.
-#
-# `open` will not launch the iOS bundle itself ("incorrect executable
-# format"): macOS runs an iPad app only from the wrapper Xcode and the App
-# Store install it in — an outer .app holding the real one under Wrapper/, with
-# a WrappedBundle symlink to it. The recipe builds that wrapper under build/
-# (ignored) and opens it, and points at Xcode if macOS still refuses.
-#
-# Intel Macs cannot run it at all, so this says so rather than letting
-# xcodebuild print a destination list.
-mac-run:
-	@$(REQUIRE_TEAM)
-	@test "$$(uname -m)" = arm64 || { echo "Designed for iPad needs an Apple Silicon Mac."; exit 1; }
-	@$(MAKE) --no-print-directory project
-	@set -e; $(bump_build); \
-	dest='platform=macOS,arch=arm64,variant=Designed for iPad'; \
-	xcodebuild build -project $(PROJECT) -scheme $(SCHEME) \
-		-destination "$$dest" \
-		-allowProvisioningUpdates -allowProvisioningDeviceRegistration \
-		DEVELOPMENT_TEAM=$(TEAM_ID) CODE_SIGN_STYLE=Automatic \
-		CURRENT_PROJECT_VERSION=$$build -quiet; \
-	settings=$$(xcodebuild -project $(PROJECT) -scheme $(SCHEME) \
-		-destination "$$dest" -showBuildSettings 2>/dev/null); \
-	app="$$(echo "$$settings" | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $$2; exit}')/Vaktpost.app"; \
-	test -d "$$app" || { echo "No app at $$app"; exit 1; }; \
-	wrap="$(CURDIR)/build/mac-run/Vaktpost.app"; \
-	rm -rf "$$wrap"; mkdir -p "$$wrap/Wrapper"; \
-	cp -R "$$app" "$$wrap/Wrapper/"; \
-	ln -s Wrapper/Vaktpost.app "$$wrap/WrappedBundle"; \
-	echo "  launching Vaktpost $$version ($$build) on this Mac"; \
-	open "$$wrap" || { \
-		echo ""; \
-		echo "  macOS refused the wrapped app. Run it from Xcode instead:"; \
-		echo "    make open, choose the 'My Mac (Designed for iPad)' destination, press Run."; \
-		exit 1; }
 
 install:
 	@$(REQUIRE_TEAM)

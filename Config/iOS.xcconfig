@@ -4,13 +4,11 @@ IPHONEOS_DEPLOYMENT_TARGET = 17.0
 TARGETED_DEVICE_FAMILY = 1,2
 SUPPORTS_MACCATALYST = NO
 
-// The unmodified iPad binary on Apple Silicon Macs ("Designed for iPad").
-// Xcode's default is already YES; stated so it cannot be switched off by a
-// changed default, and so it sits next to the Catalyst line it is not.
-// Store availability is a separate checkbox in App Store Connect under
-// Pricing and Availability. Runtime differences go through `Platform.isMac`.
-// Not visionOS: nothing here has been looked at on a headset.
-SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES
+// Mac distribution is deliberately disabled for 1.0.0. The iPad build has
+// not completed its separate Apple Silicon Mac validation pass, so it must
+// not appear as a Designed for iPad app. App Store Connect's corresponding
+// Pricing and Availability checkbox must also remain off.
+SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO
 SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO
 
 // Stated explicitly. An xcconfig applied at project level can leave this empty

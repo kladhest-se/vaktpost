@@ -20,7 +20,10 @@ struct TopTalkersView: View {
     }
 
     private var selected: String? {
-        interface ?? recorded.first?.interface
+        TopTalkerSelection.resolve(
+            preferred: interface,
+            available: recorded.map(\.interface)
+        )
     }
 
     private var hours: [TalkerHour] {
@@ -31,6 +34,11 @@ struct TopTalkersView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                if let persistenceError = store.topTalkers.persistenceError {
+                    Notice(symbol: "exclamationmark.triangle",
+                           title: "History storage unavailable",
+                           detail: persistenceError)
+                }
                 if recorded.isEmpty {
                     Notice(symbol: "clock.arrow.circlepath",
                            title: "Nothing recorded yet",
