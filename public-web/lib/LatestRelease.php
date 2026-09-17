@@ -39,11 +39,6 @@ final class LatestRelease
         return $found === '' ? $fallback : $found;
     }
 
-    public static function tagsURL(): string
-    {
-        return 'https://github.com/' . self::REPO . '/tags';
-    }
-
     private static function readCache(string $path): ?string
     {
         $raw = @file_get_contents($path);

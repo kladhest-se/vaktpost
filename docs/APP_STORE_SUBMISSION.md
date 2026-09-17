@@ -1,7 +1,7 @@
 # App Store submission
 
 What App Store Connect needs for Vaktpost, and where each answer comes from.
-Values marked **(fill in)** depend on where the website is hosted.
+The website is `https://vaktpost.kladhest.se`.
 
 ## What the project already provides
 
@@ -38,9 +38,9 @@ for the Mac build and does not change the store listing.
 
 | Field | Value |
 | --- | --- |
-| Privacy policy URL | `https://<website>/privacy.php` **(fill in)** |
+| Privacy policy URL | `https://vaktpost.kladhest.se/privacy.php` |
 | Support URL | `https://github.com/kladhest-se/vaktpost/issues` |
-| Marketing URL | `https://<website>/` **(fill in)** |
+| Marketing URL | `https://vaktpost.kladhest.se/` |
 
 ## App Privacy
 
@@ -60,7 +60,7 @@ synthetic one.
 - **Notes:**
 
   > Vaktpost is a client for pfSense firewalls. For review, add a firewall
-  > with the address `https://<website>` **(fill in)**, username `review` and
+  > with the address `https://vaktpost.kladhest.se`, username `review` and
   > the password above. This is a synthetic test endpoint on the project's own
   > website; it returns sample data and never connects to a real firewall.
   >

@@ -4,7 +4,6 @@ declare(strict_types=1);
 // The release this page describes, and the badge's fallback when GitHub has no
 // version tag yet or cannot be reached.
 $releaseVersion = '1.0.0';
-$repoURL = 'https://github.com/kladhest-se/vaktpost';
 require __DIR__ . '/lib/LatestRelease.php';
 $latestVersion = LatestRelease::version($releaseVersion);
 $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
@@ -39,7 +38,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
       <a href="#top" aria-current="page">App</a>
       <a href="lab.php">XMLAPI Lab</a>
       <a href="privacy.php">Privacy</a>
-      <a href="<?= htmlspecialchars($repoURL, ENT_QUOTES, 'UTF-8') ?>">GitHub</a>
+      <a href="https://github.com/kladhest-se/vaktpost">GitHub</a>
     </nav>
   </div>
 </header>
@@ -54,11 +53,11 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
       <div class="actions">
         <a class="btn btn--solid" href="#setup">Set it up</a>
         <a class="btn btn--ghost" href="#features">See the features</a>
-        <a class="btn btn--ghost" href="<?= htmlspecialchars($repoURL, ENT_QUOTES, 'UTF-8') ?>">View on GitHub</a>
+        <a class="btn btn--ghost" href="https://github.com/kladhest-se/vaktpost">View on GitHub</a>
       </div>
       <a class="store-badge" href="#">Coming to the App Store — iPhone, iPad &amp; Mac</a>
       <p class="status-line">
-        <a class="version-badge" href="<?= htmlspecialchars(LatestRelease::tagsURL(), ENT_QUOTES, 'UTF-8') ?>" aria-label="Latest version <?= htmlspecialchars($latestVersion, ENT_QUOTES, 'UTF-8') ?>"><span>latest</span><b>v<?= htmlspecialchars($latestVersion, ENT_QUOTES, 'UTF-8') ?></b></a>
+        <a class="version-badge" href="https://github.com/kladhest-se/vaktpost/tags" aria-label="Latest version <?= htmlspecialchars($latestVersion, ENT_QUOTES, 'UTF-8') ?>"><span>latest</span><b>v<?= htmlspecialchars($latestVersion, ENT_QUOTES, 'UTF-8') ?></b></a>
         <span class="dot" aria-hidden="true"></span>
         <span>iOS 17+ · Apple Silicon Macs</span>
         <span class="dot" aria-hidden="true"></span>
@@ -155,7 +154,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     <p class="lede">Nothing to install on the firewall. Vaktpost talks to pfSense's built-in XML-RPC service, so setup is an account and a certificate.</p>
     <ol class="steps">
       <li><p>Set <strong>System → Advanced → Admin Access → Max Processes</strong> to 5 or more. XML-RPC competes with the webConfigurator for PHP workers, and the default leaves too few.</p></li>
-      <li><p>Create a user under <strong>System → User Manager</strong> and give it the <strong>System - HA node sync</strong> privilege — the one that makes XML-RPC work. Use a dedicated account rather than your own login: it is administrator-equivalent, and the password is stored on the phone. <a href="<?= htmlspecialchars($repoURL, ENT_QUOTES, 'UTF-8') ?>/blob/main/SECURITY.md">What that credential can do, and how it's protected</a>.</p></li>
+      <li><p>Create a user under <strong>System → User Manager</strong> and give it the <strong>System - HA node sync</strong> privilege — the one that makes XML-RPC work. Use a dedicated account rather than your own login: it is administrator-equivalent, and the password is stored on the phone. <a href="https://github.com/kladhest-se/vaktpost/blob/main/SECURITY.md">What that credential can do, and how it's protected</a>.</p></li>
       <li><p>Open Vaktpost, enter the firewall address, that username and its password. Allow <strong>local network</strong> access when asked — without it, a firewall on your network is unreachable.</p></li>
       <li><p>Trust the certificate. pfSense's default one is self-signed, so on first connection Vaktpost shows its SHA-256 fingerprint. Compare it with <strong>System → Certificates</strong> in the WebUI, then pin it. After that only that exact certificate is accepted; a different one is blocked until you review it in the firewall's settings.</p></li>
       <li><p>Keep the profile in <strong>monitor-only mode</strong> unless you need administration. Firewall edits are staged and use pfSense's global Apply Changes workflow.</p></li>
@@ -176,8 +175,8 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 <section id="build">
   <div class="wrap">
     <h2>Building it</h2>
-    <p>The project is SwiftUI, targets iOS 17, and uses <a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a>. Clone <a href="<?= htmlspecialchars($repoURL, ENT_QUOTES, 'UTF-8') ?>">the source from GitHub</a>, run <code>make build</code>, and pass your development team when installing on a device.</p>
-    <p>Vaktpost is free software under the <a href="<?= htmlspecialchars($repoURL, ENT_QUOTES, 'UTF-8') ?>/blob/main/LICENSE">GNU GPL, version 3 or later</a>. The Catppuccin palettes are used under their MIT licence. Everything else — the layout, the design language, the code — is original to this project.</p>
+    <p>The project is SwiftUI, targets iOS 17, and uses <a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a>. Clone <a href="https://github.com/kladhest-se/vaktpost">the source from GitHub</a>, run <code>make build</code>, and pass your development team when installing on a device.</p>
+    <p>Vaktpost is free software under the <a href="https://github.com/kladhest-se/vaktpost/blob/main/LICENSE">GNU GPL, version 3 or later</a>. The Catppuccin palettes are used under their MIT licence. Everything else — the layout, the design language, the code — is original to this project.</p>
     <div class="actions" style="margin-top:1.6rem">
       <a class="btn btn--solid" href="#setup">Review setup</a>
       <a class="btn btn--ghost" href="https://docs.netgate.com/pfsense/en/latest/">pfSense docs</a>
@@ -190,7 +189,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 <footer>
   <div class="wrap">
     <p>Vaktpost is not affiliated with Netgate or with the Catppuccin project. pfSense is a trademark of Netgate.</p>
-    <p><a href="privacy.php">Privacy policy</a> · <a href="<?= htmlspecialchars($repoURL, ENT_QUOTES, 'UTF-8') ?>/issues">Support</a> · <a href="<?= htmlspecialchars($repoURL, ENT_QUOTES, 'UTF-8') ?>">GitHub</a></p>
+    <p><a href="privacy.php">Privacy policy</a> · <a href="https://github.com/kladhest-se/vaktpost/issues">Support</a> · <a href="https://github.com/kladhest-se/vaktpost">GitHub</a></p>
     <p>Made in Stockholm.</p>
     <div class="actions" style="margin-top:1.2rem">
       <a class="btn btn--ghost" href="https://ko-fi.com/R7P325M7NE">Support me on Ko-fi</a>

@@ -79,8 +79,8 @@ for 1.0:
 Vaktpost has no accounts, analytics, advertising or tracking, and talks to no
 server other than the firewalls you add. Passwords are kept in the Keychain on
 this device only. The optional speed test is run by the firewall itself
-against Cloudflare's speed-test service. The full policy is published on the project website
-(`privacy.php`, source in [public-web/](public-web/privacy.php)).
+against Cloudflare's speed-test service. Read the full
+[privacy policy](https://vaktpost.kladhest.se/privacy.php).
 
 ## Firewall setup
 
@@ -102,9 +102,10 @@ firewall on your network. Without it, local firewalls are unreachable.
 
 ### Try it without a firewall
 
-The project website hosts a synthetic firewall for testing. Use the website's
-own address as the firewall address, `review` as the username and
-`vaktpost-demo` as the password. Its **XMLAPI Lab** page lists the other
+The [project website](https://vaktpost.kladhest.se) hosts a synthetic firewall
+for testing. Add `https://vaktpost.kladhest.se` as the firewall address, with
+`review` as the username and `vaktpost-demo` as the password. The
+[XMLAPI Lab](https://vaktpost.kladhest.se/lab.php) page lists the other
 scenarios. To host it yourself, serve `public-web/` over HTTPS; see
 [public-web/README.md](public-web/README.md).
 
