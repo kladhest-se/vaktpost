@@ -135,7 +135,8 @@ make build
 | `make web` | Serve the website on port 8000 |
 
 `make devices`, `make teams` and `make destinations` list the values those
-commands need. The Xcode project is generated from `project.yml` and
+commands need. Run `make set-team TEAM_ID=…` once to store your team in the
+untracked `local.mk`, after which the signing commands need no argument. The Xcode project is generated from `project.yml` and
 `Config/*.xcconfig`, and is not committed.
 
 ### Project layout

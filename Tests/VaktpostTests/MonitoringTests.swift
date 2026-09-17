@@ -1,4 +1,5 @@
 import XCTest
+import os
 @testable import Vaktpost
 
 @MainActor
@@ -140,20 +141,18 @@ final class MonitoringTests: XCTestCase {
         let a = ServerProfile(baseURL: "https://a.example")
         let b = ServerProfile(baseURL: "https://b.example")
         var clock = Date(timeIntervalSince1970: 1000)
-        // Safe despite the warning this silences: every mutation happens
-        // between two `await store.refresh(...)` calls in this one test,
-        // never while the closure is actually running, so there's no real
-        // race for the compiler's static analysis to catch — just nothing
-        // in the type system proves it the way it would for an actor.
-        nonisolated(unsafe) var failA = false
+        // The fetch closure is @Sendable, so the switch it reads is a lock
+        // rather than a captured var. `nonisolated(unsafe)` no longer
+        // silences a mutation after capture (Xcode 27 warns).
+        let failA = OSAllocatedUnfairLock(initialState: false)
         let store = FleetStore(now: { clock }) { profile in
-            if failA && profile.id == a.id { throw Failure.offline }
+            if failA.withLock({ $0 }) && profile.id == a.id { throw Failure.offline }
             return FleetReading(memoryUsage: 40)
         }
         await store.refresh([a, b])
         let firstDate = store.snapshots[a.id]?.lastSuccess
         clock = clock.addingTimeInterval(60)
-        failA = true
+        failA.withLock { $0 = true }
         await store.refresh([a, b])
         XCTAssertEqual(store.snapshots[a.id]?.lastSuccess, firstDate)
         XCTAssertEqual(store.snapshots[a.id]?.reading?.memoryUsage, 40)
@@ -190,17 +189,17 @@ final class MonitoringTests: XCTestCase {
     func testFleetCPUUsesSeparateBaselinesAndRemovedServersAreDiscarded() async {
         let a = ServerProfile(baseURL: "https://a.example")
         let b = ServerProfile(baseURL: "https://b.example")
-        // Same reasoning as failA above: mutated only between sequential
-        // awaited refreshes, never concurrently with the closure running.
-        nonisolated(unsafe) var second = false
+        // A lock for the same reason as failA above.
+        let secondReading = OSAllocatedUnfairLock(initialState: false)
         let store = FleetStore { profile in
             let offset = profile.id == a.id ? 0 : 10000
+            let second = secondReading.withLock { $0 }
             return FleetReading(cpuTicksTotal: offset + (second ? 1100 : 1000),
                                 cpuTicksIdle: offset + (second ? 940 : 900))
         }
         await store.refresh([a, b])
         XCTAssertNil(store.snapshots[a.id]?.reading?.cpuUsage)
-        second = true
+        secondReading.withLock { $0 = true }
         await store.refresh([a, b])
         XCTAssertEqual(store.snapshots[a.id]?.reading?.cpuUsage ?? -1, 60, accuracy: 0.001)
         XCTAssertEqual(store.snapshots[b.id]?.reading?.cpuUsage ?? -1, 60, accuracy: 0.001)

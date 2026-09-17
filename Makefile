@@ -11,7 +11,12 @@
 # compiles without booting anything.
 
 .PHONY: help project open build lint test ios-run ipados-run mac-run install archive clean oui \
-	destinations devices teams web web-check
+	destinations devices teams set-team web web-check
+
+# Per-machine settings: TEAM_ID, and DEVICE if you like. Written by
+# `make set-team`, never committed (see .gitignore). A value on the command
+# line or in the environment still wins over this file.
+-include local.mk
 
 PROJECT := Vaktpost.xcodeproj
 SCHEME  := Vaktpost
@@ -29,9 +34,11 @@ help:
 	@echo ""
 	@echo "  make devices         attached iPhones and iPads"
 	@echo "  make teams           signing teams this Mac can use"
+	@echo "  make set-team TEAM_ID=…  remember the team on this Mac (local.mk)"
 	@echo "  make destinations    simulators available to run on"
 	@echo ""
 	@echo "  install, archive and mac-run need TEAM_ID; install also needs DEVICE."
+	@echo "  Set TEAM_ID once with make set-team, or pass it each time."
 	@echo "  Both are printed by the commands above:"
 	@echo "    make install DEVICE=FA371128-… TEAM_ID=ABCDE12345"
 	@echo ""
@@ -90,6 +97,7 @@ REQUIRE_TEAM = \
 		fi; \
 		echo ""; \
 		echo "  make teams                       lists the team ids on this Mac"; \
+		echo "  make set-team TEAM_ID=ABCDE12345 remembers one for this Mac"; \
 		echo "  make $@ TEAM_ID=ABCDE12345"; \
 		exit 1; \
 	fi
@@ -330,6 +338,25 @@ teams:
 	@echo ""
 	@echo "  Use the left column. The code in parentheses in the certificate"
 	@echo "  name is the certificate id, not the team id."
+
+# Remember the team for this checkout, so install, archive and mac-run need no
+# argument. Validated first: a team id is ten uppercase letters and digits, and
+# a certificate id pasted by mistake is the usual wrong answer.
+set-team:
+	@if [ -z "$(TEAM_ID)" ]; then \
+		echo "Usage: make set-team TEAM_ID=ABCDE12345"; \
+		echo "       make teams   lists the team ids on this Mac"; \
+		exit 1; \
+	fi
+	@printf '%s' "$(TEAM_ID)" | grep -qE '^[A-Z0-9]{10}$$' || { \
+		echo "'$(TEAM_ID)' is not a team id (ten capital letters and digits)."; \
+		echo "Use the left column of make teams."; exit 1; }
+	@if [ -f local.mk ] && grep -q '^TEAM_ID' local.mk; then \
+		sed -i.bak 's/^TEAM_ID.*/TEAM_ID ?= $(TEAM_ID)/' local.mk && rm -f local.mk.bak; \
+	else \
+		printf 'TEAM_ID ?= %s\n' "$(TEAM_ID)" >> local.mk; \
+	fi
+	@echo "Team $(TEAM_ID) saved in local.mk (not committed)."
 
 destinations:
 	@xcrun simctl list devices available 2>/dev/null | grep -E 'iPhone|iPad' | sed 's/^ */  /'

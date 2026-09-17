@@ -23,3 +23,6 @@ build/
 # made on this Mac". Committing it would make every build produce a diff, and
 # two people building the same commit would disagree about which build it is.
 build.number
+
+# Per-machine make settings (TEAM_ID, DEVICE), written by `make set-team`.
+local.mk
