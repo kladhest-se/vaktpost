@@ -5,6 +5,17 @@ import os.log
 
 private let biometricLog = OSLog(subsystem: "se.kladhest.vaktpost", category: "Biometric")
 
+/// Keeps optional biometric protection from becoming a prerequisite for
+/// configuring a firewall. The setting is deliberately effective only while
+/// iOS can actually evaluate biometrics; this matches the app-lock boundary
+/// and avoids locking credential maintenance on simulators and devices where
+/// Face ID or Touch ID is not enrolled.
+enum CredentialProtectionPolicy {
+    static func requiresAuthorization(isEnabled: Bool, canUseBiometrics: Bool) -> Bool {
+        isEnabled && canUseBiometrics
+    }
+}
+
 @MainActor
 enum BiometricAuth {
     private static let enabledKey = "biometricAuth.enabled"

@@ -5,6 +5,28 @@ import XCTest
 /// These pin the translation from that fault to something a person can act on.
 final class AuthenticationTests: XCTestCase {
 
+    func testCredentialActionsDoNotRequireUnavailableOrDisabledBiometry() {
+        XCTAssertFalse(CredentialProtectionPolicy.requiresAuthorization(
+            isEnabled: false,
+            canUseBiometrics: false
+        ))
+        XCTAssertFalse(CredentialProtectionPolicy.requiresAuthorization(
+            isEnabled: false,
+            canUseBiometrics: true
+        ))
+        XCTAssertFalse(CredentialProtectionPolicy.requiresAuthorization(
+            isEnabled: true,
+            canUseBiometrics: false
+        ))
+    }
+
+    func testCredentialActionsRequireUsableOptedInBiometry() {
+        XCTAssertTrue(CredentialProtectionPolicy.requiresAuthorization(
+            isEnabled: true,
+            canUseBiometrics: true
+        ))
+    }
+
     private func fault(_ code: Int, _ message: String) -> String {
         """
         <?xml version="1.0"?>

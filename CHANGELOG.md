@@ -43,6 +43,8 @@ First public release.
 ### Security and privacy
 
 - Passwords stored in the Keychain, available only on this device.
+- Login, password replacement and explicit password reveal remain available
+  when optional biometric protection is disabled or unavailable.
 - Certificate pinning with an explicit trust decision for self-signed
   certificates; a changed certificate is blocked until reviewed.
 - Face ID or Touch ID lock.

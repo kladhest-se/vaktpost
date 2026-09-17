@@ -324,8 +324,9 @@ struct ServerEditView: View {
             }
         }
         // Never pull a saved administrator password into view state merely
-        // because the editor appeared. A successful biometric prompt is the
-        // only path that reveals it.
+        // because the editor appeared. It is loaded only when the person taps
+        // reveal, with a fresh prompt when optional biometric protection is
+        // enabled and available.
         .onDisappear {
             password = ""
             revealedPassword = nil
@@ -618,6 +619,12 @@ struct ServerEditView: View {
 
     private func authenticateToRevealPassword() async {
         guard !isAuthenticatingCredential else { return }
+
+        guard credentialProtectionRequired else {
+            revealPassword()
+            return
+        }
+
         isAuthenticatingCredential = true
         defer { isAuthenticatingCredential = false }
 
@@ -626,18 +633,7 @@ struct ServerEditView: View {
             allowPasscode: false
         ) {
         case .success:
-            if password.isEmpty, isExisting, Keychain.hasPassword(for: profile.id) {
-                guard let stored = Keychain.password(for: profile.id) else {
-                    message = "The password is unavailable while the device is locked."
-                    messageHealth = .bad
-                    return
-                }
-                password = stored
-                revealedPassword = stored
-            }
-            showKey = true
-            message = nil
-            showOpenSettingsButton = false
+            revealPassword()
         case let .unavailable(text):
             showKey = false
             message = "Password remains hidden. \(text) Set up Face ID or Touch ID in "
@@ -656,6 +652,16 @@ struct ServerEditView: View {
 
     private func authenticateToReplacePassword() async -> Bool {
         guard !isAuthenticatingCredential else { return false }
+
+        // Biometry protects this action only when the user opted in and iOS
+        // can provide it. Keychain storage and ordinary firewall sign-in do
+        // not depend on biometric enrollment.
+        guard credentialProtectionRequired else {
+            message = nil
+            showOpenSettingsButton = false
+            return true
+        }
+
         isAuthenticatingCredential = true
         defer { isAuthenticatingCredential = false }
 
@@ -753,6 +759,32 @@ struct ServerEditView: View {
                 messageHealth = .bad
             }
         }
+    }
+}
+
+private extension ServerEditView {
+    var credentialProtectionRequired: Bool {
+        let enabled = BiometricAuth.isEnabled
+        let available = enabled && BiometricAuth.canUseBiometrics()
+        return CredentialProtectionPolicy.requiresAuthorization(
+            isEnabled: enabled,
+            canUseBiometrics: available
+        )
+    }
+
+    func revealPassword() {
+        if password.isEmpty, isExisting, Keychain.hasPassword(for: profile.id) {
+            guard let stored = Keychain.password(for: profile.id) else {
+                message = "The password is unavailable while the device is locked."
+                messageHealth = .bad
+                return
+            }
+            password = stored
+            revealedPassword = stored
+        }
+        showKey = true
+        message = nil
+        showOpenSettingsButton = false
     }
 }
 

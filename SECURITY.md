@@ -33,9 +33,12 @@ Each firewall password is held in a separate Keychain item using
 does not migrate to a replacement device, and is excluded from backup restore.
 Vaktpost does not export credentials or connection profiles.
 
-Opening the firewall editor does not read the password. Revealing a saved
-password or replacing one requires a fresh Face ID or Touch ID evaluation with
-no passcode fallback. Passwords saved by earlier builds used an
+Opening the firewall editor does not read the password. If the optional Face ID
+or Touch ID lock is enabled and usable, revealing a saved password or replacing
+one requires a fresh biometric evaluation with no passcode fallback. When that
+optional protection is disabled or unavailable, Keychain-backed firewall login
+and credential maintenance remain usable; this avoids making biometric
+enrollment a prerequisite for configuring pfSense. Passwords saved by earlier builds used an
 `AfterFirstUnlock` item. Migration copies the exact value into the protected
 service, reads the destination back byte-for-byte, and deletes the old item
 only after that succeeds. A failed write or verification leaves the original
