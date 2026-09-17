@@ -27,6 +27,7 @@ $policyUpdated = '17 September 2026';
       <a href="index.php">App</a>
       <a href="lab.php">XMLAPI Lab</a>
       <a href="privacy.php" aria-current="page">Privacy</a>
+      <a href="https://github.com/kladhest-se/vaktpost">GitHub</a>
     </nav>
   </div>
 </header>
@@ -53,6 +54,7 @@ $policyUpdated = '17 September 2026';
 
     <h2>This website</h2>
     <p>This site uses no analytics, advertising, third-party scripts or external fonts. The web server may keep ordinary access logs, such as IP address, time and requested page, for security and troubleshooting.</p>
+    <p>To show the latest version, the server itself asks GitHub for the project's release tags at most once an hour. Your browser never contacts GitHub, and nothing about you is sent.</p>
     <p>The XMLAPI Lab sets one session cookie, <code>VAKTPOSTLAB</code>, so that changes you make to its synthetic firewall stay separate from other visitors'. It holds no personal data and expires after 30 minutes. Lab data is fictional and resets after 20 minutes of inactivity.</p>
 
     <h2>Children</h2>
@@ -67,7 +69,7 @@ $policyUpdated = '17 September 2026';
 <footer>
   <div class="wrap">
     <p>Vaktpost is not affiliated with Netgate or with the Catppuccin project. pfSense is a trademark of Netgate.</p>
-    <p><a href="privacy.php">Privacy policy</a> · <a href="https://github.com/kladhest-se/vaktpost/issues">Support</a> · <a href="https://github.com/kladhest-se/vaktpost">Source</a></p>
+    <p><a href="privacy.php">Privacy policy</a> · <a href="https://github.com/kladhest-se/vaktpost/issues">Support</a> · <a href="https://github.com/kladhest-se/vaktpost">GitHub</a></p>
     <p>Made in Stockholm.</p>
   </div>
 </footer>

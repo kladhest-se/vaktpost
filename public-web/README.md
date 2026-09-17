@@ -67,9 +67,13 @@ limiting.
 - Serve the site over HTTPS and confirm the host passes the `Authorization`
   header to PHP; the app refuses plain HTTP.
 - Put ordinary rate limiting in front of `xmlrpc.php`.
-- Keep `$releaseVersion` in `index.php` equal to `MARKETING_VERSION`, and the
-  out-of-scope list equal to the root `README.md`. `vaktpost-tools` checks the
-  version.
+- Keep `$releaseVersion` in `index.php` equal to `MARKETING_VERSION`;
+  `vaktpost-tools` checks it. The hero badge shows the newest `X.Y.Z` (or
+  `vX.Y.Z`) tag on GitHub instead, and falls back to `$releaseVersion` until a
+  tag exists. The lookup is server-side and cached in the temp directory for
+  an hour (ten minutes after a failure); delete
+  `vaktpost-latest-release.json` there to refresh it immediately. It needs the
+  curl extension or `allow_url_fopen`.
 - Keep `privacy.php` true to the app. It is the privacy policy URL given to App
   Store Connect; update `$policyUpdated` when its substance changes.
 - Replace the `href="#"` on the store badge with the App Store link once the
