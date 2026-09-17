@@ -37,6 +37,17 @@ worth a look before submitting; it may be worth swapping for something
 more visually dense if a better capture becomes available. Everything else
 is unchanged from the original simulator capture.
 
+## iphone-6.5-in/ — fallback only
+
+The same 10 screenshots at 1284 x 2778 px, RGB, made from the 6.9" set:
+scaled to 1284 wide (2790 high), then 6 px trimmed from top and bottom —
+inside the status bar and home-indicator margins, so no content is lost.
+
+Upload these only if App Store Connect insists on a 6.5" set. The 6.9" set
+belongs in the "iPhone 6.9\" Display" slot; putting it in the 6.5" slot is what
+produces "dimensions should be 1242 × 2688px … or 1284 × 2778px". Regenerate
+this folder whenever the 6.9" set changes.
+
 ## ipad-13-in/ — done
 
 9 screenshots, 2048 x 2732 px, RGB (alpha stripped the same way as the
