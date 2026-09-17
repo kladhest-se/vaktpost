@@ -269,6 +269,12 @@ ipados-run: build
 # a registered device on the team, which -allowProvisioningDeviceRegistration
 # takes care of on the first run.
 #
+# `open` will not launch the iOS bundle itself ("incorrect executable
+# format"): macOS runs an iPad app only from the wrapper Xcode and the App
+# Store install it in — an outer .app holding the real one under Wrapper/, with
+# a WrappedBundle symlink to it. The recipe builds that wrapper under build/
+# (ignored) and opens it, and points at Xcode if macOS still refuses.
+#
 # Intel Macs cannot run it at all, so this says so rather than letting
 # xcodebuild print a destination list.
 mac-run:
@@ -286,8 +292,16 @@ mac-run:
 		-destination "$$dest" -showBuildSettings 2>/dev/null); \
 	app="$$(echo "$$settings" | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $$2; exit}')/Vaktpost.app"; \
 	test -d "$$app" || { echo "No app at $$app"; exit 1; }; \
+	wrap="$(CURDIR)/build/mac-run/Vaktpost.app"; \
+	rm -rf "$$wrap"; mkdir -p "$$wrap/Wrapper"; \
+	cp -R "$$app" "$$wrap/Wrapper/"; \
+	ln -s Wrapper/Vaktpost.app "$$wrap/WrappedBundle"; \
 	echo "  launching Vaktpost $$version ($$build) on this Mac"; \
-	open "$$app"
+	open "$$wrap" || { \
+		echo ""; \
+		echo "  macOS refused the wrapped app. Run it from Xcode instead:"; \
+		echo "    make open, choose the 'My Mac (Designed for iPad)' destination, press Run."; \
+		exit 1; }
 
 install:
 	@$(REQUIRE_TEAM)
