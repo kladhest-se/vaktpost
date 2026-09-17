@@ -25,7 +25,7 @@ $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
       <img class="mark__icon" src="app-icons/lavender.png" alt="" width="26" height="26">
       Vaktpost
     </a>
-    <nav class="site-nav" aria-label="Primary"><a href="index.php">App</a><a href="lab.php" aria-current="page">XMLAPI Lab</a></nav>
+    <nav class="site-nav" aria-label="Primary"><a href="index.php">App</a><a href="lab.php" aria-current="page">XMLAPI Lab</a><a href="privacy.php">Privacy</a></nav>
   </div>
 </header>
 

@@ -15,8 +15,13 @@ struct SettingsView: View {
                 themeSlab
                 accentSlab
 
-                GroupHeading(text: "App icon")
-                AppIconPicker()
+                // An iPad app on a Mac keeps the icon it was installed with;
+                // `supportsAlternateIcons` is false there, so the picker could
+                // only ever report failure.
+                if !Platform.isMac {
+                    GroupHeading(text: "App icon")
+                    AppIconPicker()
+                }
 
                 GroupHeading(text: "Alerts")
                 alertsSlab

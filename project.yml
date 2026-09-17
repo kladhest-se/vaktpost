@@ -24,6 +24,11 @@ targets:
       - path: Sources/Vaktpost
       - path: Resources/Assets.xcassets
       - path: Resources/OUI
+      # Apple's privacy manifest. Listed explicitly as a resource so it is
+      # copied into the bundle whatever XcodeGen version infers for the
+      # extension; an upload without it is rejected.
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     configFiles:
       Debug: Config/iOS.xcconfig
       Release: Config/iOS.xcconfig

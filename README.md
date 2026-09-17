@@ -1,191 +1,164 @@
 # Vaktpost
 
-Vaktpost is an open-source iOS app for monitoring and carefully administering
-**pfSense CE and pfSense Plus**. It is built with SwiftUI, requires iOS 17 or
-later, and uses pfSense's built-in XML-RPC service; nothing is installed on the
-firewall.
+Vaktpost is an open-source iPhone and iPad app for monitoring and carefully
+administering **pfSense CE and pfSense Plus**. It talks to pfSense's built-in
+XML-RPC service, so nothing is installed on the firewall.
 
 *Vaktpost* is Swedish for a sentry post: somewhere you watch the perimeter
 from, report what you see, and take a small set of deliberate actions.
 
-> Vaktpost is preparing its first public release, version **0.1.0**. The feature
-> set below is frozen while compatibility, safety, accessibility, and release
-> quality are finished.
+> **Status:** preparing the first public release, **1.0.0**. The feature set
+> below is frozen while compatibility, safety and accessibility are finished.
 
-Read [SECURITY.md](SECURITY.md) before connecting it to a production firewall.
-The XML-RPC account needs the **System - HA node sync** privilege, which is
-administrator-equivalent.
+> **Before you connect a production firewall,** read [SECURITY.md](SECURITY.md).
+> Vaktpost's account needs the **System - HA node sync** privilege, which is
+> administrator-equivalent.
 
-## Version 0.1 scope
+## Features
 
 ### Monitoring
 
-- Multiple firewalls, each with separate credentials, TLS settings, refresh
-  interval, and monitoring history.
-- A configurable overview of health, interfaces, gateways, system resources,
-  services, VPNs, logs, and clients.
-- DHCP leases, ARP entries, and static mappings combined into one searchable
-  client list with offline MAC-vendor lookup.
-- Interface counters, live throughput, and RRD-backed history where pfSense
-  exposes it.
-- OpenVPN, WireGuard, and IPsec status with connected peers.
-- Filter, system, authentication, DHCP, and OpenVPN logs, plus a combined
-  incident timeline.
-- Alerts derived on the phone for gateway, service, capacity, certificate,
-  CARP, VPN, update, and Dynamic DNS conditions.
-- System notices, certificates, ACME, Dynamic DNS, HAProxy, pfBlockerNG,
-  package status, and firmware status.
-- Ping, traceroute, DNS lookup, traffic investigation, and configuration
-  diagnostics.
+- Multiple firewalls, each with its own credential, certificate pin and
+  refresh interval.
+- A configurable overview of health, interfaces, gateways, resources,
+  services, VPNs, logs and clients.
+- One searchable client list from DHCP leases, ARP and static mappings, with
+  offline vendor lookup.
+- Live throughput and RRD-backed traffic history.
+- OpenVPN, WireGuard and IPsec status with connected peers.
+- Filter, system, authentication, DHCP and OpenVPN logs, live log following,
+  and a combined incident timeline.
+- On-device alerts for gateways, services, capacity, certificates, CARP, VPNs,
+  updates and Dynamic DNS.
+- Notices, certificates, ACME, Dynamic DNS, HAProxy, pfBlockerNG, packages and
+  firmware.
+- Ping, traceroute, DNS lookup, a speed test and traffic investigation.
+- Download of the firewall's `config.xml`.
 
 ### Administration
 
-- Monitor-only mode by default, enabled separately for each firewall.
-- Create, edit, duplicate, delete, and reorder filter rules and NAT port
-  forwards.
-- Create, edit, delete, colour, and reorder filter and NAT separators.
-- Create and edit host, network, and port aliases; delete unused aliases.
-- pfSense-style staged changes: edits are saved first and become active only
-  after **Apply Changes**.
-- A review of identifiable Vaktpost edits before applying the firewall's global
-  pending ruleset.
-- Quick Block as a staged filter rule; service restart and state-table flush as
-  separately confirmed immediate actions.
-- Single-attempt writes, read-back verification, pfSense Configuration History
-  attribution, and a protected per-firewall audit trail.
+Every firewall starts in **monitor-only mode**. With administration enabled:
 
-### Deliberately deferred
+- Filter rules and NAT port forwards: create, edit, duplicate, delete and
+  reorder.
+- Filter and NAT separators, and host, network and port aliases.
+- Quick Block, and new rules prefilled from a firewall-log entry.
+- Service restart and state-table flush.
+- pfSense base-system and installed-package updates.
 
-Version 0.1 does not aim to replace the entire pfSense WebUI. The following are
-out of scope for the first release:
+### Not included
 
-- Outbound NAT, 1:1 NAT, virtual IP, schedule, traffic-shaper, and package
-  configuration editors.
-- Firmware or package installation, configuration backup/restore, and CARP
-  synchronization controls.
-- Bulk rule editing, templates, automation, and unattended writes.
-- A server-side Vaktpost component, cloud account, or remote-access relay.
+Vaktpost complements the pfSense WebUI rather than replacing it. Out of scope
+for 1.0:
 
-Until 0.1 ships, new features should be accepted only when they are needed to
-make the scope above safe, understandable, or compatible with supported
-pfSense versions.
+- Outbound NAT, 1:1 NAT, virtual IPs, schedules, traffic shaping and package
+  settings.
+- Installing or removing packages, restoring a configuration, and CARP
+  synchronization.
+- Bulk editing, templates, automation and unattended changes.
+- Any Vaktpost server, cloud account or remote-access relay.
 
 ## Safety model
 
-Every firewall starts in monitor-only mode. When administration is enabled,
-all mutations pass through one coordinator that validates the operation,
-records a pending audit entry, sends the request once, and reads the affected
-state back. A lost response is reported as an unknown outcome and is never
-automatically repeated.
+- **Staged changes.** Rule, NAT, separator and alias edits use pfSense's own
+  pending-changes workflow and go live only after **Apply Changes**. That
+  applies *every* pending change on the firewall, including ones made in the
+  WebUI, so Vaktpost shows what is pending first.
+- **Confirmed actions.** Restarts, state flushes and updates each need their
+  own confirmation.
+- **Sent once, then verified.** Every change is sent a single time and read
+  back. If the response is lost, the outcome is reported as unknown and never
+  retried automatically.
+- **Recorded.** Changes appear in pfSense's configuration history, marked
+  `Vaktpost:`, and in an on-device audit trail.
+- **Declared surface.** Everything Vaktpost can change on a firewall is listed
+  in one place, `PHPSnippet.writeOperations`.
 
-Filter, NAT, separator, and alias edits use pfSense's native pending markers.
-The live ruleset changes only when an administrator opens **Apply firewall
-changes** and selects **Apply Changes**. That applies every pending firewall
-change on the appliance, including changes made in the WebUI or by another
-administrator.
+## Privacy
 
-Passwords are stored in separate `WhenUnlockedThisDeviceOnly` Keychain items.
-TLS certificate pinning is available and strongly recommended. The complete
-mutation surface is declared in `PHPSnippet.writeOperations` and audited by the
-companion test suite.
+Vaktpost has no accounts, analytics, advertising or tracking, and talks to no
+server other than the firewalls you add. Passwords are kept in the Keychain on
+this device only. The optional speed test is run by the firewall itself
+against Cloudflare's speed-test service. The full policy is published on the project website
+(`privacy.php`, source in [public-web/](public-web/privacy.php)).
 
 ## Firewall setup
 
-1. In **System → Advanced → Admin Access**, set **Max Processes** to at least 5.
-   XML-RPC polling shares PHP workers with the WebUI.
-2. Create a dedicated local user under **System → User Manager**. Avoid reusing
+1. In **System → Advanced → Admin Access**, set **Max Processes** to at least
+   5. XML-RPC shares PHP workers with the WebUI.
+2. Under **System → User Manager**, create a dedicated local user. Don't reuse
    a personal or domain account.
-3. Grant **System - HA node sync**. This privilege is required by XML-RPC and is
-   administrator-equivalent.
-4. Add the firewall address, username, and password in Vaktpost.
-5. Connect once, then select **Pin last seen certificate** in the firewall
-   settings. Re-pin after intentionally replacing the certificate.
-6. Leave monitor-only mode enabled unless administration is needed.
+3. Give that user the **System - HA node sync** privilege.
+4. In Vaktpost, add the firewall's address, username and password.
+5. Trust the certificate. pfSense's default certificate is self-signed, so on
+   the first connection Vaktpost shows its SHA-256 fingerprint. Compare it
+   with **System → Certificates** in the WebUI, then pin it. From then on only
+   that certificate is accepted; a different one is blocked until you review
+   it in the firewall's settings.
+6. Leave monitor-only mode on unless you need administration.
 
-Administrative revisions retain `Vaktpost:` in their description and use the
-already-authenticated XML-RPC identity for pfSense Configuration History.
-Vaktpost never accepts an audit username from an operation payload.
+Vaktpost asks for **local network** access the first time it connects to a
+firewall on your network. Without it, local firewalls are unreachable.
 
-## Build
+### Try it without a firewall
 
-Requirements:
+The project website hosts a synthetic firewall for testing. Use the website's
+own address as the firewall address, `review` as the username and
+`vaktpost-demo` as the password. Its **XMLAPI Lab** page lists the other
+scenarios. To host it yourself, serve `public-web/` over HTTPS; see
+[public-web/README.md](public-web/README.md).
 
-- Xcode 15 or later
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-- iOS 17 or later
+## Requirements
+
+- iOS or iPadOS 17 or later, or an Apple Silicon Mac
+- pfSense CE or pfSense Plus with the WebUI reachable over HTTPS
+
+## Building from source
+
+Requires Xcode 15 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ```sh
 brew install xcodegen
 make build
 ```
 
-Common targets:
+| Command | Does |
+| --- | --- |
+| `make` | List all commands |
+| `make build` | Compile without starting a simulator |
+| `make test` | Run the tests on a simulator |
+| `make ios-run` / `make ipados-run` | Run on an iPhone or iPad simulator |
+| `make mac-run TEAM_ID=…` | Run on this Apple Silicon Mac |
+| `make install DEVICE=… TEAM_ID=…` | Install on a connected device |
+| `make archive TEAM_ID=…` | Build an App Store archive |
+| `make web` | Serve the website on port 8000 |
 
-```sh
-make                 # list available commands
-make build           # compile without starting a simulator
-make test            # run tests on an installed iOS simulator
-make ios-run         # build and launch on an iPhone simulator
-make ipados-run      # build and launch on an iPad simulator
-make open            # generate and open the Xcode project
-make archive TEAM_ID=ABCDE12345
-make install DEVICE=00008132-… TEAM_ID=ABCDE12345
-make web             # serve public-web/ on port 8000
-```
+`make devices`, `make teams` and `make destinations` list the values those
+commands need. The Xcode project is generated from `project.yml` and
+`Config/*.xcconfig`, and is not committed.
 
-Use `make devices`, `make teams`, and `make destinations` to discover the
-values needed for device builds. The generated `.xcodeproj` and the local
-`build.number` counter are intentionally not committed; `project.yml` and
-`Config/*.xcconfig` are the sources of truth.
-
-## Verification and publishing
-
-The private companion repository `vaktpost-tools` contains structural,
-transport, security-boundary, and disposable-firewall compatibility checks.
-It is expected beside this repository:
-
-```sh
-cd ../vaktpost-tools
-./tests/run.sh --fast
-./publish-all.sh --dry-run
-```
-
-The destructive CE/Plus compatibility matrix is documented in
-[`docs/LAB_COMPATIBILITY_MATRIX.md`](docs/LAB_COMPATIBILITY_MATRIX.md). Run it
-only against a disposable firewall.
-
-## Project layout
+### Project layout
 
 ```text
-Config/                    build settings and release version
-Resources/                 app metadata, icons, entitlements, OUI database
-Sources/Vaktpost/App/      app entry point and navigation
-Sources/Vaktpost/Core/     profiles, validation, audit, write coordination
-Sources/Vaktpost/Models/   decoded pfSense state
-Sources/Vaktpost/Net/      XML-RPC transport and reviewed PHP snippets
-Sources/Vaktpost/Store/    dashboard state, refresh, history, alerts
-Sources/Vaktpost/Theme/    Catppuccin themes and shared components
-Sources/Vaktpost/Views/    SwiftUI screens
-Tests/VaktpostTests/       unit and transport tests
-public-web/                dependency-free PHP public website
+Config/        build settings and release version
+Resources/     Info.plist, privacy manifest, icons, OUI database
+Sources/       the app: App, Core, Models, Net, Store, Theme, Views
+Tests/         unit and transport tests
+docs/          contribution terms, release and design notes
+public-web/    the project website and test lab
 ```
 
-## Design and accessibility
+## Contributing
 
-Vaktpost includes all four Catppuccin flavours, automatic light/dark mode,
-accent choices, and alternate app icons. Status is not communicated by colour
-alone, text follows Dynamic Type, and iPad uses a split-view layout where it
-improves navigation.
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md). Security problems are
+covered in [SECURITY.md](SECURITY.md).
 
-## Website
+## Licence
 
-`public-web/` is a dependency-free PHP site with a synthetic XMLAPI lab for
-testing Vaktpost without exposing a firewall. Serve it with `make web` or point
-a PHP-capable web server at the directory. See
-[public-web/README.md](public-web/README.md).
+Vaktpost is free software under the GNU General Public License, version 3 or
+(at your option) any later version — see [LICENSE](LICENSE). An
+[additional permission](docs/APP_STORE_EXCEPTION.md) allows distribution
+through Apple's App Store, Mac App Store and TestFlight.
 
-## License and trademarks
-
-Vaktpost is not affiliated with Netgate or the Catppuccin project. pfSense is
-a trademark of Netgate. Catppuccin palettes are used under their MIT licence;
-the application code and design are original to this project.
+Vaktpost is not affiliated with Netgate or the Catppuccin project. pfSense is a
+trademark of Netgate. Catppuccin palettes are used under their MIT licence.

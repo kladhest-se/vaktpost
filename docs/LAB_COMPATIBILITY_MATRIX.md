@@ -10,6 +10,19 @@ This matrix reloads the firewall, restarts a service, adds and edits a filter
 rule, creates a disabled port forward, flushes an interface's state table, and
 deletes the temporary objects. It must never be aimed at production.
 
+## Coverage
+
+The runner exercises eight of the seventeen declared write snippets:
+`reload_firewall`, `restart_service`, `quick_block`, `flush_states`,
+`save_rule`, `save_nat_rule`, `delete_rule` and `delete_nat_rule`.
+
+Rule and NAT reordering, filter and NAT separators, aliases and
+`start_update` are **not yet lab-tested**. They are listed in
+`NOT_YET_IN_MATRIX` in `bin/admin-matrix.py`, printed on every dry run, and
+`tests/admin-matrix.sh` fails if a declared write is in neither list. Until
+they move into the matrix, compatibility for those operations rests on
+`write-contract` and manual testing only.
+
 Use a newly restored VM snapshot with no clients behind it. Keep the pfSense
 console open. The runner requires all of the following before it reads a
 password or opens a connection:
@@ -29,7 +42,7 @@ never written to the report.
 From `vaktpost-tools`, first inspect the no-network plan:
 
 ```sh
-PT_APP=../vaktpost-main bin/admin-matrix.py https://ce-lab.example lab-user \
+PT_APP=../vaktpost bin/admin-matrix.py https://ce-lab.example lab-user \
   --edition CE --version 2.x --interface lan --service dnsresolver \
   --confirm-disposable-lab ce-lab.example --accept-state-loss --dry-run
 ```
@@ -41,7 +54,7 @@ Plus VM.
 
 ## Pass criteria
 
-Each of the eight rows must say `passed`, each write must show `attempts: 1`,
+Each lab-covered row must say `passed`, each write must show `attempts: 1`,
 and its read-back must confirm the resulting object or subsystem is readable.
 The temporary rule and disabled NAT rule must be absent at the end.
 
@@ -55,7 +68,7 @@ snapshot rather than rerunning against uncertain state.
 
 Keep both JSON reports with the release evidence and record:
 
-| Edition | Exact version | All eight passed | Lost-response drill | Report |
+| Edition | Exact version | All covered writes passed | Lost-response drill | Report |
 |---|---|---:|---:|---|
 | CE | pending lab run | no | pending | — |
 | Plus | pending lab run | no | pending | — |

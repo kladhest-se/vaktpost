@@ -1,8 +1,8 @@
-// Settings shared by the app and the widget extension.
+// Settings shared by the app and its test target.
 //
 // Build settings live here rather than in project.yml so that a value can be
 // read by something other than XcodeGen — the Makefile reads MARKETING_VERSION
-// out of iOS.xcconfig to print "0.1.0 (7)" after a build, and an .xcconfig is
+// out of iOS.xcconfig to print "1.0.0 (7)" after a build, and an .xcconfig is
 // a file both a human and an awk one-liner can follow.
 
 CLANG_ENABLE_MODULES = YES

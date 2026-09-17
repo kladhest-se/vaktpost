@@ -4,6 +4,15 @@ IPHONEOS_DEPLOYMENT_TARGET = 17.0
 TARGETED_DEVICE_FAMILY = 1,2
 SUPPORTS_MACCATALYST = NO
 
+// The unmodified iPad binary on Apple Silicon Macs ("Designed for iPad").
+// Xcode's default is already YES; stated so it cannot be switched off by a
+// changed default, and so it sits next to the Catalyst line it is not.
+// Store availability is a separate checkbox in App Store Connect under
+// Pricing and Availability. Runtime differences go through `Platform.isMac`.
+// Not visionOS: nothing here has been looked at on a headset.
+SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES
+SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO
+
 // Stated explicitly. An xcconfig applied at project level can leave this empty
 // for the scheme's buildables, which xcodebuild reports as
 //
@@ -34,7 +43,7 @@ ARCHS[sdk=iphonesimulator*] = arm64
 // make. It is deliberately not a plausible number: `make build` and
 // `make archive` both override it from the counter in build.number, so a real
 // build never shows 1.
-MARKETING_VERSION = 0.1.0
+MARKETING_VERSION = 1.0.0
 CURRENT_PROJECT_VERSION = 1
 
 // Icons.

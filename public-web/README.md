@@ -64,13 +64,16 @@ limiting.
 
 ## Before publishing
 
-- Add the canonical public repository URL when it has been chosen. The current
-  page contains no placeholder or dead source link.
-- Add an `og:image` when a public release image is available.
-- Keep the version 0.1 feature and deferred-scope lists aligned with the root
-  `README.md` before publishing.
-- Confirm that the public host passes the `Authorization` header to PHP and
-  serves the site over HTTPS before using the lab from iOS.
+- Serve the site over HTTPS and confirm the host passes the `Authorization`
+  header to PHP; the app refuses plain HTTP.
+- Put ordinary rate limiting in front of `xmlrpc.php`.
+- Keep `$releaseVersion` in `index.php` equal to `MARKETING_VERSION`, and the
+  out-of-scope list equal to the root `README.md`. `vaktpost-tools` checks the
+  version.
+- Keep `privacy.php` true to the app. It is the privacy policy URL given to App
+  Store Connect; update `$policyUpdated` when its substance changes.
+- Replace the `href="#"` on the store badge with the App Store link once the
+  app is live, and add an `og:image` when a release image exists.
 
 ## Theming
 

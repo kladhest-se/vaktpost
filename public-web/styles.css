@@ -284,3 +284,12 @@ footer {
   font-size: .85rem; color: var(--overlay1);
 }
 footer p { max-width: 62ch; margin: 0 0 .6rem; }
+
+/* Long-form text pages (privacy policy). */
+.prose { max-width: 70ch; }
+.prose h1 { margin-bottom: var(--sp-3, 1rem); }
+.prose h2 { margin-top: 2.2rem; }
+.prose p, .prose li { color: var(--subtext1); }
+.prose ul { padding-left: 1.2rem; }
+.prose li { margin-bottom: .55rem; }
+.prose .meta { font-size: .85rem; color: var(--overlay1); }

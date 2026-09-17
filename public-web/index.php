@@ -1,7 +1,8 @@
 <?php
 declare(strict_types=1);
 
-$releaseVersion = '0.1.0';
+$releaseVersion = '1.0.0';
+$demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
 $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https://' : 'http://')
     . ($_SERVER['HTTP_HOST'] ?? 'this site');
 ?>
@@ -32,6 +33,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     <nav class="site-nav" aria-label="Primary">
       <a href="#top" aria-current="page">App</a>
       <a href="lab.php">XMLAPI Lab</a>
+      <a href="privacy.php">Privacy</a>
     </nav>
   </div>
 </header>
@@ -47,11 +49,11 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
         <a class="btn btn--solid" href="#setup">Set it up</a>
         <a class="btn btn--ghost" href="#features">See the features</a>
       </div>
-      <a class="store-badge" href="#">Coming to the App Store — iPhone &amp; iPad</a>
+      <a class="store-badge" href="#">Coming to the App Store — iPhone, iPad &amp; Mac</a>
       <p class="status-line">
         <span>Version <?= htmlspecialchars($releaseVersion, ENT_QUOTES, 'UTF-8') ?></span>
         <span class="dot" aria-hidden="true"></span>
-        <span>Requires iOS 17+</span>
+        <span>iOS 17+ · Apple Silicon Macs</span>
         <span class="dot" aria-hidden="true"></span>
         <span><b>Monitor-only by default</b> — nothing is installed on pfSense</span>
       </p>
@@ -142,16 +144,18 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 
 <section id="limits">
   <div class="wrap">
-    <h2>Kept out of the first release</h2>
-    <p class="lede">Version 0.1 is not intended to replace the complete pfSense WebUI.</p>
+    <h2>Kept out of version 1.0</h2>
+    <p class="lede">Vaktpost complements the pfSense WebUI rather than replacing it.</p>
     <div class="limit">
       <ul>
         <li>Outbound and 1:1 NAT, virtual IPs</li>
         <li>Schedules and traffic shaping</li>
-        <li>Package configuration</li>
-        <li>Backups and restores</li>
+        <li>Package settings</li>
+        <li>Installing or removing packages</li>
+        <li>Configuration restore</li>
+        <li>CARP synchronization</li>
         <li>Bulk editing, templates, and automation</li>
-        <li>Unattended writes</li>
+        <li>Unattended changes</li>
       </ul>
     </div>
   </div>
@@ -164,8 +168,8 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     <ol class="steps">
       <li><p>Set <strong>System → Advanced → Admin Access → Max Processes</strong> to 5 or more. XML-RPC competes with the webConfigurator for PHP workers, and the default leaves too few.</p></li>
       <li><p>Create a user under <strong>System → User Manager</strong> and give it the <strong>System - HA node sync</strong> privilege — the one that makes XML-RPC work. Use a dedicated account rather than your own login: it is administrator-equivalent, and the password is stored on the phone. <a href="https://github.com/kladhest-se/vaktpost/blob/main/SECURITY.md">What that credential can do, and how it's protected</a>.</p></li>
-      <li><p>Open Vaktpost, enter the firewall address, that username and its password.</p></li>
-      <li><p>Pin the certificate. pfSense ships a self-signed one, so connect once with untrusted TLS allowed, then tap <strong>Pin last seen certificate</strong> in the firewall's settings. After that the connection is accepted only if that exact certificate is presented. Re-pin when you renew it.</p></li>
+      <li><p>Open Vaktpost, enter the firewall address, that username and its password. Allow <strong>local network</strong> access when asked — without it, a firewall on your network is unreachable.</p></li>
+      <li><p>Trust the certificate. pfSense's default one is self-signed, so on first connection Vaktpost shows its SHA-256 fingerprint. Compare it with <strong>System → Certificates</strong> in the WebUI, then pin it. After that only that exact certificate is accepted; a different one is blocked until you review it in the firewall's settings.</p></li>
       <li><p>Keep the profile in <strong>monitor-only mode</strong> unless you need administration. Firewall edits are staged and use pfSense's global Apply Changes workflow.</p></li>
     </ol>
 
@@ -174,7 +178,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
       <dl class="lab-details">
         <div><dt>Base URL</dt><dd><code><?= htmlspecialchars($labOrigin, ENT_QUOTES, 'UTF-8') ?></code></dd></div>
         <div><dt>Username</dt><dd><code>review</code> for a healthy firewall, <code>updates</code> for outdated firmware and packages, <code>degraded</code> for gateway/VPN/service problems, or <code>fault</code> to see how the app handles a firewall that stops responding partway through</dd></div>
-        <div><dt>Password</dt><dd><code>vaktpost-demo</code></dd></div>
+        <div><dt>Password</dt><dd><code><?= htmlspecialchars($demoPassword, ENT_QUOTES, 'UTF-8') ?></code></dd></div>
       </dl>
     </div>
 
@@ -185,7 +189,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
   <div class="wrap">
     <h2>Building it</h2>
     <p>The project is SwiftUI, targets iOS 17, and uses <a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a>. Clone <a href="https://github.com/kladhest-se/vaktpost">the source</a>, run <code>make build</code>, and pass your development team when installing on a device.</p>
-    <p>The Catppuccin palettes are used under their MIT licence. Everything else — the layout, the design language, the code — is original to this project.</p>
+    <p>Vaktpost is free software under the <a href="https://github.com/kladhest-se/vaktpost/blob/main/LICENSE">GNU GPL, version 3 or later</a>. The Catppuccin palettes are used under their MIT licence. Everything else — the layout, the design language, the code — is original to this project.</p>
     <div class="actions" style="margin-top:1.6rem">
       <a class="btn btn--solid" href="#setup">Review setup</a>
       <a class="btn btn--ghost" href="https://docs.netgate.com/pfsense/en/latest/">pfSense docs</a>
@@ -198,6 +202,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 <footer>
   <div class="wrap">
     <p>Vaktpost is not affiliated with Netgate or with the Catppuccin project. pfSense is a trademark of Netgate.</p>
+    <p><a href="privacy.php">Privacy policy</a> · <a href="https://github.com/kladhest-se/vaktpost/issues">Support</a> · <a href="https://github.com/kladhest-se/vaktpost">Source</a></p>
     <p>Made in Stockholm.</p>
     <div class="actions" style="margin-top:1.2rem">
       <a class="btn btn--ghost" href="https://ko-fi.com/R7P325M7NE">Support me on Ko-fi</a>

@@ -31,8 +31,8 @@ struct SystemStatus {
     var coreTemps: [CoreTemp] = []
 
     init(_ d: JSONDict) {
-        // Present under the REST transport, absent under XML-RPC where only
-        // raw ticks are available. Left nil rather than zero so the meter is
+        // Read if a snippet ever supplies a ready-made percentage; the
+        // XML-RPC snippets currently return only raw ticks. Left nil rather than zero so the meter is
         // hidden until two samples exist, instead of claiming an idle CPU.
         cpuUsage = d.double("cpu_usage", "cpu", "cpu_load")
         cpuTicksTotal = d.int("cpu_ticks_total")

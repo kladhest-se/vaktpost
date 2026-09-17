@@ -37,6 +37,15 @@
     </array>
     <key>NSAppTransportSecurity</key>
     <dict/>
+    <!-- Shown by iOS the first time Vaktpost connects to a firewall on the
+         local network. Denying it makes every LAN firewall unreachable, so
+         the wording says what the permission is for. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Vaktpost connects to the pfSense firewalls you add, which are usually on your local network.</string>
+    <!-- Used by macOS for the Designed for iPad build. The iOS App Store
+         category is chosen in App Store Connect, not here. -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
     <key>NSFaceIDUsageDescription</key>
     <string>Use Face ID to unlock Vaktpost and enable firewall administrative actions</string>
     <!-- All encryption used by this app — HTTPS/TLS to the firewall, Keychain

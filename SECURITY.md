@@ -219,9 +219,10 @@ this app could undo it.
 
 This build **is not read-only**, and the comparison has to start there rather
 than with how the difference is checked. It can delete a firewall rule. What it
-offers instead is an **enumerated** surface: sixteen operations, named in one
-file, each one a line somebody had to add on purpose, with a check that fails if
-a seventeenth appears or if one of the sixteen quietly stops being used.
+offers instead is an **enumerated** surface: seventeen snippet operations,
+named in `PHPSnippet.writeOperations`, each one a line somebody had to add on
+purpose, with a check that fails if an undeclared one appears or a declared one
+quietly stops being used.
 
 Every newly added or migrated firewall nevertheless starts in **monitor-only
 mode**. The client rejects all sixteen mutation methods before transport in that

@@ -10,7 +10,7 @@ private let maxThroughputElapsed: TimeInterval = 7 * 86_400
 
 /// Derives interface throughput from cumulative byte counters.
 ///
-/// The REST API reports lifetime `inbytes`/`outbytes` per interface, not a
+/// pfSense reports lifetime `inbytes`/`outbytes` per interface, not a
 /// rate. Differencing consecutive samples client-side gives bits per second
 /// without needing anything extra on the firewall. Counters reset when an
 /// interface bounces or the box reboots, so a negative delta is treated as a

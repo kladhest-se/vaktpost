@@ -134,6 +134,18 @@ struct VaktpostApp: App {
                 .environment(\.dashboardStore, store)
                 .environment(\.store, store)
         }
+        // A menu bar on a Mac, the ⌘ overlay with a hardware keyboard on
+        // iPad. Pull-to-refresh has no equivalent with a pointer, so without
+        // this a Mac window can only wait for the timer.
+        .commands {
+            CommandMenu("Firewall") {
+                Button("Refresh") {
+                    Task { await store.refresh() }
+                }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(!store.isConfigured)
+            }
+        }
     }
 }
 
@@ -273,7 +285,15 @@ struct RootView: View {
                 // switcher, and ask for nothing. An interruption that turns
                 // out to be a real backgrounding becomes a lock a moment
                 // later, when `.background` arrives.
-                if shouldLock { isObscured = true }
+                //
+                // Not on a Mac. There `.inactive` means the window lost
+                // focus — another app was clicked — and there is no app
+                // switcher snapshot to protect against. Covering the
+                // dashboard every time somebody glances at another window
+                // defeats the point of keeping it open beside them.
+                // Minimising or hiding still arrives as `.background` and
+                // still locks.
+                if shouldLock && !Platform.isMac { isObscured = true }
 
             case .background:
                 store.stopAutoRefresh()
