@@ -8,28 +8,20 @@ struct AnalyticsView: View {
 
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    overviewCard
-                    statisticsByOperation
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 28)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                overviewCard
+                statisticsByOperation
             }
-            .background(theme.bg.ignoresSafeArea())
-            .navigationTitle("Analytics")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
         }
+        .background(theme.bg.ignoresSafeArea())
+        .navigationTitle("Analytics")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     // MARK: - Overview

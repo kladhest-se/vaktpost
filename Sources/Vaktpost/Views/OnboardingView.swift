@@ -9,13 +9,14 @@ struct OnboardingView: View {
     @State private var isTesting = false
     @State private var message: String?
     @State private var messageHealth: Health = .idle
+    @State private var authProblem: AuthenticationProblem?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
 
-                Slab(rail: .info, title: "Connect") {
+                Slab(rail: authProblem?.pointsAtCredentials == true ? .bad : .info, title: "Connect") {
                     VStack(alignment: .leading, spacing: 12) {
                         LabelledField(title: "Base URL", text: $profile.baseURL,
                                       placeholder: "https://192.168.1.1",
@@ -66,6 +67,10 @@ struct OnboardingView: View {
                     }
                 }
 
+                if let authProblem {
+                    AuthenticationProblemCard(problem: authProblem)
+                }
+
                 Slab(rail: .idle, title: "Before you start") {
                     VStack(alignment: .leading, spacing: 8) {
                         step("1", "Nothing to install — this uses pfSense's built-in XML-RPC service.")
@@ -80,6 +85,10 @@ struct OnboardingView: View {
             .padding(.bottom, 40)
         }
         .background(theme.bg.ignoresSafeArea())
+        // A refused sign-in describes what was typed; once that changes the
+        // card no longer does.
+        .onChange(of: profile.username) { _, _ in authProblem = nil }
+        .onChange(of: password) { _, _ in authProblem = nil }
     }
 
     private var header: some View {
@@ -141,13 +150,19 @@ struct OnboardingView: View {
             profile = saved
         }
 
+        authProblem = nil
         do {
             let version = try await store.client.ping()
             message = "Connected — pfSense \(version)"
             messageHealth = .ok
         } catch {
-            message = error.localizedDescription
-            messageHealth = .bad
+            if let problem = AuthenticationProblem(error, username: p.username) {
+                authProblem = problem
+                message = nil
+            } else {
+                message = error.localizedDescription
+                messageHealth = .bad
+            }
         }
     }
 }

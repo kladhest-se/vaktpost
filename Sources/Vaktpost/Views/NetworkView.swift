@@ -73,7 +73,7 @@ struct NetworkView: View {
         }
         .sheet(isPresented: $showQuickBlock) {
             NavigationStack {
-                QuickBlockView()
+                QuickBlockView(showsDoneButton: true)
             }
         }
         .confirmationSheet(
@@ -323,7 +323,7 @@ struct InterfaceCard: View {
         .buttonStyle(.plain)
         .sheet(isPresented: $showQuickBlock) {
             NavigationStack {
-                QuickBlockView()
+                QuickBlockView(showsDoneButton: true)
             }
         }
     }

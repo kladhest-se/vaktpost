@@ -19,6 +19,7 @@
     updates: ['Updates available', 'Firmware and one package are outdated.'],
     degraded: ['Degraded network', 'A gateway, VPN, and service report problems.'],
     fault: ['XML-RPC fault', 'Sign-in succeeds; feature requests return a deliberate fault.'],
+    noaccess: ['No privilege', 'The password is right, but the account lacks System - HA node sync.'],
   };
   const scripts = {
     connection: '$toreturn = ["version" => trim(file_get_contents("/etc/version"))];',

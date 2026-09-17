@@ -13,6 +13,9 @@ struct ServerMenu: View {
 
     @State private var managing = false
     @State private var showingAllFirewalls = false
+    /// The active firewall, opened straight into its editor when a screen
+    /// asks for it — a refused sign-in is fixed there, not in the list.
+    @State private var editingActive: ServerProfile?
 
     var body: some View {
         Menu {
@@ -49,6 +52,14 @@ struct ServerMenu: View {
         }
         .sheet(isPresented: $showingAllFirewalls) {
             NavigationStack { AllFirewallsView() }
+        }
+        .onChange(of: store.wantsActiveFirewallSettings) { _, wanted in
+            guard wanted else { return }
+            store.wantsActiveFirewallSettings = false
+            editingActive = registry.active
+        }
+        .sheet(item: $editingActive) { server in
+            NavigationStack { ServerEditView(profile: server) }
         }
         .sheet(isPresented: $managing) {
             NavigationStack {

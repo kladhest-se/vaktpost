@@ -9,7 +9,6 @@ struct FlushStatesView: View {
 
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
-    @Environment(\.dismiss) private var dismiss
 
     @State private var selectedInterface: InterfaceStat?
     @State private var flushAll = true
@@ -20,57 +19,55 @@ struct FlushStatesView: View {
     @State private var lastFlushTime: Date?
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    GroupHeading(text: "Target")
-                    Slab(rail: .info) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            flushScopePicker
-                            interfacePicker
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                GroupHeading(text: "Target")
+                Slab(rail: .info) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        flushScopePicker
+                        interfacePicker
                     }
+                }
 
-                    if !store.canAdminister {
-                        GroupHeading(text: "Mode")
-                        AdministrationModeNotice()
-                    }
+                if !store.canAdminister {
+                    GroupHeading(text: "Mode")
+                    AdministrationModeNotice()
+                }
 
-                    GroupHeading(text: "Action")
-                    executeButton
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 28)
-                .readableWidth()
+                GroupHeading(text: "Action")
+                executeButton
             }
-            .background(theme.bg.ignoresSafeArea())
-            .tint(theme.accentColor)
-            .navigationTitle("Flush states")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    if !isExecuting {
-                        Button("Done") { dismiss() }
-                    } else {
-                        ProgressView()
-                    }
-                }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+            .readableWidth()
+        }
+        .background(theme.bg.ignoresSafeArea())
+        .tint(theme.accentColor)
+        .navigationTitle("Flush states")
+        .navigationBarTitleDisplayMode(.inline)
+        // Pushed from More, so the back button is the way out. It is hidden
+        // while a write runs, as the old Done button was, so nobody leaves
+        // the screen with a request in flight.
+        .navigationBarBackButtonHidden(isExecuting)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if isExecuting { ProgressView() }
             }
-            .confirmationSheet(
-                isPresented: $showConfirmation,
-                title: "Flush state table",
-                message: store.writeCoordinator.preview(for: pendingOperation),
-                destructive: true,
-                destructiveLabel: "Flush",
-                confirmLabel: "Cancel",
-                onConfirm: confirmFlush
-            ) {}
-            .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
-            .onAppear {
-                if let firstUp = store.overviewLayout.interfaces.first(where: { $0.isUp }) {
-                    selectedInterface = firstUp
-                }
+        }
+        .confirmationSheet(
+            isPresented: $showConfirmation,
+            title: "Flush state table",
+            message: store.writeCoordinator.preview(for: pendingOperation),
+            destructive: true,
+            destructiveLabel: "Flush",
+            confirmLabel: "Cancel",
+            onConfirm: confirmFlush
+        ) {}
+        .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+        .onAppear {
+            if let firstUp = store.overviewLayout.interfaces.first(where: { $0.isUp }) {
+                selectedInterface = firstUp
             }
         }
     }

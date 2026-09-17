@@ -8,7 +8,6 @@ struct ServiceManagerView: View {
 
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
-    @Environment(\.dismiss) private var dismiss
 
     @State private var showRestartSheet = false
     @State private var targetService: ServiceStatus?
@@ -18,47 +17,45 @@ struct ServiceManagerView: View {
     @State private var lastRestartedService: String?
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    AdministrationModeNotice()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                AdministrationModeNotice()
 
-                    if store.services.isEmpty {
-                        placeholder
-                    } else {
-                        serviceList
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 28)
-            }
-            .background(theme.bg.ignoresSafeArea())
-            .navigationTitle("Services")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    if !isRestarting {
-                        Button("Done") { dismiss() }
-                    } else {
-                        ProgressView()
-                    }
+                if store.services.isEmpty {
+                    placeholder
+                } else {
+                    serviceList
                 }
             }
-            .confirmationSheet(
-                isPresented: $showRestartSheet,
-                title: "Restart service",
-                message: pendingOperation.map { store.writeCoordinator.preview(for: $0) },
-                destructive: true,
-                destructiveLabel: "Restart",
-                confirmLabel: "Cancel",
-                onConfirm: confirmRestart
-            ) {}
-            .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
-            .task { await store.refresh() }
-            .refreshable {
-                await store.refresh()
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 28)
+        }
+        .background(theme.bg.ignoresSafeArea())
+        .navigationTitle("Services")
+        .navigationBarTitleDisplayMode(.inline)
+        // Pushed from More, so the back button is the way out. It is hidden
+        // while a write runs, as the old Done button was, so nobody leaves
+        // the screen with a request in flight.
+        .navigationBarBackButtonHidden(isRestarting)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if isRestarting { ProgressView() }
             }
+        }
+        .confirmationSheet(
+            isPresented: $showRestartSheet,
+            title: "Restart service",
+            message: pendingOperation.map { store.writeCoordinator.preview(for: $0) },
+            destructive: true,
+            destructiveLabel: "Restart",
+            confirmLabel: "Cancel",
+            onConfirm: confirmRestart
+        ) {}
+        .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+        .task { await store.refresh() }
+        .refreshable {
+            await store.refresh()
         }
     }
 

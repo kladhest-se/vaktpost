@@ -210,6 +210,10 @@ struct ServerEditView: View {
     @State private var isAuthenticatingCredential = false
     @State private var message: String?
     @State private var messageHealth: Health = .idle
+    /// Set when the last Save reached the firewall and it refused the
+    /// sign-in. Shown as its own card, directly under the credentials,
+    /// rather than as one line at the foot of the form.
+    @State private var authProblem: AuthenticationProblem?
     /// Set only by `.unavailable` — biometry that cannot run at all right
     /// now (none enrolled, none set up, locked out) rather than one attempt
     /// that failed. The difference is what to do next: a failed attempt
@@ -227,7 +231,7 @@ struct ServerEditView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Slab(rail: .info, title: "Firewall") {
+                Slab(rail: authProblem?.pointsAtCredentials == true ? .bad : .info, title: "Firewall") {
                     VStack(alignment: .leading, spacing: 12) {
                         LabelledField(title: "Label", text: $profile.label,
                                       placeholder: "fw01 — Stockholm")
@@ -265,6 +269,14 @@ struct ServerEditView: View {
                     }
                 }
 
+                // The outcome of Save sits under the fields it is about, where
+                // it is seen without scrolling past the rest of the form.
+                if let authProblem {
+                    AuthenticationProblemCard(problem: authProblem)
+                } else if message != nil {
+                    messageView
+                }
+
                 certificateSlab
 
                 Slab(rail: .info, title: "Refresh") {
@@ -275,10 +287,6 @@ struct ServerEditView: View {
                 }
 
                 administrationSlab
-
-                if message != nil {
-                    messageView
-                }
 
                 if isExisting {
                     Button(role: .destructive) {
@@ -331,10 +339,10 @@ struct ServerEditView: View {
         // when nothing has actually retried it yet. Clearing it here isn't
         // itself a retry — Save still is, via saveAndTest() — it just stops
         // the screen from looking like a fix already made didn't work.
-        .onChange(of: profile.baseURL) { message = nil; showOpenSettingsButton = false }
-        .onChange(of: profile.username) { message = nil; showOpenSettingsButton = false }
+        .onChange(of: profile.baseURL) { message = nil; authProblem = nil; showOpenSettingsButton = false }
+        .onChange(of: profile.username) { message = nil; authProblem = nil; showOpenSettingsButton = false }
         .onChange(of: profile.pinnedFingerprint) { message = nil; showOpenSettingsButton = false }
-        .onChange(of: password) { message = nil; showOpenSettingsButton = false }
+        .onChange(of: password) { message = nil; authProblem = nil; showOpenSettingsButton = false }
         .confirmationDialog("Pin this certificate?", isPresented: $offerPinning,
                             titleVisibility: .visible) {
             Button("Pin it") {
@@ -494,8 +502,13 @@ struct ServerEditView: View {
                                     self.message = "Connected — pfSense \(version)"
                                     messageHealth = .ok
                                 } catch {
-                                    self.message = error.localizedDescription
-                                    messageHealth = .bad
+                                    if let problem = AuthenticationProblem(error, username: profile.username) {
+                                        authProblem = problem
+                                        self.message = nil
+                                    } else {
+                                        self.message = error.localizedDescription
+                                        messageHealth = .bad
+                                    }
                                 }
                             }
                         }
@@ -720,6 +733,7 @@ struct ServerEditView: View {
             return
         }
 
+        authProblem = nil
         do {
             let version = try await store.client.ping()
             if let saved = registry.servers.first(where: { $0.id == p.id }) { profile = saved }
@@ -728,9 +742,16 @@ struct ServerEditView: View {
             dismiss()
         } catch {
             if let saved = registry.servers.first(where: { $0.id == p.id }) { profile = saved }
-            // Stays open: the error is the reason to still be here.
-            message = error.localizedDescription
-            messageHealth = .bad
+            // Stays open: the error is the reason to still be here. The
+            // firewall itself is saved either way, so a typo can be fixed
+            // here and saved again.
+            if let problem = AuthenticationProblem(error, username: p.username) {
+                authProblem = problem
+                message = nil
+            } else {
+                message = error.localizedDescription
+                messageHealth = .bad
+            }
         }
     }
 }

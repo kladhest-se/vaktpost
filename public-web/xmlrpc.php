@@ -111,9 +111,9 @@ if ($decodedCredentials === false || !str_contains($decodedCredentials, ':')) {
 }
 [$username, $password] = explode(':', $decodedCredentials, 2);
 $expectedPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
-if (!in_array($username, XmlApiSimulator::SCENARIOS, true) || !hash_equals($expectedPassword, $password)) {
-    http_response_code(401);
-    exit('Authentication required');
+$refused = XmlApiSimulator::authenticate($username, $password, $expectedPassword);
+if ($refused !== null) {
+    faultResponse($refused['code'], $refused['message']);
 }
 
 $body = file_get_contents('php://input');

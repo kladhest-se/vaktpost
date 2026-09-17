@@ -267,7 +267,8 @@ private struct IncidentGroupRow: View {
                         NavigationStack {
                             QuickBlockView(
                                 prefillAddress: address,
-                                prefillDescription: "Repeated blocks from incident timeline (\(group.count) attempts)"
+                                prefillDescription: "Repeated blocks from incident timeline (\(group.count) attempts)",
+                                showsDoneButton: true
                             )
                         }
                     }

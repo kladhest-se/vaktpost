@@ -19,9 +19,11 @@ enum WriteErrorFormatter {
         case (.administrationDisabled, _):
             return "This firewall is in monitor-only mode. No change was sent."
         case (.unauthorized, _):
-            return "Authentication failed. Check your credentials and that the account has the 'System - HA node sync' privilege."
+            return "Not signed in: the firewall rejected the username or password. No change was made."
         case (.forbidden, _):
-            return "Access denied. The account needs the 'System - HA node sync' privilege to perform write operations."
+            return "Access denied: the account lacks the System - HA node sync privilege. No change was made."
+        case (.noCredentials, _):
+            return "No password is saved for this firewall on this device. No change was made."
         case (.offline(let detail), _):
             return "Cannot reach the firewall: \(detail)"
         case (.transport, _):
@@ -64,8 +66,12 @@ enum WriteErrorFormatter {
         switch rpcError {
         case .administrationDisabled:
             return "Open Firewalls, edit this firewall, and authenticate to enable administrative actions."
-        case .unauthorized, .forbidden:
-            return "Contact your firewall administrator to verify the account has the required privileges."
+        case .unauthorized:
+            return "Check the username and password in this firewall's settings."
+        case .forbidden:
+            return "In pfSense, add the System - HA node sync privilege to this account under System → User Manager."
+        case .noCredentials:
+            return "Open this firewall's settings and enter the password."
         case .offline:
             return "Check that the firewall is powered on and reachable on the network."
         case .transport:
@@ -77,7 +83,7 @@ enum WriteErrorFormatter {
             return "Check the firewall system logs for details about the rejected operation."
         case .malformed:
             return "The firewall may be experiencing issues. Try refreshing the page and retrying the operation."
-        case .notConfigured, .badURL, .noCredentials, .cancelled:
+        case .notConfigured, .badURL, .cancelled:
             return nil
         }
     }

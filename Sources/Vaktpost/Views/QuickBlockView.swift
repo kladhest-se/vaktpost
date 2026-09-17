@@ -23,57 +23,64 @@ struct QuickBlockView: View {
     /// rule itself, rather than the description defaulting to blank and
     /// the context only existing in whatever screen suggested this in the
     /// first place.
-    init(prefillAddress: String? = nil, prefillDescription: String? = nil) {
+    /// Whether this screen closes itself with Done. True when a caller
+    /// presents it as a sheet; false when it is pushed, where the back button
+    /// does that job and a Done button would just be a second back button.
+    private let showsDoneButton: Bool
+
+    init(prefillAddress: String? = nil, prefillDescription: String? = nil,
+         showsDoneButton: Bool = false) {
+        self.showsDoneButton = showsDoneButton
         _address = State(initialValue: prefillAddress ?? "")
         _description = State(initialValue: prefillDescription ?? "")
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    GroupHeading(text: "Target")
-                    Slab(rail: .info) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            interfacePicker
-                            addressField
-                            descriptionField
-                        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                GroupHeading(text: "Target")
+                Slab(rail: .info) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        interfacePicker
+                        addressField
+                        descriptionField
                     }
+                }
 
-                    if !store.canAdminister {
-                        GroupHeading(text: "Mode")
-                        AdministrationModeNotice()
-                    }
+                if !store.canAdminister {
+                    GroupHeading(text: "Mode")
+                    AdministrationModeNotice()
+                }
 
-                    GroupHeading(text: "Action")
-                    executeButton
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 28)
-                .readableWidth()
+                GroupHeading(text: "Action")
+                executeButton
             }
-            .background(theme.bg.ignoresSafeArea())
-            .tint(theme.accentColor)
-            .navigationTitle("Quick Block")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    if !isExecuting {
-                        Button("Done") { dismiss() }
-                    } else {
-                        ProgressView()
-                    }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+            .readableWidth()
+        }
+        .background(theme.bg.ignoresSafeArea())
+        .tint(theme.accentColor)
+        .navigationTitle("Quick Block")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(isExecuting)
+        .interactiveDismissDisabled(isExecuting)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                if isExecuting {
+                    ProgressView()
+                } else if showsDoneButton {
+                    Button("Done") { dismiss() }
                 }
             }
-            .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
-            .onAppear {
-                if let firstUp = store.overviewLayout.interfaces.first(where: {
-                    $0.isUp && $0.internalName != nil
-                }) {
-                    selectedInterface = firstUp
-                }
+        }
+        .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
+        .onAppear {
+            if let firstUp = store.overviewLayout.interfaces.first(where: {
+                $0.isUp && $0.internalName != nil
+            }) {
+                selectedInterface = firstUp
             }
         }
     }

@@ -21,10 +21,15 @@ by Vaktpost. Enter the website origin as the firewall base URL; Vaktpost adds
 - Username `updates`: outdated firmware and one outdated package
 - Username `degraded`: gateway, VPN, and service problems
 - Username `fault`: sign-in succeeds, then feature calls fail deliberately
+- Username `noaccess`: the password is accepted, but the account is refused
+  for lacking the XML-RPC privilege
+- Any other username, or a wrong password: refused as a wrong sign-in
 - Default password: `vaktpost-demo`
 
-Set `VAKTPOST_DEMO_PASSWORD` in production to change the shared password. The
-endpoint never evaluates the submitted PHP or connects to a firewall. It
+Set `VAKTPOST_DEMO_PASSWORD` in production to change the shared password.
+Refused sign-ins are XML-RPC faults starting with "Authentication failed", as
+pfSense sends them, not HTTP 401; only a request with no Basic Auth header gets
+a 401. The endpoint never evaluates the submitted PHP or connects to a firewall. It
 recognizes only known Vaktpost request signatures and returns synthetic data.
 The Updates profile uses an expiring PHP session so the app can verify that a
 simulated firmware or package update completed.

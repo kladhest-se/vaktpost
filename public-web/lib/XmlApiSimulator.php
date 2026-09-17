@@ -12,6 +12,33 @@ final class XmlApiSimulator
     /** @var list<string> */
     public const SCENARIOS = ['review', 'updates', 'degraded', 'fault'];
 
+    /** Signs in with the right password, but lacks the XML-RPC privilege. */
+    public const DENIED_USERNAME = 'noaccess';
+
+    /**
+     * Check Basic Auth credentials the way pfSense's xmlrpc.php reports them.
+     *
+     * pfSense does not answer a bad sign-in with HTTP 401; it returns an
+     * XML-RPC fault whose text starts with "Authentication failed". The lab
+     * does the same, so the app's handling of a refused sign-in can be tried
+     * here. The password is compared first, in constant time, whatever the
+     * username.
+     *
+     * @return array{code: int, message: string}|null null when signed in
+     */
+    public static function authenticate(string $username, string $password, string $expectedPassword): ?array
+    {
+        $passwordMatches = hash_equals($expectedPassword, $password);
+        $knownUser = in_array($username, self::SCENARIOS, true) || $username === self::DENIED_USERNAME;
+        if (!$passwordMatches || !$knownUser) {
+            return ['code' => -1, 'message' => 'Authentication failed: Invalid username or password'];
+        }
+        if ($username === self::DENIED_USERNAME) {
+            return ['code' => -2, 'message' => 'Authentication failed: not enough privileges'];
+        }
+        return null;
+    }
+
     /**
      * Match a Vaktpost PHP snippet by reviewed signature and return synthetic data.
      * The supplied PHP is treated only as text and is never evaluated.

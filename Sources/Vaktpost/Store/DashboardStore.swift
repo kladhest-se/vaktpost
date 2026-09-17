@@ -100,6 +100,12 @@ final class DashboardStore: Observable {
         var freshErrors: [Section: String] = [:]
         var fatal: String?
         var networkDown = false
+        /// Set by the first request the firewall refused on identity.
+        var authentication: AuthenticationProblem?
+        /// Whether nothing more in this cycle is worth sending: no route, or
+        /// a sign-in that every further request would fail the same way —
+        /// and each would be another failed login on the firewall.
+        var stopped: Bool { networkDown || authentication != nil }
         var succeeded = 0
         var succeededSections: Set<Section> = []
         var failedSections: Set<Section> = []
@@ -131,10 +137,6 @@ final class DashboardStore: Observable {
     var interfaceErrors = InterfaceErrorTracker()
     let gatewayManager = GatewayManager()
     let overviewLayout = OverviewLayout()
-    let performanceMetrics = PerformanceMetricsStore()
-    let anomalyDetector = TrafficAnomalyDetector()
-    let clientHistory = ClientHistoryTracker()
-    let diffViewer = FirewallDiffViewer()
 
     // MARK: Dependencies
 
@@ -389,6 +391,19 @@ final class DashboardStore: Observable {
     /// exists to avoid.
     var isUnreachable: Bool { connectionError != nil }
 
+    /// Why the firewall refused this app, when that is the reason nothing
+    /// loaded. Shown instead of the generic unreachable screen.
+    ///
+    /// While it is set, the timed refresh does nothing: every attempt would be
+    /// another failed sign-in, and pfSense's login protection blocks an
+    /// address after a handful of those. A manual refresh, a settings change
+    /// or a switch to another firewall still tries again.
+    var authenticationProblem: AuthenticationProblem?
+
+    /// Set by a screen that wants the active firewall's settings opened; the
+    /// firewall menu, which owns that sheet, presents it and clears this.
+    var wantsActiveFirewallSettings = false
+
     /// The theme the person chose, kept so a relaunch restores it.
     var themeName: String = "auto"
 
@@ -618,6 +633,7 @@ final class DashboardStore: Observable {
         store.acmeCertificates = []; store.acmeAccounts = []
         store.haproxyFrontends = []; store.haproxyBackends = []
         store.alertManager.alerts = []; store.errors = [:]; store.connectionError = nil; store.lastRefresh = nil
+        store.authenticationProblem = nil
     }
 
     private func clearData() {
@@ -660,7 +676,6 @@ extension DashboardStore {
         isRefreshing = true
         defer { if bindingID == binding { isRefreshing = false } }
         refreshCount += 1
-        let refreshStartTime = Date()
 
         let cycle = RefreshCycle()
         guard isCurrent(binding) else { return }
@@ -789,7 +804,11 @@ extension DashboardStore {
         // Each is a quarter-megabyte read and a separate exec_php, and pfSense
         // serialises XML-RPC — so four of them added seconds to every refresh
         // for a screen that is usually not on the display.
-        await loadSecondaryLogsIfNeeded()
+        // Neither follow-up below is worth a request the firewall has already
+        // refused, or one with no route to it.
+        if !cycle.stopped {
+            await loadSecondaryLogsIfNeeded()
+        }
         guard isCurrent(binding) else { return }
 
         // Track VPN throughput from cumulative byte counters.
@@ -801,7 +820,7 @@ extension DashboardStore {
         // Not awaited: it takes seconds and the rest of the dashboard should
         // not wait behind it. Without this there would be no package alert
         // unless somebody remembered to press a button, which is not an alert.
-        if shouldCheckPackages {
+        if shouldCheckPackages, !cycle.stopped {
             Task {
                 guard self.isCurrent(binding) else { return }
                 await self.checkPackageUpdates()
@@ -809,7 +828,7 @@ extension DashboardStore {
         }
         guard isCurrent(binding) else { return }
 
-        finishRefreshCycle(cycle: cycle, refreshStartTime: refreshStartTime)
+        finishRefreshCycle(cycle: cycle)
     }
 
     /// Feeds the core batch's results into every tracker that samples from
@@ -863,8 +882,8 @@ extension DashboardStore {
 
     /// Everything that happens once a refresh cycle's fetches are all done:
     /// publishing errors, deciding the connection banner, and feeding every
-    /// downstream tracker and analyzer that runs once per refresh.
-    private func finishRefreshCycle(cycle: RefreshCycle, refreshStartTime: Date) {
+    /// downstream tracker that runs once per refresh.
+    private func finishRefreshCycle(cycle: RefreshCycle) {
         for section in cycle.succeededSections { errors[section] = nil }
         for (section, message) in cycle.freshErrors { errors[section] = message }
 
@@ -883,50 +902,15 @@ extension DashboardStore {
         if !cycle.networkDown {
             connectionError = cycle.succeeded == 0 ? cycle.fatal : nil
         }
+        // A network failure says nothing about the credentials, so it clears
+        // a stale sign-in problem rather than leaving it over the wrong cause.
+        authenticationProblem = cycle.networkDown || cycle.succeeded > 0 ? nil : cycle.authentication
         lastRefresh = Date()
         alertManager.alerts = VaktpostAlert.build(from: self)
         alertManager.pruneAcknowledgements()
         overviewLayout.sync(from: self)
         interfaceErrors.record(interfaces)
         scheduleExpiryNotifications()
-
-        // Detect traffic anomalies
-        let currentCounts = TrafficAnomalyDetector.TrafficCounts(
-            blocked: overviewLayout.blockedRecently,
-            rejected: overviewLayout.rejectedRecently,
-            passed: overviewLayout.passedRecently,
-            timestamp: Date()
-        )
-        _ = anomalyDetector.analyze(currentCounts: currentCounts, previousCounts: TrafficAnomalyDetector.TrafficCounts(
-            blocked: prevFirewallCounts.blocked,
-            rejected: prevFirewallCounts.rejected,
-            passed: prevFirewallCounts.passed,
-            timestamp: Date()
-        ))
-
-        // Update client history
-        clientHistory.update(
-            leases: leases,
-            arp: arp,
-            statics: staticMappings,
-            hostOverrides: hostOverrides
-        )
-
-        // Take config snapshot
-        diffViewer.snapshot(
-            rules: rules,
-            aliases: aliases,
-            portForwards: portForwards
-        )
-
-        performanceMetrics.recordRefresh(
-            duration: Date().timeIntervalSince(refreshStartTime),
-            sectionsCompleted: cycle.succeededSections.count,
-            // Only attempted sections can fail. The old subtraction counted
-            // every lazy screen that this refresh deliberately did not load.
-            sectionsFailed: cycle.failedSections.count,
-            success: cycle.failedSections.isEmpty
-        )
     }
 
     /// Runs one section and records whether it worked.
@@ -937,7 +921,7 @@ extension DashboardStore {
     /// call, so mutations here are visible to `refresh()` once it resumes.
     @discardableResult
     private func run(_ section: Section, optional: Bool = false, binding: UUID, cycle: RefreshCycle) async -> Bool {
-        guard isCurrent(binding), !cycle.networkDown else { return false }
+        guard isCurrent(binding), !cycle.stopped else { return false }
         // Retry a known-missing optional endpoint every 20th cycle only.
         guard !optional || !missingEndpoints.contains(section) || refreshCount % 20 == 0 else { return false }
         do {
@@ -977,7 +961,12 @@ extension DashboardStore {
             cycle.fatal = err.localizedDescription
             cycle.networkDown = true
             connectionError = cycle.fatal
-        case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
+        case .unauthorized, .noCredentials, .forbidden:
+            cycle.fatal = err.localizedDescription
+            if cycle.authentication == nil {
+                cycle.authentication = AuthenticationProblem(err, username: profile.username)
+            }
+        case .tls, .notConfigured, .badURL:
             cycle.fatal = err.localizedDescription
         case .fault:
             let count = (faultCounts[section] ?? 0) + 1
@@ -1000,7 +989,12 @@ extension DashboardStore {
             cycle.fatal = err.localizedDescription
             cycle.networkDown = true
             connectionError = cycle.fatal
-        case .unauthorized, .noCredentials, .tls, .notConfigured, .badURL, .forbidden:
+        case .unauthorized, .noCredentials, .forbidden:
+            cycle.fatal = err.localizedDescription
+            if cycle.authentication == nil {
+                cycle.authentication = AuthenticationProblem(err, username: profile.username)
+            }
+        case .tls, .notConfigured, .badURL:
             cycle.fatal = err.localizedDescription
         case .fault:
             for section in sections {
@@ -1044,7 +1038,7 @@ extension DashboardStore {
     ) async -> Bool {
         // Skipped only when every section in it has been abandoned. One
         // bad section should not stop the other four from loading.
-        guard isCurrent(binding), !cycle.networkDown else { return false }
+        guard isCurrent(binding), !cycle.stopped else { return false }
         let live = sections.filter { !missingEndpoints.contains($0) }
         guard !live.isEmpty || refreshCount % 20 == 0 else { return false }
 
@@ -1324,31 +1318,21 @@ extension DashboardStore {
     }
 
     private func assign<T>(_ binding: UUID, _ sections: [Section], fetcher: @escaping () async throws -> T, assign: @escaping (T) -> Void) async throws {
-        let startTime = Date()
-        let endpointName = sections.first?.rawValue ?? "unknown"
-        do {
-            let value: T = try await checked(binding, sections: sections) {
-                var fresh = SectionFreshness()
-                fresh.begin(binding, at: Date())
-                do {
-                    let result = try await fetcher()
-                    fresh.succeed(binding, at: Date())
-                    return result
-                } catch {
-                    let cancelled = error is CancellationError || (error as? RPCError) == .cancelled
-                    fresh.fail(binding, message: cancelled ? nil : error.localizedDescription)
-                    throw error
-                }
+        let value: T = try await checked(binding, sections: sections) {
+            var fresh = SectionFreshness()
+            fresh.begin(binding, at: Date())
+            do {
+                let result = try await fetcher()
+                fresh.succeed(binding, at: Date())
+                return result
+            } catch {
+                let cancelled = error is CancellationError || (error as? RPCError) == .cancelled
+                fresh.fail(binding, message: cancelled ? nil : error.localizedDescription)
+                throw error
             }
-            let duration = Date().timeIntervalSince(startTime)
-            performanceMetrics.recordAPIRequest(endpoint: endpointName, duration: duration, success: true)
-            guard isCurrent(binding) else { throw RPCError.cancelled }
-            assign(value)
-        } catch {
-            let duration = Date().timeIntervalSince(startTime)
-            performanceMetrics.recordAPIRequest(endpoint: endpointName, duration: duration, success: false)
-            throw error
         }
+        guard isCurrent(binding) else { throw RPCError.cancelled }
+        assign(value)
     }
 
     /// Cap log arrays to prevent unbounded memory growth on busy firewalls.
@@ -1950,8 +1934,15 @@ extension DashboardStore {
         let interval = max(10, profile.refreshSeconds)
         refreshScheduler = RefreshScheduler(interval: TimeInterval(interval))
         refreshScheduler?.start { [self] in
-            await refresh()
+            await refreshOnSchedule()
         }
+    }
+
+    /// The timer's refresh. A refused sign-in stays refused until something
+    /// changes, so it is not retried here; see `authenticationProblem`.
+    func refreshOnSchedule() async {
+        guard authenticationProblem == nil else { return }
+        await refresh()
     }
 
     func stopAutoRefresh() {

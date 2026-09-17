@@ -7,7 +7,15 @@ enum RPCError: LocalizedError, Equatable {
     case badURL
     case noCredentials
     case administrationDisabled
+    /// The firewall rejected the username or password.
+    ///
+    /// pfSense's own XML-RPC service reports this as a fault ("Authentication
+    /// failed: Invalid username or password"), not as HTTP 401 — see
+    /// `classifyFault`. A 401 still maps here, for a proxy in front of it.
     case unauthorized
+    /// Signed in, but the account may not use XML-RPC: it lacks the
+    /// System - HA node sync privilege. pfSense says "Authentication failed:
+    /// not enough privileges"; a 403 from a proxy maps here too.
     case forbidden
     case tls
     case transport(String)
@@ -40,6 +48,18 @@ enum RPCError: LocalizedError, Equatable {
         return false
     }
 
+    /// Whether the firewall refused who we are, rather than what we asked.
+    ///
+    /// Retrying these cannot help, and each attempt is another failed sign-in
+    /// in the firewall's log — enough of them and pfSense's login protection
+    /// blocks this device's address. The dashboard stops polling on one.
+    var isAuthenticationFailure: Bool {
+        switch self {
+        case .unauthorized, .forbidden, .noCredentials: return true
+        default: return false
+        }
+    }
+
     /// Whether this means the firewall cannot be reached at all, as opposed to
     /// one request going wrong.
     var isConnectionFailure: Bool {
@@ -54,13 +74,13 @@ enum RPCError: LocalizedError, Equatable {
         case let .offline(detail): return detail
         case .notConfigured: return "No firewall configured yet."
         case .badURL: return "That base URL isn't valid."
-        case .noCredentials: return "No password stored."
+        case .noCredentials: return "No password is saved for this firewall on this device."
         case .administrationDisabled:
             return "This firewall is in monitor-only mode. Enable administrative actions in its firewall settings first."
         case .unauthorized:
-            return "Sign-in was rejected (401). Check the username, password, and that the account holds the System - HA node sync privilege."
+            return "Sign-in failed: the firewall rejected this username or password."
         case .forbidden:
-            return "Authenticated, but XML-RPC was refused (403). The account needs the System - HA node sync privilege."
+            return "Signed in, but access was denied: this account lacks the System - HA node sync privilege that XML-RPC requires."
         case .tls: return "TLS handshake failed or the certificate changed. Review the certificate in this firewall's settings."
         case .transport(let m): return m
         case .fault(let code, let message):
@@ -509,7 +529,7 @@ actor XMLRPCClient {
         if xml.contains("<fault>") {
             let code = Int(extract(xml, "int") ?? extract(xml, "i4") ?? "") ?? 0
             let message = extract(xml, "string").map(unescape) ?? "no detail"
-            throw RPCError.fault(code, message)
+            throw classifyFault(code: code, message: message)
         }
         guard let raw = extract(xml, "string") else { throw RPCError.malformed(excerpt(xml)) }
         let json = unescape(raw)
@@ -527,6 +547,24 @@ actor XMLRPCClient {
             throw RPCError.fault(0, reported)
         }
         return value
+    }
+
+    /// Turns pfSense's sign-in faults into the errors they actually are.
+    ///
+    /// `xmlrpc.php` checks credentials before it runs anything, and reports a
+    /// failure as an ordinary XML-RPC fault whose text starts with
+    /// "Authentication failed". Left as `.fault`, a wrong password read as
+    /// "The firewall reported an error (-1)" on every card and was retried on
+    /// every refresh. Only the service's own fault element is classified: a
+    /// snippet's `__error` never passes through here, so text that merely
+    /// mentions authentication in a log line cannot be mistaken for this.
+    static func classifyFault(code: Int, message: String) -> RPCError {
+        let lower = message.lowercased()
+        guard lower.contains("authentication failed") else { return .fault(code, message) }
+        if lower.contains("privilege") || lower.contains("permission") {
+            return .forbidden
+        }
+        return .unauthorized
     }
 
     private static func extract(_ xml: String, _ tag: String) -> String? {

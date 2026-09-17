@@ -46,6 +46,9 @@ First public release.
 - Certificate pinning with an explicit trust decision for self-signed
   certificates; a changed certificate is blocked until reviewed.
 - Face ID or Touch ID lock.
+- Clear sign-in errors that tell a wrong password apart from a missing
+  privilege, and no automatic retries after a refused sign-in, so pfSense's
+  login protection is not triggered.
 - No accounts, analytics, tracking or third-party services.
 
 ### Platforms and design

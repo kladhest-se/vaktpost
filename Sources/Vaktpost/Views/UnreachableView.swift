@@ -16,6 +16,77 @@ struct UnreachableView: View {
     @Environment(\.serverRegistry) private var registry: ServerRegistry
 
     var body: some View {
+        if let problem = store.authenticationProblem {
+            signInFailed(problem)
+        } else {
+            notAnswering
+        }
+    }
+
+    /// The firewall answered and refused this app. Nothing about the network
+    /// is worth checking, so none of the connection hints appear here.
+    private func signInFailed(_ problem: AuthenticationProblem) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if let name = registry.active?.displayName {
+                    Text(name)
+                        .scaledFont(13, weight: .semibold)
+                        .foregroundStyle(theme.labelMuted)
+                }
+
+                AuthenticationProblemCard(problem: problem)
+
+                if problem.kind != .missingPrivilege {
+                    actionButton(title: "Open firewall settings", symbol: "slider.horizontal.3") {
+                        store.wantsActiveFirewallSettings = true
+                    }
+                }
+
+                actionButton(title: store.isRefreshing ? "Trying…" : "Try again",
+                             symbol: "arrow.clockwise", busy: store.isRefreshing) {
+                    Task { await store.refreshManually() }
+                }
+                .disabled(store.isRefreshing)
+
+                if problem.kind == .missingPrivilege {
+                    actionButton(title: "Open firewall settings", symbol: "slider.horizontal.3") {
+                        store.wantsActiveFirewallSettings = true
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 28)
+            .readableWidth()
+        }
+        .background(theme.bg.ignoresSafeArea())
+        .navigationTitle("Not signed in")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func actionButton(title: String, symbol: String, busy: Bool = false,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: symbol)
+                        .accessibilityHidden(true)
+                }
+                Text(title)
+                    .scaledFont(14, weight: .semibold)
+                Spacer()
+            }
+            .foregroundStyle(theme.accentColor)
+            .padding(14)
+            .frame(maxWidth: .infinity)
+            .background(theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var notAnswering: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Slab(rail: .bad) {
@@ -81,7 +152,6 @@ struct UnreachableView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         hint("Whether this phone is on a network that can reach the firewall — a mobile connection usually cannot.")
                         hint("That the address and port are right, in the firewall's settings.")
-                        hint("That the account still holds the System - HA node sync privilege.")
                         if registry.active?.pinnedFingerprint.isEmpty == false {
                             // Only when pinning is on: it is a common cause,
                             // and mentioning it otherwise sends people to look

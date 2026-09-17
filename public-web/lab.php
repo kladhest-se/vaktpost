@@ -60,6 +60,7 @@ $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
           <button type="button" role="tab" aria-selected="false" data-scenario="updates">Updates</button>
           <button type="button" role="tab" aria-selected="false" data-scenario="degraded">Degraded</button>
           <button type="button" role="tab" aria-selected="false" data-scenario="fault">Fault</button>
+          <button type="button" role="tab" aria-selected="false" data-scenario="noaccess">No access</button>
         </div>
       </div>
 
@@ -87,7 +88,7 @@ $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
 
   <section class="wrap lab-explainer">
     <article><h2>Known calls only</h2><p>The endpoint recognizes Vaktpost’s audited snippets by their signatures. Unknown code receives an XML-RPC fault.</p></article>
-    <article><h2>Four useful states</h2><p>Test healthy, outdated, degraded, and deliberate-failure behavior by changing only the profile username.</p></article>
+    <article><h2>Five useful states</h2><p>Test healthy, outdated, degraded, deliberate-failure and refused-sign-in behavior by changing only the profile username. Any wrong password is refused the way pfSense refuses it.</p></article>
     <article><h2>Updates without risk</h2><p>The Updates profile simulates successful firmware and package completion in an expiring PHP session. No updater runs.</p></article>
     <article><h2>Live logs</h2><p>Each app session grows its own bounded synthetic log stream as Vaktpost polls it, including deterministic bursts for testing follow and unseen-event behavior.</p></article>
   </section>
