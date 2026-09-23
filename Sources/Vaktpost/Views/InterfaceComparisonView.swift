@@ -288,6 +288,14 @@ private struct MultiSeriesChart: View {
             VStack(alignment: .leading, spacing: 0) {
                 chart
                     .frame(minHeight: 160)
+                    // The legend below carries the series names for everyone
+                    // else; this says the same without the shapes.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(title)
+                    .accessibilityValue(series.isEmpty
+                                        ? "Nothing to compare"
+                                        : series.map { "\($0.label) peak \(Int(($0.values.max() ?? 0).rounded()))" }
+                                            .joined(separator: ", "))
                 legend
             }
         }

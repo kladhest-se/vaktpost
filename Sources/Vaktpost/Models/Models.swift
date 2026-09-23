@@ -225,6 +225,24 @@ struct StateTableSize {
 
 // MARK: - Interfaces
 
+extension Array where Element == InterfaceStat {
+    /// The interface a log line, a lease or any other firewall record means
+    /// by `raw`.
+    ///
+    /// pfSense names one interface three ways — the device (`igb0`), its own
+    /// key (`wan`) and the administrator's label (`WAN`) — and which one a
+    /// record carries depends on who wrote it. Callers need the key, because
+    /// that is what a rule is written against.
+    func matchingLogName(_ raw: String?) -> InterfaceStat? {
+        guard let raw, !raw.isEmpty else { return nil }
+        return first {
+            $0.device.caseInsensitiveCompare(raw) == .orderedSame
+                || $0.internalName?.caseInsensitiveCompare(raw) == .orderedSame
+                || $0.name.caseInsensitiveCompare(raw) == .orderedSame
+        }
+    }
+}
+
 struct InterfaceStat: Identifiable {
     var id: String { "\(device)-\(name)" }
     var name: String            // friendly name, e.g. "WAN"

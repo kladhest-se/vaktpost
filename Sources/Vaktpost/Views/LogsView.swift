@@ -557,12 +557,7 @@ struct LogDetailView: View {
     }
 
     private func stageRule(from fields: LogLine.FilterFields) {
-        let raw = fields.interfaceName ?? ""
-        let interface = store.interfaces.first {
-            $0.device.caseInsensitiveCompare(raw) == .orderedSame
-                || $0.internalName?.caseInsensitiveCompare(raw) == .orderedSame
-                || $0.name.caseInsensitiveCompare(raw) == .orderedSame
-        }?.internalName
+        let interface = store.interfaces.matchingLogName(fields.interfaceName)?.internalName
         do {
             ruleDraft = try RuleEditForm.prefilled(from: line, interface: interface)
             prefillError = nil

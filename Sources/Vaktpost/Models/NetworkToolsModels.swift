@@ -30,4 +30,3 @@ struct SpeedtestResult: Codable, Identifiable, Sendable {
         uploadMbps = d.double("upload_mbps")
     }
 }
-

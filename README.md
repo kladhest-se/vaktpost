@@ -7,113 +7,87 @@ XML-RPC service, so nothing is installed on the firewall.
 *Vaktpost* is Swedish for a sentry post: somewhere you watch the perimeter
 from, report what you see, and take a small set of deliberate actions.
 
-> **Status:** preparing the first public release, **1.0.0**. The feature set
-> below is frozen while compatibility, safety and accessibility are finished.
+> **Status:** preparing the first public release, **1.0.0**.
 
 > **Before you connect a production firewall,** read [SECURITY.md](SECURITY.md).
 > Vaktpost's account needs the **System - HA node sync** privilege, which is
 > administrator-equivalent.
 
-## Features
+## Monitoring
 
-### Monitoring
-
-- Multiple firewalls, each with its own credential, certificate pin and
-  refresh interval.
-- A configurable overview of health, interfaces, gateways, resources,
-  services, VPNs, logs and clients.
+- Several firewalls, each with its own credential, certificate pin and refresh
+  interval.
+- A configurable overview of health, interfaces, gateways, resources, services,
+  VPNs, logs and clients.
 - One searchable client list from DHCP leases, ARP and static mappings, with
-  offline vendor lookup.
+  offline vendor lookup and live traffic per device.
 - Live throughput and RRD-backed traffic history.
 - OpenVPN, WireGuard and IPsec status with connected peers.
 - Filter, system, authentication, DHCP and OpenVPN logs, live log following,
   and a combined incident timeline.
 - On-device alerts for gateways, services, capacity, certificates, CARP, VPNs,
-  updates and Dynamic DNS.
+  updates and Dynamic DNS, with optional notifications before a certificate
+  expires.
 - Notices, certificates, ACME, Dynamic DNS, HAProxy, pfBlockerNG, packages and
   firmware.
 - Network Tools: ping, traceroute, DNS lookup and a speed test run from the
-  firewall itself, plus traffic investigation.
+  firewall itself. Investigate searches rules, aliases, leases and logs for one
+  address.
 
-### Administration
+## Administration
 
 Every firewall starts in **monitor-only mode**. With administration enabled:
 
 - Filter rules and NAT port forwards: create, edit, duplicate, delete and
   reorder.
 - Filter and NAT separators, and host, network and port aliases.
-- Quick Block, and new rules prefilled from a firewall-log entry.
+- Quick Block, prefilled from wherever it was opened, and new rules prefilled
+  from a firewall-log entry.
 - Service restart and state-table flush.
 - pfSense base-system and installed-package updates.
 
-### Not included
+Changes are staged and go live only after **Apply Changes**, which shows what
+is pending first. Restarts, flushes and updates are confirmed individually.
+Every change is sent once and read back; a lost response is reported as an
+unknown outcome and never retried. Changes appear in pfSense's configuration
+history, marked `Vaktpost:`, and in an encrypted on-device audit trail.
+Everything Vaktpost can change is listed in one place,
+`PHPSnippet.writeOperations`.
 
-Vaktpost complements the pfSense WebUI rather than replacing it. Out of scope
-for 1.0:
+## Privacy and accessibility
 
-- Outbound NAT, 1:1 NAT, virtual IPs, schedules, traffic shaping and package
-  settings.
-- Installing or removing packages, backing up or restoring the firewall's
-  configuration, and CARP synchronization.
-- Bulk editing, templates, automation and unattended changes.
-- Any Vaktpost server, cloud account or remote-access relay.
-
-## Safety model
-
-- **Staged changes.** Rule, NAT, separator and alias edits use pfSense's own
-  pending-changes workflow and go live only after **Apply Changes**. That
-  applies *every* pending change on the firewall, including ones made in the
-  WebUI, so Vaktpost shows what is pending first.
-- **Confirmed actions.** Restarts, state flushes and updates each need their
-  own confirmation.
-- **Sent once, then verified.** Every change is sent a single time and read
-  back. If the response is lost, the outcome is reported as unknown and never
-  retried automatically.
-- **Recorded.** Changes appear in pfSense's configuration history, marked
-  `Vaktpost:`, and in an on-device audit trail.
-- **Declared surface.** Everything Vaktpost can change on a firewall is listed
-  in one place, `PHPSnippet.writeOperations`.
-
-## Accessibility
+No accounts, analytics, advertising or tracking. Vaktpost talks to no server
+other than the firewalls you add, and passwords stay in the Keychain on your
+device. The optional speed test is run by the firewall, against Cloudflare's
+speed-test service. The full
+[privacy policy](https://vaktpost.kladhest.se/privacy.php) is on the website.
 
 Text scales with Dynamic Type, status is never carried by colour alone,
-icon-only controls are labelled for VoiceOver, and every animation is skipped
-when Reduce Motion is on.
+controls are labelled for VoiceOver, and animations are skipped under Reduce
+Motion.
 
-## Privacy
-
-Vaktpost has no accounts, analytics, advertising or tracking, and talks to no
-server other than the firewalls you add. Passwords are kept in the Keychain on
-this device only. The optional speed test is run by the firewall itself
-against Cloudflare's speed-test service. Read the full
-[privacy policy](https://vaktpost.kladhest.se/privacy.php).
-
-## Firewall setup
+## Setup
 
 1. In **System → Advanced → Admin Access**, set **Max Processes** to at least
    5. XML-RPC shares PHP workers with the WebUI.
-2. Under **System → User Manager**, create a dedicated local user. Don't reuse
-   a personal or domain account.
-3. Give that user the **System - HA node sync** privilege.
-4. In Vaktpost, add the firewall's address, username and password.
-5. Trust the certificate. pfSense's default certificate is self-signed, so on
-   the first connection Vaktpost shows its SHA-256 fingerprint. Compare it
-   with **System → Certificates** in the WebUI, then pin it. From then on only
-   that certificate is accepted; a different one is blocked until you review
-   it in the firewall's settings.
-6. Leave monitor-only mode on unless you need administration.
-
-Vaktpost asks for **local network** access the first time it connects to a
-firewall on your network. Without it, local firewalls are unreachable.
+2. Under **System → User Manager**, create a dedicated local user — not your
+   own login — and give it the **System - HA node sync** privilege.
+3. In Vaktpost, add the firewall's address, username and password. Allow
+   **local network** access when asked, or a firewall on your own network
+   cannot be reached.
+4. Trust the certificate. pfSense's default one is self-signed, so Vaktpost
+   shows its SHA-256 fingerprint on first connection: compare it with
+   **System → Certificates**, then pin it. A different certificate is blocked
+   until you review it.
+5. Leave monitor-only mode on unless you need administration.
 
 ### Try it without a firewall
 
-The [project website](https://vaktpost.kladhest.se) hosts a synthetic firewall
-for testing. Add `https://vaktpost.kladhest.se` as the firewall address, with
-`review` as the username and `vaktpost-demo` as the password. The
+The [project website](https://vaktpost.kladhest.se) hosts a synthetic firewall.
+Add `https://vaktpost.kladhest.se` as the address, with `review` as the
+username and `vaktpost-demo` as the password; the
 [XMLAPI Lab](https://vaktpost.kladhest.se/lab.php) page lists the other
-scenarios. To host it yourself, serve `public-web/` over HTTPS; see
-[public-web/README.md](public-web/README.md).
+scenarios.
 
 ## Requirements
 
@@ -133,18 +107,16 @@ make build
 | --- | --- |
 | `make` | List all commands |
 | `make build` | Compile without starting a simulator |
-| `make test` | Run the tests on a simulator |
+| `make lint` / `make test` | Lint, or run the tests on a simulator |
 | `make ios-run` / `make ipados-run` | Run on an iPhone or iPad simulator |
 | `make install DEVICE=… TEAM_ID=…` | Install on a connected device |
 | `make archive TEAM_ID=…` | Build an App Store archive |
 | `make web` | Serve the website on port 8000 |
 
 `make devices`, `make teams` and `make destinations` list the values those
-commands need. Run `make set-team TEAM_ID=…` once to store your team in the
-untracked `local.mk`, after which the signing commands need no argument. The Xcode project is generated from `project.yml` and
+commands need; `make set-team TEAM_ID=…` stores your team once in the untracked
+`local.mk`. The Xcode project is generated from `project.yml` and
 `Config/*.xcconfig`, and is not committed.
-
-### Project layout
 
 ```text
 Config/        build settings and release version
@@ -157,13 +129,13 @@ public-web/    the project website and test lab
 
 ## Contributing
 
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md). Security problems are
-covered in [SECURITY.md](SECURITY.md).
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md). Security problems are covered
+in [SECURITY.md](SECURITY.md).
 
 ## Licence
 
-Vaktpost is free software under the GNU General Public License, version 3 or
-(at your option) any later version — see [LICENSE](LICENSE). An
+Free software under the GNU General Public License, version 3 or (at your
+option) any later version — see [LICENSE](LICENSE). An
 [additional permission](docs/APP_STORE_EXCEPTION.md) allows distribution
 through Apple's App Store, Mac App Store and TestFlight.
 

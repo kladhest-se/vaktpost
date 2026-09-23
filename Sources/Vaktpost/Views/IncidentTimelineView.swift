@@ -229,6 +229,17 @@ private struct IncidentGroupRow: View {
         return address
     }
 
+    /// The interface these events arrived on, as pfSense's own key.
+    ///
+    /// Taken from the events themselves, and only when they agree: a source
+    /// seen on two interfaces is a choice for the person to make, not one to
+    /// make for them by picking whichever event happened to be first.
+    private var sourceInterface: String? {
+        let names = Set(group.events.compactMap { $0.line.filterFields?.interfaceName })
+        guard names.count == 1, let raw = names.first else { return nil }
+        return store.interfaces.matchingLogName(raw)?.internalName
+    }
+
     var body: some View {
         // A group nothing else joined is shown exactly as a single event
         // always has been — there's no pattern here to summarize, so no
@@ -268,6 +279,7 @@ private struct IncidentGroupRow: View {
                             QuickBlockView(
                                 prefillAddress: address,
                                 prefillDescription: "Repeated blocks from incident timeline (\(group.count) attempts)",
+                                prefillInterface: sourceInterface,
                                 showsDoneButton: true
                             )
                         }

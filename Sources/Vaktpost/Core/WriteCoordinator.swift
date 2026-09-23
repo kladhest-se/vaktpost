@@ -52,7 +52,6 @@ enum AdministrativeWrite: Sendable {
         }
     }
 
-
     var target: String? {
         switch self {
         case .reloadFirewall: return nil

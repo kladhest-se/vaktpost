@@ -327,7 +327,7 @@ struct InterfaceCard: View {
         .buttonStyle(.plain)
         .sheet(isPresented: $showQuickBlock) {
             NavigationStack {
-                QuickBlockView(showsDoneButton: true)
+                QuickBlockView(prefillInterface: iface.internalName, showsDoneButton: true)
             }
         }
     }

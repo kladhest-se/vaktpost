@@ -588,34 +588,42 @@ struct ThroughputChart: View {
     }
 
     var body: some View {
-        if points.count > 1 {
-            VStack(alignment: .leading, spacing: 6) {
-                Sparkline(
-                    inSeries: points.map(\.inBps),
-                    outSeries: points.map(\.outBps),
-                    height: height,
-                    unit: tracker.unit
-                )
-                RateLegend(inBps: points.last?.inBps, outBps: points.last?.outBps)
-                if showExplanatoryText {
-                    Text("Derived from counter deltas over the last \(points.count) samples.")
-                        .scaledFont(10)
-                        .foregroundStyle(theme.labelFaint)
+        Group {
+            if points.count > 1 {
+                VStack(alignment: .leading, spacing: 6) {
+                    Sparkline(
+                        inSeries: points.map(\.inBps),
+                        outSeries: points.map(\.outBps),
+                        height: height,
+                        unit: tracker.unit
+                    )
+                    RateLegend(inBps: points.last?.inBps, outBps: points.last?.outBps)
+                    if showExplanatoryText {
+                        Text("Derived from counter deltas over the last \(points.count) samples.")
+                            .scaledFont(10)
+                            .foregroundStyle(theme.labelFaint)
+                    }
                 }
+            } else if showExplanatoryText {
+                // Only on the Network tab, where the chart is the point of the
+                // card. Elsewhere an empty frame with a caption is noise — the
+                // totals beside it already say more than a chart with no line.
+                //
+                // The count and the interface are both named: "collecting samples"
+                // on its own cannot distinguish "this started a moment ago" from
+                // "no sample will ever arrive", which is exactly the ambiguity
+                // that made the throughput bug hard to see.
+                Text(caption)
+                    .scaledFont(12)
+                    .foregroundStyle(theme.labelFaint)
             }
-        } else if showExplanatoryText {
-            // Only on the Network tab, where the chart is the point of the
-            // card. Elsewhere an empty frame with a caption is noise — the
-            // totals beside it already say more than a chart with no line.
-            //
-            // The count and the interface are both named: "collecting samples"
-            // on its own cannot distinguish "this started a moment ago" from
-            // "no sample will ever arrive", which is exactly the ambiguity
-            // that made the throughput bug hard to see.
-            Text(caption)
-                .scaledFont(12)
-                .foregroundStyle(theme.labelFaint)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Throughput chart for \(device)")
+        .accessibilityValue(points.isEmpty
+                            ? caption
+                            : "In \(tracker.unit.format(points.last?.inBps ?? 0)), "
+                              + "out \(tracker.unit.format(points.last?.outBps ?? 0))")
     }
 }
 

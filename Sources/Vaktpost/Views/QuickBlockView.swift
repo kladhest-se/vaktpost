@@ -28,9 +28,19 @@ struct QuickBlockView: View {
     /// does that job and a Done button would just be a second back button.
     private let showsDoneButton: Bool
 
+    /// The interface the caller was already looking at, as pfSense's own key.
+    ///
+    /// A block opened from an interface card or from a log event is about
+    /// that interface, and picking it again by hand is both a step and a
+    /// chance to pick the wrong one. Nothing is assumed when the caller has
+    /// no interface in mind: the first one that is up is still the default,
+    /// as it was before.
+    private let prefillInterface: String?
+
     init(prefillAddress: String? = nil, prefillDescription: String? = nil,
-         showsDoneButton: Bool = false) {
+         prefillInterface: String? = nil, showsDoneButton: Bool = false) {
         self.showsDoneButton = showsDoneButton
+        self.prefillInterface = prefillInterface
         _address = State(initialValue: prefillAddress ?? "")
         _description = State(initialValue: prefillDescription ?? "")
     }
@@ -77,9 +87,16 @@ struct QuickBlockView: View {
         }
         .writeErrorAlert(isErrorPresented: $showErrorAlert, error: $writeError)
         .onAppear {
-            if let firstUp = store.overviewLayout.interfaces.first(where: {
-                $0.isUp && $0.internalName != nil
-            }) {
+            // Only before anything is chosen: coming back from the address
+            // field must not undo a selection the person just made.
+            guard selectedInterface == nil else { return }
+            let interfaces = store.overviewLayout.interfaces
+            if let asked = prefillInterface,
+               let match = interfaces.first(where: {
+                   $0.internalName?.caseInsensitiveCompare(asked) == .orderedSame
+               }) {
+                selectedInterface = match
+            } else if let firstUp = interfaces.first(where: { $0.isUp && $0.internalName != nil }) {
                 selectedInterface = firstUp
             }
         }

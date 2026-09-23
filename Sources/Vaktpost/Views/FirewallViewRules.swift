@@ -299,5 +299,4 @@ extension FirewallView {
     }
 
     // MARK: NAT
-
 }

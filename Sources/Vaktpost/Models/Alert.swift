@@ -277,7 +277,8 @@ struct VaktpostAlert: Identifiable {
                     ? "A Vaktpost snippet is failing"
                     : "A Vaktpost snippet is failing (\(recent.count) times recently)",
                 detail: historical > 0
-                    ? "\(latest.summary) — plus \(historical) older notices from failures already fixed. Clear them from the bell icon in the webConfigurator."
+                    ? "\(latest.summary) — plus \(historical) older notices from failures already "
+                      + "fixed. Clear them from the bell icon in the webConfigurator."
                     : "\(latest.summary) — these accumulate on the firewall. Clear them from the bell icon once fixed."
             )]
         }

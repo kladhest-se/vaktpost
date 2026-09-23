@@ -486,6 +486,14 @@ struct LiveThroughputChart: View {
                 }
             }
         }
+        // One element with its numbers. Traversing the shapes says nothing.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Live throughput chart")
+        .accessibilityValue(points.isEmpty
+                            ? "No samples yet"
+                            : "In \(unit.format(points.last?.inBps ?? 0)), "
+                              + "out \(unit.format(points.last?.outBps ?? 0)), "
+                              + "peak \(unit.format(peak))")
     }
 
     /// Four tick labels, top to bottom, spaced to line up with the four
@@ -634,6 +642,11 @@ struct RRDChart: View {
                 .foregroundStyle(theme.labelFaint)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Traffic history chart")
+        .accessibilityValue(drawable.isEmpty
+                            ? explanation
+                            : drawable.map(\.accessibilitySummary).joined(separator: ", "))
     }
 
     /// Four tick labels, top to bottom, spaced to line up with the four

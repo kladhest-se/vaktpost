@@ -277,7 +277,9 @@ struct ServerEditView: View {
                     messageView
                 }
 
-                certificateSlab
+                CertificateSlab(profile: profile,
+                                pendingFingerprint: $pendingFingerprint,
+                                showRepinConfirmation: $showRepinConfirmation)
 
                 Slab(rail: .info, title: "Refresh") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -529,68 +531,6 @@ struct ServerEditView: View {
         }
     }
 
-    private var certificateSlab: some View {
-        let observation = profile.certificateObservation
-        let pinMatches = observation?.matches(pin: profile.pinnedFingerprint) == true
-        let changed = observation != nil && !profile.pinnedFingerprint.isEmpty && !pinMatches
-        let health: Health = changed ? .bad
-            : observation?.expiryState().health ?? (profile.pinnedFingerprint.isEmpty ? .warn : .idle)
-
-        return Slab(rail: health, title: "Certificate") {
-            VStack(alignment: .leading, spacing: 10) {
-                FieldRow(key: "Host", value: profile.host)
-                if let observation {
-                    FieldRow(key: "Subject", value: observation.subject, mono: false)
-                    if let issuer = observation.issuer {
-                        FieldRow(key: "Issuer", value: issuer, mono: false)
-                    }
-                    if let validFrom = observation.validFrom {
-                        HStack {
-                            Text("VALID FROM").scaledFont(9, weight: .semibold)
-                                .foregroundStyle(theme.labelFaint)
-                            Spacer()
-                            Text(validFrom, style: .date).scaledFont(12)
-                                .foregroundStyle(theme.label)
-                        }
-                    }
-                    if let validUntil = observation.validUntil {
-                        HStack {
-                            Text("VALID UNTIL").scaledFont(9, weight: .semibold)
-                                .foregroundStyle(theme.labelFaint)
-                            Spacer()
-                            Text(validUntil, style: .date).scaledFont(12)
-                                .foregroundStyle(observation.expiryState().health.color(theme))
-                        }
-                    }
-                    FieldRow(key: "SHA-256", value: observation.fingerprint)
-                    FieldRow(key: "Trust", value: changed ? "certificate changed — blocked"
-                             : pinMatches ? "pinned and matched"
-                             : observation.systemTrusted ? "system trusted, not pinned"
-                             : "presented, awaiting explicit pin", mono: false)
-
-                    if changed {
-                        Text("The firewall presented a different certificate. Vaktpost rejected the connection and will not trust it automatically.")
-                            .scaledFont(12)
-                            .foregroundStyle(theme.bad)
-                        Button("Review and replace pin") {
-                            pendingFingerprint = observation.fingerprint
-                            showRepinConfirmation = true
-                        }
-                        .scaledFont(13, weight: .semibold)
-                        .foregroundStyle(theme.warn)
-                    }
-                } else {
-                    Text("Connect to observe the active certificate. Self-signed certificates must be explicitly pinned on first use.")
-                        .scaledFont(12)
-                        .foregroundStyle(theme.labelMuted)
-                    if !profile.pinnedFingerprint.isEmpty {
-                        FieldRow(key: "Pinned SHA-256", value: profile.pinnedFingerprint)
-                    }
-                }
-            }
-        }
-    }
-
     private var toggleKeyButton: some View {
         Button {
             if showKey {
@@ -814,6 +754,80 @@ struct LabelledField: View {
                 .padding(10)
                 .background(theme.cardRaised)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+    }
+}
+
+/// The certificate this firewall presented, and what Vaktpost will do about
+/// it. Its own view because `ServerEditView` is at the limit its type body
+/// is allowed, and this is the part of that form which depends on nothing
+/// the rest of it edits.
+private struct CertificateSlab: View {
+    @Environment(\.themeManager) private var theme: ThemeManager
+
+    let profile: ServerProfile
+    @Binding var pendingFingerprint: String?
+    @Binding var showRepinConfirmation: Bool
+
+    var body: some View {
+        let observation = profile.certificateObservation
+        let pinMatches = observation?.matches(pin: profile.pinnedFingerprint) == true
+        let changed = observation != nil && !profile.pinnedFingerprint.isEmpty && !pinMatches
+        let health: Health = changed ? .bad
+            : observation?.expiryState().health ?? (profile.pinnedFingerprint.isEmpty ? .warn : .idle)
+
+        return Slab(rail: health, title: "Certificate") {
+            VStack(alignment: .leading, spacing: 10) {
+                FieldRow(key: "Host", value: profile.host)
+                if let observation {
+                    FieldRow(key: "Subject", value: observation.subject, mono: false)
+                    if let issuer = observation.issuer {
+                        FieldRow(key: "Issuer", value: issuer, mono: false)
+                    }
+                    if let validFrom = observation.validFrom {
+                        HStack {
+                            Text("VALID FROM").scaledFont(9, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                            Spacer()
+                            Text(validFrom, style: .date).scaledFont(12)
+                                .foregroundStyle(theme.label)
+                        }
+                    }
+                    if let validUntil = observation.validUntil {
+                        HStack {
+                            Text("VALID UNTIL").scaledFont(9, weight: .semibold)
+                                .foregroundStyle(theme.labelFaint)
+                            Spacer()
+                            Text(validUntil, style: .date).scaledFont(12)
+                                .foregroundStyle(observation.expiryState().health.color(theme))
+                        }
+                    }
+                    FieldRow(key: "SHA-256", value: observation.fingerprint)
+                    FieldRow(key: "Trust", value: changed ? "certificate changed — blocked"
+                             : pinMatches ? "pinned and matched"
+                             : observation.systemTrusted ? "system trusted, not pinned"
+                             : "presented, awaiting explicit pin", mono: false)
+
+                    if changed {
+                        Text("The firewall presented a different certificate. Vaktpost rejected the connection and will not trust it automatically.")
+                            .scaledFont(12)
+                            .foregroundStyle(theme.bad)
+                        Button("Review and replace pin") {
+                            pendingFingerprint = observation.fingerprint
+                            showRepinConfirmation = true
+                        }
+                        .scaledFont(13, weight: .semibold)
+                        .foregroundStyle(theme.warn)
+                    }
+                } else {
+                    Text("Connect to observe the active certificate. Self-signed certificates must be explicitly pinned on first use.")
+                        .scaledFont(12)
+                        .foregroundStyle(theme.labelMuted)
+                    if !profile.pinnedFingerprint.isEmpty {
+                        FieldRow(key: "Pinned SHA-256", value: profile.pinnedFingerprint)
+                    }
+                }
+            }
         }
     }
 }

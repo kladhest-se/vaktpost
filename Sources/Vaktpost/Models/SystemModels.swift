@@ -585,6 +585,13 @@ struct RRDSeries: Identifiable, Sendable {
     var name: String
     var points: [(at: Date, value: Double)]
 
+    /// This series in one spoken line: its name and its peak, for a chart
+    /// that is otherwise a set of shapes to VoiceOver.
+    var accessibilitySummary: String {
+        let peak = points.map(\.value).max() ?? 0
+        return "\(name) peak \(Int(peak.rounded()))"
+    }
+
     /// How many values the firewall had, and how many survived the filter.
     ///
     /// The difference is the diagnosis: equal and zero means nothing is

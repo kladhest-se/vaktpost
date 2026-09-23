@@ -52,6 +52,27 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(iface.health, .ok)
     }
 
+    /// pfSense calls one interface three things depending on which record is
+    /// being read, and a rule can only be written against its key.
+    func testAnInterfaceIsFoundByDeviceKeyOrLabel() {
+        let interfaces = [
+            InterfaceStat(dict(["descr": "WAN", "name": "wan", "hwif": "igb0", "status": "up"])),
+            InterfaceStat(dict(["descr": "LAN", "name": "lan", "hwif": "igb1", "status": "up"])),
+        ]
+        XCTAssertEqual(interfaces.matchingLogName("igb0")?.internalName, "wan")
+        XCTAssertEqual(interfaces.matchingLogName("wan")?.internalName, "wan")
+        XCTAssertEqual(interfaces.matchingLogName("LAN")?.internalName, "lan")
+        XCTAssertEqual(interfaces.matchingLogName("lan")?.internalName, "lan")
+        XCTAssertEqual(interfaces.matchingLogName("IGB1")?.internalName, "lan")
+    }
+
+    func testAnUnknownOrMissingInterfaceNameMatchesNothing() {
+        let interfaces = [InterfaceStat(dict(["descr": "WAN", "name": "wan", "hwif": "igb0", "status": "up"]))]
+        XCTAssertNil(interfaces.matchingLogName("igb9"))
+        XCTAssertNil(interfaces.matchingLogName(""))
+        XCTAssertNil(interfaces.matchingLogName(nil))
+    }
+
     func testInterfaceWithoutAnAddressSaysSo() {
         let iface = InterfaceStat(dict(["name": "OPT1", "hwif": "em2", "status": "no carrier"]))
         XCTAssertEqual(iface.addressLine, "no address")
