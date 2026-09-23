@@ -18,13 +18,34 @@ extension FirewallClient {
     @discardableResult
     static func validatedWriteResponse(_ dict: JSONDict, operation: String) throws -> JSONDict {
         guard let status = dict.string("status"), status == "ok" else {
-            let status = dict.string("status") ?? "missing status"
-            let detail = dict.string("error").flatMap { $0.isEmpty ? nil : $0 }
-            let message = detail.map { "\(operation) failed (\(status)): \($0)" }
-                ?? "\(operation) failed (\(status))."
-            throw RPCError.fault(0, message)
+            throw RPCError.fault(0, writeFailureMessage(dict, operation: operation))
         }
         return dict
+    }
+
+    /// Why a write is being reported as failed, in enough detail to act on.
+    ///
+    /// A snippet that ran to either of its ends reports `status`, and usually
+    /// an `error` with it. Anything else means the response is not the one the
+    /// snippet writes — a shape this app does not know, or a run that stopped
+    /// partway — and "missing status" alone left nothing to go on. So the
+    /// message names what did come back: the keys, or that there were none.
+    static func writeFailureMessage(_ dict: JSONDict, operation: String) -> String {
+        let detail = dict.string("error").flatMap { $0.isEmpty ? nil : $0 }
+        if let status = dict.string("status") {
+            return detail.map { "\(operation) failed (\(status)): \($0)" }
+                ?? "\(operation) failed (\(status))."
+        }
+        if let detail {
+            return "\(operation) failed: \(detail)"
+        }
+        let keys = dict.raw.keys.sorted()
+        guard !keys.isEmpty else {
+            return "\(operation) failed: the firewall returned an empty result, so the change may or may not "
+                + "have been made. Check the firewall before trying again."
+        }
+        return "\(operation) failed: the firewall's reply had no status. It returned: "
+            + keys.joined(separator: ", ") + "."
     }
 
     /// Configuration writes are saves, not applies. Require the snippet to

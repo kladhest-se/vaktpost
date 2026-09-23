@@ -33,7 +33,6 @@ struct MoreView: View {
                     link("Analytics", "chart.bar", badge: 0) { AnalyticsView() }
                     link("Investigate", "magnifyingglass", badge: 0) { InvestigateView() }
                     link("Network Tools", "dot.radiowaves.left.and.right", badge: 0) { NetworkToolsView() }
-                    link("Speed Test", "gauge.with.dots.needle.67percent", badge: 0) { SpeedtestView() }
                     link("Conflicts", "exclamationmark.triangle", badge: store.conflictCount) { ConflictsView() }
                 }
 

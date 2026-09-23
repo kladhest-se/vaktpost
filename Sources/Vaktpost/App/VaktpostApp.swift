@@ -50,6 +50,8 @@ struct ServerMenu: View {
             Image(systemName: "server.rack")
                 .scaledFont(16)
         }
+        .accessibilityLabel("Firewalls")
+        .accessibilityHint("Switch between firewalls, or manage them")
         .sheet(isPresented: $showingAllFirewalls) {
             NavigationStack { AllFirewallsView() }
         }
@@ -118,6 +120,11 @@ struct AlertButton: View {
             Image(systemName: store.alertManager.criticalAlertCount > 0 ? "bell.badge.fill" : "bell")
                 .foregroundStyle(store.alertManager.criticalAlertCount > 0 ? theme.warn : theme.labelMuted)
         }
+        // The badge is the whole point of this button, and a colour change
+        // says nothing to VoiceOver — so the count is in the label.
+        .accessibilityLabel(store.alertManager.criticalAlertCount > 0
+                            ? "Alerts, \(store.alertManager.criticalAlertCount) critical"
+                            : "Alerts")
     }
 }
 

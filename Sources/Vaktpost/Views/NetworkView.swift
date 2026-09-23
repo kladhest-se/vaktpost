@@ -68,6 +68,7 @@ struct NetworkView: View {
                     } label: {
                         Image(systemName: "arrow.left.arrow.right")
                     }
+                    .accessibilityLabel("Compare interfaces")
                 }
             }
         }
@@ -232,7 +233,10 @@ struct InterfaceCard: View {
                                              ? theme.accentColor : theme.labelFaint)
                     }
                     .buttonStyle(.plain)
-                    
+                    .accessibilityLabel(store.isFavourite(iface)
+                                        ? "Remove \(iface.name) from favourites"
+                                        : "Add \(iface.name) to favourites")
+
                     Text(iface.name)
                         .scaledFont(15, weight: .semibold)
                         .foregroundStyle(theme.label)

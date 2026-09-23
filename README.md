@@ -32,7 +32,8 @@ from, report what you see, and take a small set of deliberate actions.
   updates and Dynamic DNS.
 - Notices, certificates, ACME, Dynamic DNS, HAProxy, pfBlockerNG, packages and
   firmware.
-- Ping, traceroute, DNS lookup, a speed test and traffic investigation.
+- Network Tools: ping, traceroute, DNS lookup and a speed test run from the
+  firewall itself, plus traffic investigation.
 - Download of the firewall's `config.xml`.
 
 ### Administration
@@ -73,6 +74,12 @@ for 1.0:
   `Vaktpost:`, and in an on-device audit trail.
 - **Declared surface.** Everything Vaktpost can change on a firewall is listed
   in one place, `PHPSnippet.writeOperations`.
+
+## Accessibility
+
+Text scales with Dynamic Type, status is never carried by colour alone,
+icon-only controls are labelled for VoiceOver, and every animation is skipped
+when Reduce Motion is on.
 
 ## Privacy
 

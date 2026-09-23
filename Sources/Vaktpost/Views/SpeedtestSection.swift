@@ -5,7 +5,11 @@ import SwiftUI
 /// masquerade as a slow WAN link. Builds a short on-device history across
 /// runs, scoped to this one firewall, so a trend is visible without needing
 /// several app opens to notice one.
-struct SpeedtestView: View {
+///
+/// Lives inside Network Tools rather than on a screen of its own: it asks the
+/// firewall a question about its link, which is what ping, traceroute and DNS
+/// lookup there do too, and one fewer entry in More is one less place to look.
+struct SpeedtestSection: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
 
@@ -21,43 +25,34 @@ struct SpeedtestView: View {
     }
 
     var body: some View {
-        ScrollView {
-            PageHeader(title: "Speed Test", subtitle: "Measured from the firewall's own WAN")
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Downloads and uploads a fixed test file over HTTPS and times it — the same "
-                    + "approach a browser-based speed test uses, run from the firewall itself so the "
-                    + "result reflects its WAN link rather than this phone's own connection back to it.")
-                    .scaledFont(12)
-                    .foregroundStyle(theme.labelFaint)
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Downloads and uploads a fixed test file over HTTPS and times it — the same "
+                + "approach a browser-based speed test uses, run from the firewall itself so the "
+                + "result reflects its WAN link rather than this phone's own connection back to it.")
+                .scaledFont(12)
+                .foregroundStyle(theme.labelFaint)
 
-                runButton
+            runButton
 
-                if let errorMessage {
-                    Notice(symbol: "exclamationmark.triangle", title: "Speed test failed",
-                           detail: errorMessage, health: .warn)
-                }
+            if let errorMessage {
+                Notice(symbol: "exclamationmark.triangle", title: "Speed test failed",
+                       detail: errorMessage, health: .warn)
+            }
 
-                if let latest {
-                    if latest.available {
-                        resultSlab(latest)
-                    } else {
-                        Notice(symbol: "wifi.slash", title: "Not available",
-                               detail: latest.reason ?? "The firewall could not complete a speed test.",
-                               health: .warn)
-                    }
-                }
-
-                if history.count > 1 {
-                    historySlab
+            if let latest {
+                if latest.available {
+                    resultSlab(latest)
+                } else {
+                    Notice(symbol: "wifi.slash", title: "Not available",
+                           detail: latest.reason ?? "The firewall could not complete a speed test.",
+                           health: .warn)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, 28)
+
+            if history.count > 1 {
+                historySlab
+            }
         }
-        .background(theme.bg.ignoresSafeArea())
-        .navigationTitle("Speed Test")
-        .navigationBarTitleDisplayMode(.inline)
         // Keyed to the firewall, the same way every lazy-loaded screen this
         // session was fixed to react to a switch: reloads this firewall's
         // own history rather than showing the previous one's numbers as if

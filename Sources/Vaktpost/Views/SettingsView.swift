@@ -26,70 +26,9 @@ struct SettingsView: View {
                 GroupHeading(text: "Alerts")
                 alertsSlab
 
-                GroupHeading(text: "Notifications")
-                notificationsSlab
-
                 if BiometricAuth.canUseBiometrics() {
                     GroupHeading(text: "Lock screen")
                     lockScreenSlab
-                }
-
-                GroupHeading(text: "Configured firewalls")
-                NavigationLink { ServersView() } label: {
-                    Slab(rail: store.registry.persistenceError == nil ? .info : .bad) {
-                        HStack(spacing: 10) {
-                            Image(systemName: "server.rack")
-                                .foregroundStyle(store.registry.persistenceError == nil
-                                                 ? theme.info : theme.bad)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Firewall instances")
-                                    .scaledFont(14, weight: .medium)
-                                    .foregroundStyle(theme.label)
-                                Text(store.registry.persistenceError
-                                     ?? "Connection, certificate, refresh, and administration settings for each firewall")
-                                    .scaledFont(11)
-                                    .foregroundStyle(store.registry.persistenceError == nil
-                                                     ? theme.labelFaint : theme.bad)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .scaledFont(11, weight: .semibold)
-                                .foregroundStyle(theme.labelFaint)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-
-                GroupHeading(text: "Administration")
-                Slab(rail: store.auditTrail.persistenceError == nil ? .info : .bad) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.shield")
-                            .scaledFont(15)
-                            .foregroundStyle(store.auditTrail.persistenceError == nil
-                                             ? theme.info : theme.bad)
-                            .scaledFrame(width: 22)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Administrative history")
-                                .scaledFont(14, weight: .medium)
-                                .foregroundStyle(theme.label)
-                            Text(store.auditTrail.persistenceError == nil
-                                 ? "\(store.auditTrail.entries.count) protected record\(store.auditTrail.entries.count == 1 ? "" : "s") for this firewall"
-                                 : "Protected history is unavailable")
-                                .scaledFont(11)
-                                .foregroundStyle(store.auditTrail.persistenceError == nil
-                                                 ? theme.labelFaint : theme.bad)
-                        }
-                        Spacer()
-                        ShareLink(
-                            item: store.auditTrail.redactedExport(),
-                            preview: SharePreview("Redacted Vaktpost administrative history")
-                        ) {
-                            Image(systemName: "square.and.arrow.up")
-                                .scaledFont(15)
-                                .foregroundStyle(theme.accentColor)
-                        }
-                        .disabled(store.auditTrail.entries.isEmpty)
-                    }
                 }
 
                 GroupHeading(text: "Diagnostics")
@@ -149,63 +88,61 @@ struct SettingsView: View {
     /// certificate is different: it says months in advance exactly when it
     /// will become a problem, so the notification can be scheduled for that
     /// date and arrives whether or not this app is ever opened again.
-    private var notificationsSlab: some View {
-        Slab(rail: .info) {
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle(isOn: Binding(
-                    get: { store.expiryNotifier.isEnabled },
-                    set: { on in
-                        store.expiryNotifier.isEnabled = on
-                        guard on else { return }
-                        Task {
-                            // Asked here rather than at launch. A permission
-                            // prompt on first run, before the app has shown
-                            // what it would use it for, is the reliable way to
-                            // be refused permanently.
-                            await store.expiryNotifier.requestPermission()
-                            store.scheduleExpiryNotifications()
-                        }
+    private var expiryNotifications: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: Binding(
+                get: { store.expiryNotifier.isEnabled },
+                set: { on in
+                    store.expiryNotifier.isEnabled = on
+                    guard on else { return }
+                    Task {
+                        // Asked here rather than at launch. A permission
+                        // prompt on first run, before the app has shown
+                        // what it would use it for, is the reliable way to
+                        // be refused permanently.
+                        await store.expiryNotifier.requestPermission()
+                        store.scheduleExpiryNotifications()
                     }
-                )) {
-                    Text("Certificate expiry")
-                        .scaledFont(14)
-                        .foregroundStyle(theme.label)
                 }
-                .tint(theme.accentColor)
+            )) {
+                Text("Notify before expiry")
+                    .scaledFont(13)
+                    .foregroundStyle(theme.label)
+            }
+            .tint(theme.accentColor)
 
-                Text("Scheduled 30, 14, 7, 3 and 1 days before a certificate expires, at 9am. Each notification names the firewall.")
+            Text("Scheduled 30, 14, 7, 3 and 1 days before a certificate expires, at 9am. Each notification names the firewall.")
+                .scaledFont(12)
+                .foregroundStyle(theme.labelMuted)
+
+            if store.expiryNotifier.isEnabled, store.expiryNotifier.permission == .denied {
+                // A toggle that is on and does nothing is worse than one
+                // that is off. The app cannot re-ask once refused; only
+                // iOS Settings can grant it back.
+                Text("Notifications are turned off for Vaktpost in iOS Settings, so nothing will be delivered until they are turned back on there.")
                     .scaledFont(12)
-                    .foregroundStyle(theme.labelMuted)
+                    .foregroundStyle(theme.warn)
+            }
 
-                if store.expiryNotifier.isEnabled, store.expiryNotifier.permission == .denied {
-                    // A toggle that is on and does nothing is worse than one
-                    // that is off. The app cannot re-ask once refused; only
-                    // iOS Settings can grant it back.
-                    Text("Notifications are turned off for Vaktpost in iOS Settings, so nothing will be delivered until they are turned back on there.")
-                        .scaledFont(12)
-                        .foregroundStyle(theme.warn)
-                }
-
-                if store.expiryNotifier.isEnabled, store.expiryNotifier.permission == .granted {
-                    Hairline()
-                    // A count says something is scheduled and nothing about
-                    // whether it is still true. The list behind this is the
-                    // only way to see what reconciling actually did.
-                    NavigationLink {
-                        ScheduledNotificationsView()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text(pendingDescription)
-                                .scaledFont(11, design: .monospaced)
-                                .foregroundStyle(theme.labelFaint)
-                            Spacer(minLength: 8)
-                            Image(systemName: "chevron.right")
-                                .scaledFont(10, weight: .semibold)
-                                .foregroundStyle(theme.labelFaint)
-                        }
+            if store.expiryNotifier.isEnabled, store.expiryNotifier.permission == .granted {
+                Hairline()
+                // A count says something is scheduled and nothing about
+                // whether it is still true. The list behind this is the
+                // only way to see what reconciling actually did.
+                NavigationLink {
+                    ScheduledNotificationsView()
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(pendingDescription)
+                            .scaledFont(11, design: .monospaced)
+                            .foregroundStyle(theme.labelFaint)
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .scaledFont(10, weight: .semibold)
+                            .foregroundStyle(theme.labelFaint)
                     }
-                    .buttonStyle(.plain)
                 }
+                .buttonStyle(.plain)
             }
         }
         .task {
@@ -279,6 +216,16 @@ struct SettingsView: View {
                         .contextMenu {
                             if category == .sensor { temperatureMenu }
                             if category == .capacity { capacityMenus }
+                        }
+
+                        // Certificate expiry is the one alert that is worth
+                        // knowing about before the app is next opened, so it
+                        // is also the one with a scheduled notification. It
+                        // belongs under the alert it extends rather than in a
+                        // section of its own.
+                        if category == .certificate,
+                           !store.alertManager.mutedAlertCategories.contains(category.rawValue) {
+                            expiryNotifications
                         }
                     }
                 }

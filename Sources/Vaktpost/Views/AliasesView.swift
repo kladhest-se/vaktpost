@@ -533,6 +533,7 @@ private struct AliasEditSheet: View {
                                                 .frame(width: 36, height: 36)
                                         }
                                         .buttonStyle(.bordered)
+                                        .accessibilityLabel("Remove this member")
                                     }
                                 }
                                 if member.id != edited.members.last?.id {

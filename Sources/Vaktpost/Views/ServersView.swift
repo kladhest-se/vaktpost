@@ -608,6 +608,7 @@ struct ServerEditView: View {
             }
             .foregroundStyle(theme.labelMuted)
         }
+        .accessibilityLabel(showKey ? "Hide password" : "Show password")
         .disabled(isAuthenticatingCredential)
     }
 

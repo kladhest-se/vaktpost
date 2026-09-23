@@ -60,6 +60,35 @@ struct DiagnosticsView: View {
                     }
                 }
 
+                // Both of these used to be visible only as a coloured rail on
+                // a Settings row. The rows are gone, and a storage failure is
+                // exactly what this screen is for: without it, credentials or
+                // administrative records can silently stop being written.
+                if let problem = store.registry.persistenceError {
+                    GroupHeading(text: "Firewall list")
+                    Slab(rail: .bad) {
+                        Text(problem)
+                            .scaledFont(13)
+                            .foregroundStyle(theme.label)
+                            .textSelection(.enabled)
+                    }
+                }
+
+                if let problem = store.auditTrail.persistenceError {
+                    GroupHeading(text: "Administrative history")
+                    Slab(rail: .bad) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Protected history is unavailable, so administrative changes are not being recorded on this device.")
+                                .scaledFont(13)
+                                .foregroundStyle(theme.label)
+                            Text(problem)
+                                .scaledFont(11)
+                                .foregroundStyle(theme.labelFaint)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
+
                 GroupHeading(text: "Connection")
                 Slab(rail: store.connectionError == nil ? .ok : .bad) {
                     VStack(alignment: .leading, spacing: 4) {

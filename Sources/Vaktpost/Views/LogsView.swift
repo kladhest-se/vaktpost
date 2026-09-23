@@ -207,6 +207,7 @@ struct LogsView: View {
                     } label: {
                         Image(systemName: "square.and.arrow.up")
                     }
+                    .accessibilityLabel("Share log")
                     .disabled(filteredLines.isEmpty)
                 }
             }
@@ -267,7 +268,7 @@ struct LogsView: View {
 
     private func scrollToNewest(_ proxy: ScrollViewProxy) {
         guard let first = filteredLines.first?.id else { return }
-        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(first, anchor: .top) }
+        withAnimation(Motion.animation(.easeOut(duration: 0.2))) { proxy.scrollTo(first, anchor: .top) }
     }
 
     private var firewallInterfaces: [String] {

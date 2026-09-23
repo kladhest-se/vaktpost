@@ -3085,6 +3085,12 @@ struct PHPSnippet: Sendable {
         require_once '/etc/inc/filter.inc';
         global $config;
         $toreturn = [];
+        // Overwritten by every ending below. If it survives, this snippet
+        // stopped partway — something between the config write and the dirty
+        // mark did not return — and the app is told that, rather than being
+        // handed a reply with no status at all to explain.
+        $toreturn["status"] = "incomplete";
+        $toreturn["error"] = "the quick-block snippet stopped before it finished";
         $vaktpost_payload = "\(encoded)";
         \(decodePayload)
         $vaktpost_if = trim(strval($vaktpost_input["interface"] ?? ""));
@@ -3171,6 +3177,7 @@ struct PHPSnippet: Sendable {
           }
           mark_subsystem_dirty("filter");
           $toreturn["status"] = "ok";
+          $toreturn["error"] = "";
           $toreturn["apply_pending"] = true;
           $toreturn["rule"] = $block_rule;
         }

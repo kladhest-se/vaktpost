@@ -387,7 +387,7 @@ struct HostTrafficPanel: View {
         // Kept after the bar went: `contentTransition(.numericText())` on the
         // rate labels needs an animation to drive it, and without one the
         // figures snap between captures rather than counting across.
-        .animation(.easeOut(duration: 0.3), value: host.total)
+        .animation(Motion.animation(.easeOut(duration: 0.3)), value: host.total)
     }
 
     /// The name and address, selectable only where the row does not navigate.

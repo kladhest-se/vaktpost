@@ -18,6 +18,20 @@ enum Health {
         }
     }
 
+    /// How this status reads aloud.
+    ///
+    /// The rail colour and the symbol carry it for everybody else; without
+    /// this, VoiceOver reads a card's text and none of its severity.
+    var spokenDescription: String {
+        switch self {
+        case .ok: return "healthy"
+        case .warn: return "warning"
+        case .bad: return "problem"
+        case .idle: return "idle"
+        case .info: return "information"
+        }
+    }
+
     /// `@MainActor` because `ThemeManager` is, and this reads its semantic
     /// roles. `Health` is a plain enum, so without the annotation this method
     /// is nonisolated and every `health.color(theme)` crosses an isolation
@@ -324,7 +338,7 @@ struct Sparkline: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { location in
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withAnimation(Motion.animation(.easeInOut(duration: 0.15))) {
                         showTooltip.toggle()
                         if showTooltip {
                             let chartX = max(0, min(location.x, geo.size.width))
@@ -348,8 +362,14 @@ struct Sparkline: View {
         .padding(.vertical, 4)
         .background(theme.hairline.opacity(0.22))
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Throughput sparkline showing network traffic rates")
+        // Read as one element with its numbers, rather than traversed as a
+        // stack of shapes with nothing to say. The values are the chart's
+        // whole content for anybody who cannot see the line.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Throughput chart")
+        .accessibilityValue("In \(unit.format(inSeries.last ?? 0)), "
+                            + "out \(unit.format(outSeries.last ?? 0)), "
+                            + "peak \(unit.format(peak))")
     }
 
     /// Four tick labels, top to bottom, spaced to line up with the four
@@ -818,7 +838,7 @@ struct SingleMetricSparkline: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { location in
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withAnimation(Motion.animation(.easeInOut(duration: 0.15))) {
                         showTooltip.toggle()
                         if showTooltip, let sample = sampleAt(x: location.x, in: geo.size) {
                             tooltipX = sample.x
@@ -1081,7 +1101,7 @@ struct NoticeText: View {
 
             if notice.isMultiline {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+                    withAnimation(Motion.animation(.easeInOut(duration: 0.15))) { expanded.toggle() }
                 } label: {
                     Text(expanded ? "Show less" : "Show full notice")
                         .scaledFont(12, weight: .medium)
@@ -1151,6 +1171,7 @@ struct InlineSearchField: View {
                         .foregroundStyle(theme.labelFaint)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Clear text")
             }
         }
         .padding(.horizontal, 12)

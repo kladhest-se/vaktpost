@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Ping, traceroute and DNS lookup, in one screen.
+/// Ping, traceroute, DNS lookup and a speed test, in one screen.
 ///
 /// Ping and traceroute run only on this device — see `ICMPProbe` for why:
 /// pfSense's PHP has no ICMP capability, and reaching a shell on the
@@ -17,7 +17,7 @@ struct NetworkToolsView: View {
     @Environment(\.dashboardStore) private var store: DashboardStore
 
     enum Tool: String, CaseIterable, Identifiable {
-        case ping = "Ping", traceroute = "Traceroute", dns = "DNS Lookup"
+        case ping = "Ping", traceroute = "Traceroute", dns = "DNS", speed = "Speed"
         var id: String { rawValue }
     }
 
@@ -44,21 +44,26 @@ struct NetworkToolsView: View {
 
     var body: some View {
         ScrollView {
-            PageHeader(title: "Network Tools", subtitle: "Ping, traceroute and DNS lookup")
+            PageHeader(title: "Network Tools", subtitle: "Ping, traceroute, DNS lookup and speed test")
             VStack(alignment: .leading, spacing: 14) {
                 Picker("", selection: $tool) {
                     ForEach(Tool.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
 
-                LabelledField(title: "Host", text: $host,
-                              placeholder: "IP address or hostname",
-                              keyboard: .URL, autocap: false)
+                // The speed test has no target to type: it measures the
+                // firewall's own WAN against a fixed endpoint.
+                if tool != .speed {
+                    LabelledField(title: "Host", text: $host,
+                                  placeholder: "IP address or hostname",
+                                  keyboard: .URL, autocap: false)
+                }
 
                 switch tool {
                 case .ping: pingSection
                 case .traceroute: tracerouteSection
                 case .dns: dnsSection
+                case .speed: SpeedtestSection()
                 }
             }
             .padding(.horizontal, 16)

@@ -68,7 +68,7 @@ struct RuleReorderDropDelegate: DropDelegate {
               let from = items.firstIndex(where: { $0.id == draggingID }),
               let to = items.firstIndex(where: { $0.id == target.id }) else { return }
         guard items[from].id != items[to].id else { return }
-        withAnimation(.default) {
+        withAnimation(Motion.animation(.default)) {
             items.move(fromOffsets: IndexSet(integer: from),
                        toOffset: to > from ? to + 1 : to)
         }

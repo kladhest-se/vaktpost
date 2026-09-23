@@ -121,6 +121,14 @@ final class XmlApiSimulator
         // those same paths. Session-backed, so a create/edit/delete/reorder
         // persists for the rest of this session and shows up on the next
         // read the way it would on a real firewall.
+        // Quick block first. Its snippet mentions
+        // get_configured_interface_with_descr() to validate the interface,
+        // so without a match of its own it fell through to the interface
+        // *read* below and answered a write with a list of interfaces — a
+        // reply with no status, which the app could only report as a failure.
+        if (str_contains($script, 'Vaktpost: quick-block rule added')) {
+            return ['payload' => $this->writeQuickBlock($script)];
+        }
         if (str_contains($script, '"Vaktpost: saved a rule"')) {
             return ['payload' => $this->writeSaveRule($script)];
         }
@@ -191,6 +199,22 @@ final class XmlApiSimulator
         if (str_contains($script, 'get_configured_interface_with_descr')) {
             return ['payload' => ['data' => $this->interfaces($degraded)]];
         }
+        // Standalone VPN, RRD and DNS reads. The batched forms above are
+        // matched by their batch keys; these are the same data fetched on
+        // their own, and without them those screens showed an "unknown
+        // snippet" fault in the lab while every other screen worked.
+        if (str_contains($script, 'openvpn_get_active_servers()')) {
+            return ['payload' => $this->vpnBatch($degraded)['sections']['openvpn_servers']];
+        }
+        if (str_contains($script, 'openvpn_get_active_clients()')) {
+            return ['payload' => $this->vpnBatch($degraded)['sections']['openvpn_clients']];
+        }
+        if (str_contains($script, 'rrd_lastupdate') && str_contains($script, '/var/db/rrd')) {
+            return ['payload' => $this->rrdProbe()];
+        }
+        if (str_contains($script, '"A" => DNS_A')) {
+            return ['payload' => $this->dnsLookup($script)];
+        }
         if (str_contains($script, 'return_gateways_status')) {
             return ['payload' => $this->gateways($degraded)];
         }
@@ -225,12 +249,6 @@ final class XmlApiSimulator
         }
         if (str_contains($script, 'dyndns_*.cache')) {
             return ['payload' => $this->dynamicDns()];
-        }
-        if (str_contains($script, 'get_openvpn_server_status')) {
-            return ['payload' => $this->vpnBatch($degraded)['sections']['openvpn_servers']];
-        }
-        if (str_contains($script, 'get_openvpn_client_status')) {
-            return ['payload' => $this->vpnBatch($degraded)['sections']['openvpn_clients']];
         }
         if (str_contains($script, 'ipsec_list_sa')) {
             return ['payload' => $this->vpnBatch($degraded)['sections']['ipsec_sas']];
@@ -460,6 +478,106 @@ final class XmlApiSimulator
             $result['before_tracker'] = $before;
         }
         return $result;
+    }
+
+    /**
+     * What the diagnostics probe finds on this synthetic firewall: the RRD
+     * extension present, with the traffic files the traffic history reads.
+     *
+     * @return array<string, mixed>
+     */
+    private function rrdProbe(): array
+    {
+        $files = [];
+        foreach (['wan-traffic.rrd', 'lan-traffic.rrd', 'system-processor.rrd'] as $name) {
+            $files[] = [
+                'name' => $name,
+                'path' => '/var/db/rrd/' . $name,
+                'size' => 122880,
+                'modified' => time() - 60,
+            ];
+        }
+        return [
+            'extension_loaded' => true,
+            'php_functions' => ['rrd_fetch', 'rrd_info', 'rrd_lastupdate'],
+            'pfsense_helpers' => [],
+            'rrd_inc_present' => true,
+            'file_count' => count($files),
+            'files' => $files,
+        ];
+    }
+
+    /**
+     * A lookup answered by the firewall's own resolver.
+     *
+     * Synthetic and self-contained: the lab resolves nothing, so the answer
+     * is derived from the requested name and type rather than the network.
+     *
+     * @return array<string, mixed>
+     */
+    private function dnsLookup(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $host = trim((string) ($input['host'] ?? ''));
+        $type = strtoupper(trim((string) ($input['type'] ?? 'A'))) ?: 'A';
+        $result = ['host' => $host, 'records' => [], 'answers' => [],
+                   'serverTimings' => ['query' => 12.4]];
+        if ($host === '') {
+            $result['error'] = 'Enter a valid hostname.';
+            return $result;
+        }
+        $values = [
+            'A' => '192.0.2.53',
+            'AAAA' => '2001:db8::53',
+            'CNAME' => 'alias.example.',
+            'MX' => '10 mail.example.',
+            'NS' => 'ns1.example.',
+            'TXT' => 'v=spf1 -all',
+            'SOA' => 'ns1.example. hostmaster.example. 2026091701 7200 3600 1209600 3600',
+            'PTR' => 'host.example.',
+        ];
+        if (!isset($values[$type])) {
+            $result['error'] = 'No ' . $type . ' records found.';
+            return $result;
+        }
+        $result['records'][] = ['name' => $host, 'class' => 'IN', 'type' => $type, 'value' => $values[$type]];
+        $result['answers'][] = ['name' => $host, 'address' => $values[$type]];
+        return $result;
+    }
+
+    /**
+     * Append a block rule, the way the quick_block snippet does.
+     *
+     * Session-backed like the other writes, so the rule shows up in the next
+     * read of the ruleset and the app's read-back verification finds it.
+     *
+     * @return array<string, mixed>
+     */
+    private function writeQuickBlock(string $script): array
+    {
+        $input = $this->extractPayload($script);
+        $interface = (string) ($input['interface'] ?? '');
+        $address = (string) ($input['address'] ?? '');
+        $known = array_column($this->interfaces(false), 'name');
+        if ($address === '' || !in_array($interface, $known, true)) {
+            return ['status' => 'validation_failed',
+                    'error' => 'The interface or literal IP address/network is invalid'];
+        }
+        $state = $this->state();
+        $tracker = $this->newTracker($state['rules']);
+        $rule = [
+            'tracker' => $tracker,
+            'type' => 'block',
+            'interface' => $interface,
+            'descr' => (string) ($input['descr'] ?? ''),
+            'ipprotocol' => str_contains($address, ':') ? 'inet6' : 'inet',
+            'protocol' => 'any',
+            'source' => ['address' => $address],
+            'destination' => ['any' => true],
+        ];
+        $state['rules'][] = $rule;
+        $this->saveState($state);
+        return ['status' => 'ok', 'error' => '', 'apply_pending' => true, 'rule' => $rule];
     }
 
     /** @return array<string, mixed> */

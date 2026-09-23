@@ -27,7 +27,8 @@ First public release.
   updates and Dynamic DNS.
 - System notices, certificates, ACME, Dynamic DNS, HAProxy, pfBlockerNG,
   package and firmware status.
-- Ping, traceroute, DNS lookup, a speed test and traffic investigation.
+- Network Tools: ping, traceroute, DNS lookup and a speed test, plus traffic
+  investigation.
 
 ### Administration
 
@@ -61,7 +62,8 @@ First public release.
 - iPhone and iPad, with split-view layouts on iPad.
 - The first release is distributed for iPhone and iPad; Mac availability is disabled.
 - All four Catppuccin flavours, accent colours and alternate app icons.
-- Dynamic Type, and status never shown by colour alone.
+- Dynamic Type, status never shown by colour alone, accessibility labels on
+  icon-only controls, and animations that honour Reduce Motion.
 
 ### Licence
 

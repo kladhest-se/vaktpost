@@ -95,6 +95,33 @@ final class WriteSafetyTests: XCTestCase {
         }
     }
 
+    /// "missing status" told nobody anything. A reply that is not the one the
+    /// snippet writes has to say what it was instead, or the next report of
+    /// this failure is as unactionable as the last.
+    func testAnUnrecognisedWriteReplyNamesWhatCameBack() {
+        let noStatus = JSONDict(["apply_pending": .bool(true), "rule": .string("x")])
+        let named = FirewallClient.writeFailureMessage(noStatus, operation: "Quick block")
+        XCTAssertTrue(named.contains("apply_pending, rule"), named)
+        XCTAssertFalse(named.contains("missing status"), named)
+
+        let empty = FirewallClient.writeFailureMessage(JSONDict([:]), operation: "Quick block")
+        XCTAssertTrue(empty.contains("empty result"), empty)
+        XCTAssertTrue(empty.contains("may or may not"), empty)
+
+        let reported = JSONDict(["status": .string("validation_failed"), "error": .string("bad address")])
+        let detail = FirewallClient.writeFailureMessage(reported, operation: "Quick block")
+        XCTAssertTrue(detail.contains("validation_failed"), detail)
+        XCTAssertTrue(detail.contains("bad address"), detail)
+    }
+
+    func testTheQuickBlockSnippetReportsAnUnfinishedRun() {
+        let snippet = PHPSnippet.quickBlock(interface: "wan", address: "192.0.2.44", description: "test")
+        // Set before the work and overwritten by every ending, so a run that
+        // stops partway is distinguishable from an unknown reply shape.
+        XCTAssertTrue(snippet.body.contains("$toreturn[\"status\"] = \"incomplete\";"))
+        XCTAssertTrue(snippet.body.contains("$toreturn[\"status\"] = \"ok\";"))
+    }
+
     func testSaveResponseCarriesTheIdentityNeededForReadBack() throws {
         let created = JSONDict([
             "status": .string("ok"), "apply_pending": .bool(true),

@@ -21,6 +21,8 @@ by Vaktpost. Enter the website origin as the firewall base URL; Vaktpost adds
 - Username `updates`: outdated firmware and one outdated package
 - Username `degraded`: gateway, VPN, and service problems
 - Username `fault`: sign-in succeeds, then feature calls fail deliberately
+- Administrative writes, including Quick Block, are answered with receipts and
+  kept in the session, so the change shows up in the next read
 - Username `noaccess`: the password is accepted, but the account is refused
   for lacking the XML-RPC privilege
 - Any other username, or a wrong password: refused as a wrong sign-in

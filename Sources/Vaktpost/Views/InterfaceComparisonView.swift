@@ -225,6 +225,8 @@ private struct InterfaceCheckRow: View {
     let isSelected: Bool
     let action: () -> Void
 
+    private var statusDescription: String { health.spokenDescription }
+
     private var statusColor: Color {
         switch health {
         case .ok: return theme.ok
@@ -255,6 +257,12 @@ private struct InterfaceCheckRow: View {
             }
         }
         .buttonStyle(.plain)
+        // One control, read as one thing: the name, whether it is charted,
+        // and the health the coloured dot shows to everybody else.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(isSelected ? "Shown, \(statusDescription)" : "Hidden, \(statusDescription)")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 
@@ -304,7 +312,7 @@ private struct MultiSeriesChart: View {
             }
             .contentShape(Rectangle())
             .onTapGesture { location in
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withAnimation(Motion.animation(.easeInOut(duration: 0.15))) {
                     showTooltip.toggle()
                     if showTooltip {
                         let chartX = max(0, min(location.x, geo.size.width))

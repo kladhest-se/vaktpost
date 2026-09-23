@@ -152,6 +152,7 @@ struct OverviewView: View {
                                     .foregroundStyle(theme.ok)
                                     .scaledFont(20)
                             }
+                            .accessibilityLabel("Add \(section.displayName) to the overview")
                         }
                     }
                 }
@@ -361,7 +362,7 @@ private struct SectionView: View {
                     // into place because the ForEach re-renders with the new
                     // order — the cards move in relation to each other, which
                     // is the whole point of dragging one.
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                    withAnimation(Motion.animation(.spring(response: 0.35, dampingFraction: 0.86))) {
                         var reordered = visibleSections
                         let item = reordered.remove(at: from)
                         reordered.insert(item, at: target)
@@ -375,7 +376,7 @@ private struct SectionView: View {
                 persistOrder(visibleSections)
                 HapticFeedback.sectionReorder()
 
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                withAnimation(Motion.animation(.spring(response: 0.3, dampingFraction: 0.8))) {
                     isDragging = false
                     translation = 0
                     dragOrigin = nil
@@ -398,6 +399,7 @@ private struct SectionView: View {
                             .background(theme.bad, in: Circle())
                             .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
                     }
+                    .accessibilityLabel("Hide this section")
                     .accessibilityHidden(true)
                     
                     Image(systemName: "line.3.horizontal")
@@ -424,7 +426,7 @@ private struct SectionView: View {
                     .accessibilityLabel(isCollapsed ? "Expand \(title)" : "Collapse \(title)")
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: isEditing)
+            .animation(Motion.animation(.easeInOut(duration: 0.2)), value: isEditing)
             
             if isEditing {
                 sectionMockup
@@ -501,10 +503,16 @@ private struct SectionView: View {
 }
 
 extension View {
+    /// The nudge that says these cards can be dragged.
+    ///
+    /// Skipped entirely under Reduce Motion: a repeating wobble is the kind of
+    /// movement that setting exists to stop, and the drag handles say the same
+    /// thing without moving.
     @ViewBuilder
     func wobble(_ isEditing: Bool) -> some View {
-        if isEditing {
+        if isEditing && !Motion.isReduced {
             self
+                // Motion.isReduced guards this above: the whole wobble is skipped.
                 .animation(.easeInOut(duration: 0.5).repeatCount(3, autoreverses: true), value: isEditing)
                 .wobbleOffset()
         } else {
