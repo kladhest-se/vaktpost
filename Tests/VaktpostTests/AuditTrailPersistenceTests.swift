@@ -58,40 +58,6 @@ final class AuditTrailPersistenceTests: XCTestCase {
         reloaded.bind(to: secondFirewall)
         XCTAssertTrue(reloaded.entries.isEmpty)
     }
-
-    func testRedactedExportOmitsTargetsAndPreviewText() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("vaktpost-audit-export-\(UUID().uuidString)", isDirectory: true)
-        let suite = "vaktpost-audit-export-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer {
-            try? FileManager.default.removeItem(at: directory)
-            defaults.removePersistentDomain(forName: suite)
-        }
-
-        let firewall = UUID()
-        let operation = UUID()
-        let trail = AuditTrail(storageDirectory: directory,
-                               encryptionKeyData: Data(repeating: 1, count: 32),
-                               defaults: defaults)
-        trail.bind(to: firewall)
-        try trail.begin(
-            id: operation,
-            firewallID: firewall,
-            action: .quickBlock,
-            summary: "Block private address",
-            target: "wan",
-            preview: "Block 192.0.2.44",
-            beforeHash: nil
-        )
-
-        let exported = trail.redactedExport()
-        XCTAssertTrue(exported.contains(operation.uuidString.lowercased()))
-        XCTAssertFalse(exported.contains("192.0.2.44"))
-        XCTAssertFalse(exported.contains("private address"))
-        XCTAssertFalse(exported.contains(firewall.uuidString.lowercased()))
-    }
-
     func testAdministrativeOperationProvidesSpecificPreview() {
         let operation = AdministrativeWrite.quickBlock(
             interface: "wan",

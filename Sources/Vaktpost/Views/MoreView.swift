@@ -30,7 +30,6 @@ struct MoreView: View {
                 group("Monitoring") {
                     link("VPN", "lock.shield", badge: 0) { VPNView() }
                     link("Incident Timeline", "point.3.connected.trianglepath.dotted", badge: 0) { IncidentTimelineView() }
-                    link("Analytics", "chart.bar", badge: 0) { AnalyticsView() }
                     link("Investigate", "magnifyingglass", badge: 0) { InvestigateView() }
                     link("Network Tools", "dot.radiowaves.left.and.right", badge: 0) { NetworkToolsView() }
                     link("Conflicts", "exclamationmark.triangle", badge: store.conflictCount) { ConflictsView() }

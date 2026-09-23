@@ -99,9 +99,6 @@ final class XmlApiSimulator
         if (str_contains($script, 'speed.cloudflare.com/__down')) {
             return ['payload' => $this->speedtest()];
         }
-        if (str_contains($script, 'xml_base64')) {
-            return ['payload' => $this->backupConfig()];
-        }
 
         $log = $this->logRequest($script, $scenario);
         if ($log !== null) {
@@ -1298,32 +1295,6 @@ final class XmlApiSimulator
         ];
     }
 
-    /// A small, syntactically real pfSense-style config.xml — not a copy of
-    /// anything from a real firewall, just enough structure to demonstrate
-    /// the backup flow actually downloading and sizing a file correctly.
-    private function backupConfig(): array
-    {
-        $xml = <<<XML
-        <?xml version="1.0"?>
-        <pfsense>
-        \t<version>24.11</version>
-        \t<system>
-        \t\t<hostname>vaktpost-lab</hostname>
-        \t\t<domain>example.invalid</domain>
-        \t</system>
-        \t<interfaces>
-        \t\t<wan><if>vtnet0</if></wan>
-        \t\t<lan><if>vtnet1</if></lan>
-        \t</interfaces>
-        </pfsense>
-        XML;
-        return [
-            'available' => true,
-            'xml_base64' => base64_encode($xml),
-            'size_bytes' => strlen($xml),
-            'hostname' => 'vaktpost-lab',
-        ];
-    }
 
     private function rrdTraffic(string $script): array
     {

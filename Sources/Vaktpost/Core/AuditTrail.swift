@@ -33,10 +33,20 @@ enum AuditAction: String, Codable, Sendable {
     case flushStates = "flush_states"
     case updateFirmware = "update_firmware"
     case updatePackage = "update_package"
-    case backupConfig = "backup_config"
-    case restoreConfig = "restore_config"
     case quickBlock = "quick_block"
     case other = "other"
+
+    /// An action this build does not know becomes `other` rather than
+    /// failing the decode.
+    ///
+    /// Records are kept for as long as the retention limit allows, so a build
+    /// that drops an action — configuration backup was one — would otherwise
+    /// make every earlier record in that firewall's file unreadable, taking
+    /// the surviving history down with the one entry it no longer recognises.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = AuditAction(rawValue: raw) ?? .other
+    }
 }
 
 enum AuditTrailError: LocalizedError {
@@ -185,25 +195,6 @@ final class AuditTrail {
         guard let activeFirewallID, entries.count > limit else { return }
         entries.removeFirst(entries.count - limit)
         try persist(entries, for: activeFirewallID)
-    }
-
-    /// A shareable record that omits firewall names, targets, previews and
-    /// verification details. Full records remain encrypted on this device.
-    func redactedExport() -> String {
-        let formatter = ISO8601DateFormatter()
-        let header = "timestamp\toperation_id\taction\tresponse\tverification\tbefore_hash\tafter_hash"
-        let rows = entries.map { entry in
-            [
-                formatter.string(from: entry.timestamp),
-                entry.id.uuidString.lowercased(),
-                entry.action.rawValue,
-                entry.responseStatus,
-                entry.verification.rawValue,
-                entry.beforeHash ?? "",
-                entry.afterHash ?? ""
-            ].joined(separator: "\t")
-        }
-        return ([header] + rows).joined(separator: "\n")
     }
 
     /// Clears the active firewall's records only.

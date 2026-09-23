@@ -34,7 +34,6 @@ from, report what you see, and take a small set of deliberate actions.
   firmware.
 - Network Tools: ping, traceroute, DNS lookup and a speed test run from the
   firewall itself, plus traffic investigation.
-- Download of the firewall's `config.xml`.
 
 ### Administration
 
@@ -54,8 +53,8 @@ for 1.0:
 
 - Outbound NAT, 1:1 NAT, virtual IPs, schedules, traffic shaping and package
   settings.
-- Installing or removing packages, restoring a configuration, and CARP
-  synchronization.
+- Installing or removing packages, backing up or restoring the firewall's
+  configuration, and CARP synchronization.
 - Bulk editing, templates, automation and unattended changes.
 - Any Vaktpost server, cloud account or remote-access relay.
 

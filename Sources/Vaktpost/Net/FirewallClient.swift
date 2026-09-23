@@ -120,12 +120,6 @@ actor FirewallClient {
         SpeedtestResult(try await rpc.runObject(.speedtest, timeout: 75))
     }
 
-    /// The configuration file exactly as it is on disk right now. Read-only
-    /// — see ConfigBackup's own comment for why no restore path exists.
-    func backupConfig() async throws -> ConfigBackup? {
-        ConfigBackup(try await rpc.runObject(.backupConfig, timeout: 20))
-    }
-
     func gateways() async throws -> [GatewayStatus] {
         try await rpc.runList(.gateways).map(GatewayStatus.init)
     }

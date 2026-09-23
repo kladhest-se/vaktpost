@@ -5241,32 +5241,6 @@ struct PHPSnippet: Sendable {
     }
     """)
 
-    /// The configuration file exactly as pfSense has it on disk right now —
-    /// a plain read, base64-encoded for safe transport, never a write. No
-    /// entry in `writeOperations` needed: `file_get_contents()` here is the
-    /// read this app's own write-boundary rules already permit without
-    /// restriction (only write-mode `fopen` and `file_put_contents` are
-    /// forbidden), and nothing below ever assigns back to `$config` or
-    /// calls `write_config()`.
-    static let backupConfig = PHPSnippet("backup_config", """
-    ini_set('display_errors', 0);
-    require_once '/etc/inc/globals.inc';
-    global $g;
-    $toreturn = [];
-    $cfgdir = $g['conf_path'] ?? '/cf/conf';
-    $cfgfile = $cfgdir . '/config.xml';
-    if (!file_exists($cfgfile) || !is_readable($cfgfile)) {
-        $toreturn["available"] = false;
-        $toreturn["reason"] = "The configuration file could not be read.";
-    } else {
-        $xml = file_get_contents($cfgfile);
-        $toreturn["available"] = $xml !== false;
-        $toreturn["xml_base64"] = $xml !== false ? base64_encode($xml) : null;
-        $toreturn["size_bytes"] = $xml !== false ? strlen($xml) : 0;
-        $toreturn["hostname"] = php_uname('n');
-    }
-    """)
-
     /// Every snippet, for the publish check to audit and for tests to cover.
     static var all: [PHPSnippet] {
         [telemetry, firmware, packages, packageUpdates, updateProcessStatus,
@@ -5276,7 +5250,7 @@ struct PHPSnippet: Sendable {
          ruleSeparators, carp,
          certificates, dyndns, ping, rrdProbe, rrdTrace,
          batchCore, batchClients, batchVpn, batchSystem,
-         reloadFirewall, speedtest, backupConfig]
+         reloadFirewall, speedtest]
         + LogSource.allCases.map { log($0, limit: 100) }
         + RRDWindow.allCases.map { rrdTraffic($0) }
         + HostFilter.allCases.map { hostTraffic(slot: 0, filter: $0, sort: .inbound) }

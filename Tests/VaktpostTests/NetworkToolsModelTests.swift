@@ -57,45 +57,4 @@ final class NetworkToolsModelTests: XCTestCase {
         XCTAssertEqual(decoded.downloadMbps, original.downloadMbps)
         XCTAssertEqual(decoded.uploadMbps, original.uploadMbps)
     }
-
-    // MARK: ConfigBackup
-
-    func testAvailableBackupDecodesAndBase64DecodesTheXML() throws {
-        let xml = "<pfsense><version>24.11</version></pfsense>"
-        let encoded = Data(xml.utf8).base64EncodedString()
-        let backup = try XCTUnwrap(ConfigBackup(try dict("""
-        {"available": true, "xml_base64": "\(encoded)", "size_bytes": \(xml.utf8.count), "hostname": "fw01"}
-        """)))
-        XCTAssertEqual(backup.hostname, "fw01")
-        XCTAssertEqual(backup.sizeBytes, xml.utf8.count)
-        XCTAssertEqual(String(data: backup.xml, encoding: .utf8), xml)
-    }
-
-    func testUnavailableBackupDecodesToNilRatherThanAnEmptyFile() throws {
-        // "available: false" (unreadable config file) must not decode into
-        // a ConfigBackup with empty data that looks like a valid, if tiny,
-        // backup.
-        let backup = ConfigBackup(try dict("""
-        {"available": false, "reason": "The configuration file could not be read."}
-        """))
-        XCTAssertNil(backup)
-    }
-
-    func testMalformedBase64DecodesToNilRatherThanCrashing() throws {
-        let backup = ConfigBackup(try dict("""
-        {"available": true, "xml_base64": "not valid base64!!", "hostname": "fw01"}
-        """))
-        XCTAssertNil(backup)
-    }
-
-    func testSuggestedFilenameIsFilesystemSafeAndIncludesHostAndDate() throws {
-        let xml = "<pfsense/>"
-        let encoded = Data(xml.utf8).base64EncodedString()
-        let backup = try XCTUnwrap(ConfigBackup(try dict("""
-        {"available": true, "xml_base64": "\(encoded)", "hostname": "se-lin-fw/localdomain"}
-        """), fetchedAt: Date(timeIntervalSince1970: 1_700_000_000)))
-        XCTAssertFalse(backup.suggestedFilename.contains("/"))
-        XCTAssertTrue(backup.suggestedFilename.hasSuffix(".xml"))
-        XCTAssertTrue(backup.suggestedFilename.contains("config"))
-    }
 }

@@ -127,7 +127,6 @@ final class DashboardStore: Observable {
     /// Safety infrastructure for write operations.
     let auditTrail: AuditTrail
     let rateLimiter: WriteRateLimiter
-    let analytics: WriteAnalytics
 
     /// Whether interface error counters are moving, refresh over refresh.
     ///
@@ -477,10 +476,8 @@ final class DashboardStore: Observable {
         let generation = BindingGeneration()
         let auditTrail = AuditTrail(defaults: defaults)
         let rateLimiter = WriteRateLimiter()
-        let analytics = WriteAnalytics()
         self.auditTrail = auditTrail
         self.rateLimiter = rateLimiter
-        self.analytics = analytics
         self.generation = generation
         self.defaults = defaults
         self.expiryNotifier = ExpiryNotifier(defaults: defaults)
@@ -506,8 +503,7 @@ final class DashboardStore: Observable {
             profile: profile,
             client: client,
             auditTrail: auditTrail,
-            rateLimiter: rateLimiter,
-            analytics: analytics
+            rateLimiter: rateLimiter
         ) {
             generation.id == binding && registry.active?.id == profile.id
         }
@@ -579,8 +575,7 @@ final class DashboardStore: Observable {
             profile: profile,
             client: reboundClient,
             auditTrail: auditTrail,
-            rateLimiter: rateLimiter,
-            analytics: analytics
+            rateLimiter: rateLimiter
         ) { [weak registry] in
             currentGeneration.id == binding && registry?.active?.id == profile.id
         }

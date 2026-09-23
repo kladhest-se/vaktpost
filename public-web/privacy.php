@@ -47,7 +47,6 @@ $policyUpdated = '17 September 2026';
       <li><strong>Face ID and Touch ID.</strong> Handled entirely by iOS. Vaktpost only learns whether unlocking succeeded.</li>
       <li><strong>Notifications.</strong> Alerts are created on your device. No push service is used.</li>
       <li><strong>Local network.</strong> iOS asks for local network access so Vaktpost can reach firewalls on your network. It is used for nothing else.</li>
-      <li><strong>Configuration download.</strong> When you download a firewall's configuration, it goes to the iOS share sheet, and where it goes from there is your choice.</li>
       <li><strong>Speed test.</strong> If you start one, your <em>firewall</em> — not your phone — exchanges test data with Cloudflare's speed-test service (<code>speed.cloudflare.com</code>). Cloudflare then sees your firewall's public IP address, under <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare's privacy policy</a>.</li>
     </ul>
     <p>Changes you make through Vaktpost are recorded in your firewall's own configuration history under the account you connected with. That record stays on your firewall.</p>

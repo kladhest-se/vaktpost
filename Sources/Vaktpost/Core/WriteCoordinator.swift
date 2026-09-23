@@ -52,7 +52,6 @@ enum AdministrativeWrite: Sendable {
         }
     }
 
-    var analyticsName: String { action.rawValue }
 
     var target: String? {
         switch self {
@@ -295,7 +294,6 @@ final class WriteCoordinator {
     let client: FirewallClient
     private let auditTrail: AuditTrail
     private let rateLimiter: WriteRateLimiter
-    private let analytics: WriteAnalytics
     private let isBindingCurrent: () -> Bool
     private let administrationEnabled: Bool
 
@@ -305,7 +303,6 @@ final class WriteCoordinator {
          client: FirewallClient,
          auditTrail: AuditTrail,
          rateLimiter: WriteRateLimiter,
-         analytics: WriteAnalytics,
          isBindingCurrent: @escaping () -> Bool) {
         firewallID = profile.id
         firewallName = profile.displayName
@@ -313,7 +310,6 @@ final class WriteCoordinator {
         self.client = client
         self.auditTrail = auditTrail
         self.rateLimiter = rateLimiter
-        self.analytics = analytics
         self.isBindingCurrent = isBindingCurrent
     }
 
@@ -353,7 +349,6 @@ final class WriteCoordinator {
         do {
             receipt = try await perform(operation)
         } catch {
-            analytics.record(operation: operation.analyticsName, success: false)
             let ambiguous = Self.isAmbiguous(error)
             let failureVerification: AuditVerification = ambiguous ? .outcomeUnknown : .unavailable
             try? auditTrail.finish(
@@ -379,7 +374,6 @@ final class WriteCoordinator {
                 detail: "The active firewall changed before verification.",
                 afterHash: nil
             )
-            analytics.record(operation: operation.analyticsName, success: false)
             throw WriteCoordinatorError.outcomeUnknown("The active firewall changed before verification.")
         }
 
@@ -396,7 +390,6 @@ final class WriteCoordinator {
                 detail: detail,
                 afterHash: nil
             )
-            analytics.record(operation: operation.analyticsName, success: false)
             throw WriteCoordinatorError.outcomeUnknown("Read-back failed: \(detail)")
         }
 
@@ -410,16 +403,13 @@ final class WriteCoordinator {
                 afterHash: AuditTrail.hash(readBack.snapshot)
             )
         } catch {
-            analytics.record(operation: operation.analyticsName, success: false)
             throw WriteCoordinatorError.auditCompletionFailed(error.localizedDescription)
         }
 
         guard readBack.state == .verified || readBack.state == .readBack else {
-            analytics.record(operation: operation.analyticsName, success: false)
             throw WriteCoordinatorError.verificationFailed(readBack.detail)
         }
 
-        analytics.record(operation: operation.analyticsName, success: true)
         return AdministrativeWriteOutcome(
             operationID: operationID,
             verification: readBack.state,
