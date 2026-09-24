@@ -36,7 +36,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     </a>
     <nav class="site-nav" aria-label="Primary">
       <a href="#top" aria-current="page">App</a>
-      <a href="#gallery">Screens</a>
+      <a href="#features">Features</a>
       <a href="lab.php">XMLAPI Lab</a>
       <a href="privacy.php">Privacy</a>
       <a href="https://github.com/kladhest-se/vaktpost">GitHub</a>
@@ -76,131 +76,117 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 <section class="section--sunken" id="features">
   <div class="wrap">
     <h2>What it does</h2>
-    <p class="lede">Broad visibility, a small administration surface, and no unattended changes.</p>
+    <p class="lede">Broad visibility, a small administration surface, and no unattended changes. Tap any screen to see it full size.</p>
 
-    <div class="showcase">
-      <div class="showcase__panel">
-        <div class="showcase__media device">
-          <img class="device__shot" src="screenshots/dnsbl.png"
-               alt="The DNSBL section of the Overview: a donut of blocked domains by feed, the busiest feeds listed beside it, and the hour with the most blocks.">
-        </div>
-        <div class="showcase__text">
-          <h3>pfBlockerNG, at a glance</h3>
-          <p>How much DNSBL is actually blocking, which feed is doing it, and when. The donut is every feed by share of blocks; the list underneath is the same data in order, because a colour is not a number.</p>
-        </div>
-      </div>
-
-      <div class="showcase__panel showcase__panel--reverse">
-        <div class="showcase__media device">
-          <img class="device__shot" src="screenshots/network-interfaces.png"
-               alt="The Network screen: WAN, LAN and VLAN interfaces, each with its address, link speed and current throughput in and out.">
-        </div>
-        <div class="showcase__text">
-          <h3>Every interface, with its traffic</h3>
-          <p>Address, media, link state and live throughput per interface, updated on the refresh interval you choose. Tap one for its history, error counters and the devices behind it.</p>
-        </div>
-      </div>
-
-      <div class="showcase__panel">
-        <div class="showcase__media device">
-          <img class="device__shot" src="screenshots/client-investigation.png"
-               alt="A client investigation: the device's names and addresses, its manufacturer from the offline IEEE registry, its leases and neighbour entries, and the firewall log lines that match it.">
-        </div>
-        <div class="showcase__text">
-          <h3>One device, everything known about it</h3>
-          <p>Names, addresses, vendor, leases, ARP neighbours and the matching firewall log, gathered from every table the firewall keeps. Each log line opens the entry behind it, and the entry opens the rule that decided it.</p>
-        </div>
-      </div>
-
-      <div class="showcase__panel showcase__panel--reverse">
-        <div class="showcase__media device">
-          <img class="device__shot" src="screenshots/updates.png"
-               alt="The Updates screen: the installed pfSense version against the available one, and the installed packages with updates waiting.">
-        </div>
-        <div class="showcase__text">
-          <h3>Updates you start deliberately</h3>
-          <p>Firmware and package versions checked when you ask, and started only after an explicit confirmation. The firewall runs its own updater; the app watches it and reports what happened.</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="capabilities">
-      <div class="capability">
-        <h4>Logs and investigation</h4>
-        <p>Firewall, system and VPN logs on one incident timeline, with live log following and ping, traceroute, DNS and a speed test.</p>
-      </div>
-      <div class="capability">
-        <h4>VPN and services</h4>
-        <p>OpenVPN, WireGuard, and IPsec, each with its connected peers.</p>
-      </div>
-      <div class="capability">
-        <h4>Staged changes</h4>
-        <p>The review also flags any other administrators' pending work before you apply.</p>
-      </div>
-      <div class="capability">
-        <h4>More than one firewall</h4>
-        <p>Each firewall gets its own credential, TLS settings, and administration switch.</p>
-      </div>
-      <div class="capability">
-        <h4>Rules and aliases</h4>
-        <p>Filter rules, NAT port forwards, separators and aliases — including URL tables the firewall keeps current itself.</p>
-      </div>
-      <div class="capability">
-        <h4>Built for iPad too</h4>
-        <p>Network, Aliases, VPN and the incident timeline use split-view layouts on iPad: pick from the list and the detail stays beside it.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="gallery">
-  <div class="wrap">
-    <h2>A look around</h2>
-    <p class="lede">Every screen here is the app running against a real firewall. Tap any of them to see it full size.</p>
-    <div class="gallery">
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
+    <div class="features">
+      <figure class="feature">
+        <button type="button" class="feature__shot">
           <img class="device__shot" src="screenshots/thumbs/overview.png" data-full="screenshots/overview.png"
                loading="lazy" decoding="async" width="460" alt="Overview: Health, resource meters, gateways, services and alerts on one screen. The blocked, rejected and passed counts open the log they count.">
         </button>
-        <figcaption><b>Overview</b> Health, resource meters, gateways, services and alerts on one screen. The blocked, rejected and passed counts open the log they count.</figcaption>
+        <figcaption>
+          <h3>Overview</h3>
+          <p>Health, resource meters, gateways, services and alerts on one screen. The blocked, rejected and passed counts open the log they count.</p>
+        </figcaption>
       </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
-          <img class="device__shot" src="screenshots/thumbs/interface-compare.png" data-full="screenshots/interface-compare.png"
-               loading="lazy" decoding="async" width="460" alt="Compare interfaces: Two or more interfaces drawn on one chart, for when the question is which of them is busy.">
+      <figure class="feature">
+        <button type="button" class="feature__shot">
+          <img class="device__shot" src="screenshots/thumbs/network-interfaces.png" data-full="screenshots/network-interfaces.png"
+               loading="lazy" decoding="async" width="460" alt="Interfaces: Address, media, link state and live throughput per interface. Tap one for its history, error counters and the devices behind it.">
         </button>
-        <figcaption><b>Compare interfaces</b> Two or more interfaces drawn on one chart, for when the question is which of them is busy.</figcaption>
+        <figcaption>
+          <h3>Interfaces</h3>
+          <p>Address, media, link state and live throughput per interface. Tap one for its history, error counters and the devices behind it.</p>
+        </figcaption>
       </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
+      <figure class="feature">
+        <button type="button" class="feature__shot">
           <img class="device__shot" src="screenshots/thumbs/clients-traffic.png" data-full="screenshots/clients-traffic.png"
-               loading="lazy" decoding="async" width="460" alt="Clients: DHCP leases, ARP and static mappings merged into one searchable list, with vendor names and live bandwidth per device.">
+               loading="lazy" decoding="async" width="460" alt="Clients: DHCP leases, ARP and static mappings merged into one searchable list, with vendor names from an offline registry and live bandwidth per device.">
         </button>
-        <figcaption><b>Clients</b> DHCP leases, ARP and static mappings merged into one searchable list, with vendor names and live bandwidth per device.</figcaption>
+        <figcaption>
+          <h3>Clients</h3>
+          <p>DHCP leases, ARP and static mappings merged into one searchable list, with vendor names from an offline registry and live bandwidth per device.</p>
+        </figcaption>
       </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
+      <figure class="feature">
+        <button type="button" class="feature__shot">
+          <img class="device__shot" src="screenshots/thumbs/client-investigation.png" data-full="screenshots/client-investigation.png"
+               loading="lazy" decoding="async" width="460" alt="Investigation: Everything the firewall knows about one device, gathered from every table it keeps. Each matching log line opens the entry, and the entry opens the rule that decided it.">
+        </button>
+        <figcaption>
+          <h3>Investigation</h3>
+          <p>Everything the firewall knows about one device, gathered from every table it keeps. Each matching log line opens the entry, and the entry opens the rule that decided it.</p>
+        </figcaption>
+      </figure>
+      <figure class="feature">
+        <button type="button" class="feature__shot">
+          <img class="device__shot" src="screenshots/thumbs/dnsbl.png" data-full="screenshots/dnsbl.png"
+               loading="lazy" decoding="async" width="460" alt="pfBlockerNG: How much DNSBL is blocking, which feed is doing it and when. The donut is every feed by share; the list beside it is the same data in order, because a colour is not a number.">
+        </button>
+        <figcaption>
+          <h3>pfBlockerNG</h3>
+          <p>How much DNSBL is blocking, which feed is doing it and when. The donut is every feed by share; the list beside it is the same data in order, because a colour is not a number.</p>
+        </figcaption>
+      </figure>
+      <figure class="feature">
+        <button type="button" class="feature__shot">
           <img class="device__shot" src="screenshots/thumbs/wireguard-peers.png" data-full="screenshots/wireguard-peers.png"
                loading="lazy" decoding="async" width="460" alt="VPN: OpenVPN, WireGuard and IPsec with their tunnels and connected peers, including last handshake and transfer.">
         </button>
-        <figcaption><b>VPN</b> OpenVPN, WireGuard and IPsec with their tunnels and connected peers, including last handshake and transfer.</figcaption>
+        <figcaption>
+          <h3>VPN</h3>
+          <p>OpenVPN, WireGuard and IPsec with their tunnels and connected peers, including last handshake and transfer.</p>
+        </figcaption>
       </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
-          <img class="device__shot" src="screenshots/thumbs/all-firewalls.png" data-full="screenshots/all-firewalls.png"
-               loading="lazy" decoding="async" width="460" alt="Several firewalls: Every firewall you have added, with its health confirmed over two readings before anything is called a problem.">
+      <figure class="feature">
+        <button type="button" class="feature__shot">
+          <img class="device__shot" src="screenshots/thumbs/interface-compare.png" data-full="screenshots/interface-compare.png"
+               loading="lazy" decoding="async" width="460" alt="Compare: Two or more interfaces on one chart, for when the question is which of them is busy.">
         </button>
-        <figcaption><b>Several firewalls</b> Every firewall you have added, with its health confirmed over two readings before anything is called a problem.</figcaption>
+        <figcaption>
+          <h3>Compare</h3>
+          <p>Two or more interfaces on one chart, for when the question is which of them is busy.</p>
+        </figcaption>
       </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
+      <figure class="feature">
+        <button type="button" class="feature__shot">
+          <img class="device__shot" src="screenshots/thumbs/updates.png" data-full="screenshots/updates.png"
+               loading="lazy" decoding="async" width="460" alt="Updates: Firmware and package versions checked when you ask, and started only after an explicit confirmation. The firewall runs its own updater; the app watches it.">
+        </button>
+        <figcaption>
+          <h3>Updates</h3>
+          <p>Firmware and package versions checked when you ask, and started only after an explicit confirmation. The firewall runs its own updater; the app watches it.</p>
+        </figcaption>
+      </figure>
+      <figure class="feature">
+        <button type="button" class="feature__shot">
+          <img class="device__shot" src="screenshots/thumbs/all-firewalls.png" data-full="screenshots/all-firewalls.png"
+               loading="lazy" decoding="async" width="460" alt="Several firewalls: Every firewall you have added, each with its own credential and administration switch, and health confirmed over two readings before anything is called a problem.">
+        </button>
+        <figcaption>
+          <h3>Several firewalls</h3>
+          <p>Every firewall you have added, each with its own credential and administration switch, and health confirmed over two readings before anything is called a problem.</p>
+        </figcaption>
+      </figure>
+      <figure class="feature">
+        <button type="button" class="feature__shot">
           <img class="device__shot" src="screenshots/thumbs/settings-appearance.png" data-full="screenshots/settings-appearance.png"
                loading="lazy" decoding="async" width="460" alt="Appearance: Four Catppuccin flavours, automatic light and dark, accent colours and alternate app icons.">
         </button>
-        <figcaption><b>Appearance</b> Four Catppuccin flavours, automatic light and dark, accent colours and alternate app icons.</figcaption>
+        <figcaption>
+          <h3>Appearance</h3>
+          <p>Four Catppuccin flavours, automatic light and dark, accent colours and alternate app icons.</p>
+        </figcaption>
       </figure>
     </div>
+
+    <ul class="also">
+      <li><b>Rules and aliases</b> — filter rules, NAT port forwards, separators and aliases, including URL tables the firewall keeps current itself.</li>
+      <li><b>Staged changes</b> — nothing takes effect until Apply Changes, which also flags other administrators' pending work.</li>
+      <li><b>Logs and tools</b> — one incident timeline, live log following, ping, traceroute, DNS and a speed test.</li>
+      <li><b>Built for iPad too</b> — Network, Aliases, VPN and the timeline use split-view layouts.</li>
+    </ul>
   </div>
 </section>
 

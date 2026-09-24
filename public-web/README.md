@@ -71,10 +71,10 @@ limiting.
 
 ## Screenshots
 
-The website uses iPhone screenshots only: each one is shown beside a
-description of what is on it, and an iPad screenshot of the same screen would
-say the same thing twice. The App Store set in `app-store-screenshots/` still
-has both.
+The website uses iPhone screenshots only, in one grid under "What it does":
+each is a thumbnail with a sentence about that screen, and the lightbox opens
+the full file. An iPad screenshot of the same screen would say the same thing
+twice; the App Store set in `app-store-screenshots/` still has both.
 
 `screenshots/` holds the page's images at 990 px wide, and
 `screenshots/thumbs/` the gallery's at 460 px. The gallery loads only the
