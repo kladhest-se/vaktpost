@@ -71,16 +71,14 @@ limiting.
 
 ## Screenshots
 
-The website uses iPhone screenshots only, in one grid under "What it does":
-each is a thumbnail with a sentence about that screen, and the lightbox opens
-the full file. An iPad screenshot of the same screen would say the same thing
-twice; the App Store set in `app-store-screenshots/` still has both.
+The website uses iPhone screenshots only, in the showcase panels, each with a
+sentence about that screen. An iPad screenshot of the same screen would say the
+same thing twice; the App Store set in `app-store-screenshots/` still has both.
 
-`screenshots/` holds the page's images at 990 px wide, and
-`screenshots/thumbs/` the gallery's at 460 px. The gallery loads only the
-thumbnails; the lightbox opens the full file named in each image's
-`data-full`. Regenerate the thumbnails whenever a screenshot changes, or the
-gallery will show the old one while the lightbox shows the new.
+`screenshots/` holds the page's images at 990 px wide. Files it does not
+reference are kept for future panels. `lightbox.js` will use a `data-full`
+attribute if an image carries one, which is how a thumbnail grid would open
+full-size images without putting them all on the page.
 
 ## Before publishing
 

@@ -8,8 +8,9 @@
   const closeButton = document.getElementById('lightbox-close');
   if (!dialog || !img || !closeButton) return;
 
-  // Gallery thumbnails carry the full-size file in data-full: the page stays
-  // light, and the dialog still shows the real screenshot.
+  // `data-full` is honoured for any thumbnail that carries it, so a page can
+  // show a small image and open the real one. Nothing uses it right now: the
+  // showcase displays the full screenshots directly.
   function open(shot) {
     img.src = shot.dataset.full || shot.currentSrc || shot.src;
     img.alt = shot.alt;
