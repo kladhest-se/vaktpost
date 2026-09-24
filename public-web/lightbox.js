@@ -8,8 +8,10 @@
   const closeButton = document.getElementById('lightbox-close');
   if (!dialog || !img || !closeButton) return;
 
+  // Gallery thumbnails carry the full-size file in data-full: the page stays
+  // light, and the dialog still shows the real screenshot.
   function open(shot) {
-    img.src = shot.currentSrc || shot.src;
+    img.src = shot.dataset.full || shot.currentSrc || shot.src;
     img.alt = shot.alt;
     dialog.showModal();
   }

@@ -69,6 +69,14 @@ Put ordinary rate limiting in front of the public endpoint. The Basic Auth
 password gates only public synthetic fixtures and is not a substitute for rate
 limiting.
 
+## Screenshots
+
+`screenshots/` holds the page's images at 990 px wide, and
+`screenshots/thumbs/` the gallery's at 460 px. The gallery loads only the
+thumbnails; the lightbox opens the full file named in each image's
+`data-full`. Regenerate the thumbnails whenever a screenshot changes, or the
+gallery will show the old one while the lightbox shows the new.
+
 ## Before publishing
 
 - Serve the site over HTTPS and confirm the host passes the `Authorization`

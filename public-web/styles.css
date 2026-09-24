@@ -299,3 +299,91 @@ footer p { max-width: 62ch; margin: 0 0 .6rem; }
 .version-badge span { padding: .32rem .5rem; background: var(--surface0); color: var(--subtext0); }
 .version-badge b { padding: .32rem .55rem; background: var(--accent); color: var(--crust); }
 .version-badge:hover { filter: brightness(1.08); }
+
+/* ── Gallery ───────────────────────────────────────────────────────────── *
+ * Thumbnails, with the full screenshot behind the lightbox: nineteen
+ * phone-sized PNGs at full width is four megabytes nobody asked to
+ * download to read a sentence about a firewall app. */
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+}
+.gallery__item { margin: 0; }
+.gallery__button {
+  display: block; width: 100%; padding: 0;
+  background: var(--crust);
+  border: 1px solid var(--surface1);
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: zoom-in;
+  transition: border-color .2s ease, transform .2s ease, box-shadow .2s ease;
+}
+.gallery__button:hover {
+  border-color: var(--overlay0);
+  transform: translateY(-3px);
+  box-shadow: 0 18px 40px -24px rgba(0,0,0,.8);
+}
+.gallery__button .device__shot { border-radius: 0; }
+.gallery figcaption {
+  margin-top: .55rem;
+  font-size: .82rem; line-height: 1.45; color: var(--subtext0);
+}
+.gallery figcaption b { color: var(--text); font-weight: 600; }
+
+/* The scenario list in the lab callout. Five usernames read as a list;
+   as one sentence they read as a paragraph nobody finishes. */
+.lab-scenarios { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; }
+.lab-scenarios li { font-size: .88rem; color: var(--subtext0); }
+.lab-scenarios code { color: var(--text); }
+
+/* ── Polish ────────────────────────────────────────────────────────────── */
+
+/* A keyboard user should be able to see what they are about to activate. */
+a:focus-visible,
+button:focus-visible,
+.gallery__button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+/* The hero sits against a faint wash of the accent, so the page opens with
+   something other than a flat rectangle. Two radial gradients rather than an
+   image: nothing to download, and it scales to any window. */
+.hero {
+  position: relative;
+  isolation: isolate;
+}
+.hero::before {
+  content: "";
+  position: absolute; inset: -20% -10% 0;
+  z-index: -1;
+  background:
+    radial-gradient(60% 55% at 22% 18%, color-mix(in oklab, var(--accent) 16%, transparent), transparent 70%),
+    radial-gradient(45% 45% at 85% 10%, color-mix(in oklab, var(--sky, var(--accent)) 12%, transparent), transparent 70%);
+  pointer-events: none;
+}
+
+.capability {
+  padding: var(--sp-3);
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  border-radius: 14px;
+  transition: border-color .2s ease;
+}
+.capability:hover { border-color: var(--surface2); }
+
+.device { transition: transform .25s ease, box-shadow .25s ease; }
+.device:hover { transform: translateY(-4px); box-shadow: 0 30px 70px -30px rgba(0,0,0,.75); }
+
+/* Everything above moves on hover. Nothing moves for somebody who asked the
+   system for less of that. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
+  .device:hover, .gallery__button:hover { transform: none; }
+}

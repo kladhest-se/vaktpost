@@ -36,6 +36,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     </a>
     <nav class="site-nav" aria-label="Primary">
       <a href="#top" aria-current="page">App</a>
+      <a href="#gallery">Screens</a>
       <a href="lab.php">XMLAPI Lab</a>
       <a href="privacy.php">Privacy</a>
       <a href="https://github.com/kladhest-se/vaktpost">GitHub</a>
@@ -74,7 +75,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 
 <section class="section--sunken" id="features">
   <div class="wrap">
-    <h2>Vaktpost Features</h2>
+    <h2>What it does</h2>
     <p class="lede">Broad visibility, a small administration surface, and no unattended changes.</p>
 
     <div class="showcase">
@@ -148,6 +149,113 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
   </div>
 </section>
 
+<section id="gallery">
+  <div class="wrap">
+    <h2>A look around</h2>
+    <p class="lede">Every screen here is the app running against a real firewall. Tap any of them to see it full size.</p>
+    <div class="gallery">
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/overview.png" data-full="screenshots/overview.png"
+               loading="lazy" decoding="async" width="460" alt="Overview: Health, resources, gateways and alerts in one screen.">
+        </button>
+        <figcaption><b>Overview</b> Health, resources, gateways and alerts in one screen.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/network-interfaces.png" data-full="screenshots/network-interfaces.png"
+               loading="lazy" decoding="async" width="460" alt="Interfaces: Every interface with its address, media and live throughput.">
+        </button>
+        <figcaption><b>Interfaces</b> Every interface with its address, media and live throughput.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/interface-compare.png" data-full="screenshots/interface-compare.png"
+               loading="lazy" decoding="async" width="460" alt="Compare: Two interfaces on one chart, for when only one of them is busy.">
+        </button>
+        <figcaption><b>Compare</b> Two interfaces on one chart, for when only one of them is busy.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/clients-traffic.png" data-full="screenshots/clients-traffic.png"
+               loading="lazy" decoding="async" width="460" alt="Clients: Leases, ARP and static mappings as one list, with live traffic.">
+        </button>
+        <figcaption><b>Clients</b> Leases, ARP and static mappings as one list, with live traffic.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/client-investigation.png" data-full="screenshots/client-investigation.png"
+               loading="lazy" decoding="async" width="460" alt="Investigation: Everything the firewall knows about one device.">
+        </button>
+        <figcaption><b>Investigation</b> Everything the firewall knows about one device.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/dnsbl.png" data-full="screenshots/dnsbl.png"
+               loading="lazy" decoding="async" width="460" alt="pfBlockerNG: What DNSBL blocked, by feed and by hour.">
+        </button>
+        <figcaption><b>pfBlockerNG</b> What DNSBL blocked, by feed and by hour.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/wireguard-peers.png" data-full="screenshots/wireguard-peers.png"
+               loading="lazy" decoding="async" width="460" alt="VPN: OpenVPN, WireGuard and IPsec with their connected peers.">
+        </button>
+        <figcaption><b>VPN</b> OpenVPN, WireGuard and IPsec with their connected peers.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/updates.png" data-full="screenshots/updates.png"
+               loading="lazy" decoding="async" width="460" alt="Updates: Firmware and package updates, started deliberately.">
+        </button>
+        <figcaption><b>Updates</b> Firmware and package updates, started deliberately.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/all-firewalls.png" data-full="screenshots/all-firewalls.png"
+               loading="lazy" decoding="async" width="460" alt="Fleet: Several firewalls at a glance, each with its own credential.">
+        </button>
+        <figcaption><b>Fleet</b> Several firewalls at a glance, each with its own credential.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/settings-appearance.png" data-full="screenshots/settings-appearance.png"
+               loading="lazy" decoding="async" width="460" alt="Appearance: Four Catppuccin flavours, accents and alternate icons.">
+        </button>
+        <figcaption><b>Appearance</b> Four Catppuccin flavours, accents and alternate icons.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/ipad-overview.png" data-full="screenshots/ipad-overview.png"
+               loading="lazy" decoding="async" width="460" alt="iPad overview: The same overview, using the space rather than stretching.">
+        </button>
+        <figcaption><b>iPad overview</b> The same overview, using the space rather than stretching.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/ipad-incident-timeline.png" data-full="screenshots/ipad-incident-timeline.png"
+               loading="lazy" decoding="async" width="460" alt="Incident timeline: Firewall, system and VPN events on one timeline.">
+        </button>
+        <figcaption><b>Incident timeline</b> Firewall, system and VPN events on one timeline.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/ipad-apply-changes.png" data-full="screenshots/ipad-apply-changes.png"
+               loading="lazy" decoding="async" width="460" alt="Apply Changes: Every staged edit reviewed before anything takes effect.">
+        </button>
+        <figcaption><b>Apply Changes</b> Every staged edit reviewed before anything takes effect.</figcaption>
+      </figure>
+      <figure class="gallery__item">
+        <button type="button" class="gallery__button">
+          <img class="device__shot" src="screenshots/thumbs/ipad-client-investigation.png" data-full="screenshots/ipad-client-investigation.png"
+               loading="lazy" decoding="async" width="460" alt="iPad investigation: The list stays beside the device you are reading about.">
+        </button>
+        <figcaption><b>iPad investigation</b> The list stays beside the device you are reading about.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
 <section class="section--sunken" id="setup">
   <div class="wrap">
     <h2>Setting it up</h2>
@@ -164,7 +272,15 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
       <h3>Try it without a firewall</h3>
       <dl class="lab-details">
         <div><dt>Base URL</dt><dd><code><?= htmlspecialchars($labOrigin, ENT_QUOTES, 'UTF-8') ?></code></dd></div>
-        <div><dt>Username</dt><dd><code>review</code> for a healthy firewall, <code>updates</code> for outdated firmware and packages, <code>degraded</code> for gateway/VPN/service problems, or <code>fault</code> to see how the app handles a firewall that stops responding partway through, or <code>noaccess</code> for an account without the XML-RPC privilege</dd></div>
+        <div><dt>Username</dt><dd>
+          <ul class="lab-scenarios">
+            <li><code>review</code> — a healthy firewall</li>
+            <li><code>updates</code> — outdated firmware and packages</li>
+            <li><code>degraded</code> — gateway, VPN and service problems</li>
+            <li><code>fault</code> — a firewall that stops responding partway through</li>
+            <li><code>noaccess</code> — an account without the XML-RPC privilege</li>
+          </ul>
+        </dd></div>
         <div><dt>Password</dt><dd><code><?= htmlspecialchars($demoPassword, ENT_QUOTES, 'UTF-8') ?></code></dd></div>
       </dl>
     </div>
