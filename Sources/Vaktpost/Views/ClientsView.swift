@@ -358,7 +358,19 @@ struct ClientDetailView: View {
                     Notice(symbol: "doc.text.magnifyingglass", title: "No matching entries in the fetched log")
                 }
                 LazyVStack(spacing: 10) {
-                    ForEach(filteredLog) { LogRow(line: $0) }
+                    // The same rows as the Logs tab, and the same detail
+                    // behind them. A matching line is usually the start of
+                    // "why was that blocked", which the entry answers and a
+                    // row cannot.
+                    ForEach(filteredLog) { line in
+                        NavigationLink {
+                            LogDetailView(line: line)
+                        } label: {
+                            LogRow(line: line)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens this log entry")
+                    }
                 }
             }
             .padding(.horizontal, 16).padding(.vertical, 12)

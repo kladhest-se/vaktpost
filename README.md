@@ -27,6 +27,7 @@ from, report what you see, and take a small set of deliberate actions.
   and a combined incident timeline.
 - The overview's blocked, rejected and passed counts open the log they count,
   and a log entry opens the rule that decided it.
+- A client's matching log entries open the log entry behind them.
 - Starred interfaces and gateways choose what the overview shows.
 - On-device alerts for gateways, services, capacity, certificates, CARP, VPNs,
   updates and Dynamic DNS. The certificate alert also schedules expiry
