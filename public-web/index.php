@@ -82,44 +82,44 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
       <div class="showcase__panel">
         <div class="showcase__media device">
           <img class="device__shot" src="screenshots/dnsbl.png"
-               alt="The DNSBL section of Overview: a donut chart of blocked domains by count, a legend of the busiest ones, and the busiest hour.">
+               alt="The DNSBL section of the Overview: a donut of blocked domains by feed, the busiest feeds listed beside it, and the hour with the most blocks.">
         </div>
         <div class="showcase__text">
-          <h3>Everything, in one overview</h3>
-          <p>Live and historical traffic, resource meters, gateway status, alerts, and blocked-domain activity — all in one screen, not spread across several pfSense pages.</p>
+          <h3>pfBlockerNG, at a glance</h3>
+          <p>How much DNSBL is actually blocking, which feed is doing it, and when. The donut is every feed by share of blocks; the list underneath is the same data in order, because a colour is not a number.</p>
         </div>
       </div>
 
       <div class="showcase__panel showcase__panel--reverse">
         <div class="showcase__media device">
-          <img class="device__shot" src="screenshots/ipad-network.png"
-               alt="The Network screen on iPad, split-view: the interface list on the left, the selected interface's live throughput and history charts on the right.">
+          <img class="device__shot" src="screenshots/network-interfaces.png"
+               alt="The Network screen: WAN, LAN and VLAN interfaces, each with its address, link speed and current throughput in and out.">
         </div>
         <div class="showcase__text">
-          <h3>Built for iPad, not just resized</h3>
-          <p>Network, Aliases, VPN, and Incident Timeline get their own split-view layouts. Pick something from the list and its detail stays on screen beside it.</p>
+          <h3>Every interface, with its traffic</h3>
+          <p>Address, media, link state and live throughput per interface, updated on the refresh interval you choose. Tap one for its history, error counters and the devices behind it.</p>
         </div>
       </div>
 
       <div class="showcase__panel">
         <div class="showcase__media device">
-          <img class="device__shot" src="screenshots/ipad-firewall-rules.png"
-               alt="The Firewall rules screen on iPad, split-view: the LAN rule list with a pending-changes banner on the left, one rule's full detail — source, destination, and every rule field — on the right.">
+          <img class="device__shot" src="screenshots/client-investigation.png"
+               alt="A client investigation: the device's names and addresses, its manufacturer from the offline IEEE registry, its leases and neighbour entries, and the firewall log lines that match it.">
         </div>
         <div class="showcase__text">
-          <h3>Edits stay reversible</h3>
-          <p>Create, edit, and reorder filter rules and NAT port forwards. Nothing takes effect until you review and apply — pfSense's own workflow, not a shortcut around it.</p>
+          <h3>One device, everything known about it</h3>
+          <p>Names, addresses, vendor, leases, ARP neighbours and the matching firewall log, gathered from every table the firewall keeps. Each log line opens the entry behind it, and the entry opens the rule that decided it.</p>
         </div>
       </div>
 
       <div class="showcase__panel showcase__panel--reverse">
         <div class="showcase__media device">
-          <img class="device__shot" src="screenshots/ipad-clients-traffic.png"
-               alt="The Clients screen on iPad, traffic view: live bandwidth per device, sorted by bandwidth in, with a search field and interface picker.">
+          <img class="device__shot" src="screenshots/updates.png"
+               alt="The Updates screen: the installed pfSense version against the available one, and the installed packages with updates waiting.">
         </div>
         <div class="showcase__text">
-          <h3>Every device, one list</h3>
-          <p>DHCP leases, ARP, and static mappings combined into one searchable inventory, with vendor names and live traffic per device.</p>
+          <h3>Updates you start deliberately</h3>
+          <p>Firmware and package versions checked when you ask, and started only after an explicit confirmation. The firewall runs its own updater; the app watches it and reports what happened.</p>
         </div>
       </div>
     </div>
@@ -127,7 +127,7 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
     <div class="capabilities">
       <div class="capability">
         <h4>Logs and investigation</h4>
-        <p>Firewall, system, and VPN logs combined into one incident timeline, plus network diagnostics.</p>
+        <p>Firewall, system and VPN logs on one incident timeline, with live log following and ping, traceroute, DNS and a speed test.</p>
       </div>
       <div class="capability">
         <h4>VPN and services</h4>
@@ -142,8 +142,12 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
         <p>Each firewall gets its own credential, TLS settings, and administration switch.</p>
       </div>
       <div class="capability">
-        <h4>Aliases, side by side</h4>
-        <p>The same split-view treatment for host, network, and port aliases.</p>
+        <h4>Rules and aliases</h4>
+        <p>Filter rules, NAT port forwards, separators and aliases — including URL tables the firewall keeps current itself.</p>
+      </div>
+      <div class="capability">
+        <h4>Built for iPad too</h4>
+        <p>Network, Aliases, VPN and the incident timeline use split-view layouts on iPad: pick from the list and the detail stays beside it.</p>
       </div>
     </div>
   </div>
@@ -157,100 +161,44 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
       <figure class="gallery__item">
         <button type="button" class="gallery__button">
           <img class="device__shot" src="screenshots/thumbs/overview.png" data-full="screenshots/overview.png"
-               loading="lazy" decoding="async" width="460" alt="Overview: Health, resources, gateways and alerts in one screen.">
+               loading="lazy" decoding="async" width="460" alt="Overview: Health, resource meters, gateways, services and alerts on one screen. The blocked, rejected and passed counts open the log they count.">
         </button>
-        <figcaption><b>Overview</b> Health, resources, gateways and alerts in one screen.</figcaption>
-      </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
-          <img class="device__shot" src="screenshots/thumbs/network-interfaces.png" data-full="screenshots/network-interfaces.png"
-               loading="lazy" decoding="async" width="460" alt="Interfaces: Every interface with its address, media and live throughput.">
-        </button>
-        <figcaption><b>Interfaces</b> Every interface with its address, media and live throughput.</figcaption>
+        <figcaption><b>Overview</b> Health, resource meters, gateways, services and alerts on one screen. The blocked, rejected and passed counts open the log they count.</figcaption>
       </figure>
       <figure class="gallery__item">
         <button type="button" class="gallery__button">
           <img class="device__shot" src="screenshots/thumbs/interface-compare.png" data-full="screenshots/interface-compare.png"
-               loading="lazy" decoding="async" width="460" alt="Compare: Two interfaces on one chart, for when only one of them is busy.">
+               loading="lazy" decoding="async" width="460" alt="Compare interfaces: Two or more interfaces drawn on one chart, for when the question is which of them is busy.">
         </button>
-        <figcaption><b>Compare</b> Two interfaces on one chart, for when only one of them is busy.</figcaption>
+        <figcaption><b>Compare interfaces</b> Two or more interfaces drawn on one chart, for when the question is which of them is busy.</figcaption>
       </figure>
       <figure class="gallery__item">
         <button type="button" class="gallery__button">
           <img class="device__shot" src="screenshots/thumbs/clients-traffic.png" data-full="screenshots/clients-traffic.png"
-               loading="lazy" decoding="async" width="460" alt="Clients: Leases, ARP and static mappings as one list, with live traffic.">
+               loading="lazy" decoding="async" width="460" alt="Clients: DHCP leases, ARP and static mappings merged into one searchable list, with vendor names and live bandwidth per device.">
         </button>
-        <figcaption><b>Clients</b> Leases, ARP and static mappings as one list, with live traffic.</figcaption>
-      </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
-          <img class="device__shot" src="screenshots/thumbs/client-investigation.png" data-full="screenshots/client-investigation.png"
-               loading="lazy" decoding="async" width="460" alt="Investigation: Everything the firewall knows about one device.">
-        </button>
-        <figcaption><b>Investigation</b> Everything the firewall knows about one device.</figcaption>
-      </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
-          <img class="device__shot" src="screenshots/thumbs/dnsbl.png" data-full="screenshots/dnsbl.png"
-               loading="lazy" decoding="async" width="460" alt="pfBlockerNG: What DNSBL blocked, by feed and by hour.">
-        </button>
-        <figcaption><b>pfBlockerNG</b> What DNSBL blocked, by feed and by hour.</figcaption>
+        <figcaption><b>Clients</b> DHCP leases, ARP and static mappings merged into one searchable list, with vendor names and live bandwidth per device.</figcaption>
       </figure>
       <figure class="gallery__item">
         <button type="button" class="gallery__button">
           <img class="device__shot" src="screenshots/thumbs/wireguard-peers.png" data-full="screenshots/wireguard-peers.png"
-               loading="lazy" decoding="async" width="460" alt="VPN: OpenVPN, WireGuard and IPsec with their connected peers.">
+               loading="lazy" decoding="async" width="460" alt="VPN: OpenVPN, WireGuard and IPsec with their tunnels and connected peers, including last handshake and transfer.">
         </button>
-        <figcaption><b>VPN</b> OpenVPN, WireGuard and IPsec with their connected peers.</figcaption>
-      </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
-          <img class="device__shot" src="screenshots/thumbs/updates.png" data-full="screenshots/updates.png"
-               loading="lazy" decoding="async" width="460" alt="Updates: Firmware and package updates, started deliberately.">
-        </button>
-        <figcaption><b>Updates</b> Firmware and package updates, started deliberately.</figcaption>
+        <figcaption><b>VPN</b> OpenVPN, WireGuard and IPsec with their tunnels and connected peers, including last handshake and transfer.</figcaption>
       </figure>
       <figure class="gallery__item">
         <button type="button" class="gallery__button">
           <img class="device__shot" src="screenshots/thumbs/all-firewalls.png" data-full="screenshots/all-firewalls.png"
-               loading="lazy" decoding="async" width="460" alt="Fleet: Several firewalls at a glance, each with its own credential.">
+               loading="lazy" decoding="async" width="460" alt="Several firewalls: Every firewall you have added, with its health confirmed over two readings before anything is called a problem.">
         </button>
-        <figcaption><b>Fleet</b> Several firewalls at a glance, each with its own credential.</figcaption>
+        <figcaption><b>Several firewalls</b> Every firewall you have added, with its health confirmed over two readings before anything is called a problem.</figcaption>
       </figure>
       <figure class="gallery__item">
         <button type="button" class="gallery__button">
           <img class="device__shot" src="screenshots/thumbs/settings-appearance.png" data-full="screenshots/settings-appearance.png"
-               loading="lazy" decoding="async" width="460" alt="Appearance: Four Catppuccin flavours, accents and alternate icons.">
+               loading="lazy" decoding="async" width="460" alt="Appearance: Four Catppuccin flavours, automatic light and dark, accent colours and alternate app icons.">
         </button>
-        <figcaption><b>Appearance</b> Four Catppuccin flavours, accents and alternate icons.</figcaption>
-      </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
-          <img class="device__shot" src="screenshots/thumbs/ipad-overview.png" data-full="screenshots/ipad-overview.png"
-               loading="lazy" decoding="async" width="460" alt="iPad overview: The same overview, using the space rather than stretching.">
-        </button>
-        <figcaption><b>iPad overview</b> The same overview, using the space rather than stretching.</figcaption>
-      </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
-          <img class="device__shot" src="screenshots/thumbs/ipad-incident-timeline.png" data-full="screenshots/ipad-incident-timeline.png"
-               loading="lazy" decoding="async" width="460" alt="Incident timeline: Firewall, system and VPN events on one timeline.">
-        </button>
-        <figcaption><b>Incident timeline</b> Firewall, system and VPN events on one timeline.</figcaption>
-      </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
-          <img class="device__shot" src="screenshots/thumbs/ipad-apply-changes.png" data-full="screenshots/ipad-apply-changes.png"
-               loading="lazy" decoding="async" width="460" alt="Apply Changes: Every staged edit reviewed before anything takes effect.">
-        </button>
-        <figcaption><b>Apply Changes</b> Every staged edit reviewed before anything takes effect.</figcaption>
-      </figure>
-      <figure class="gallery__item">
-        <button type="button" class="gallery__button">
-          <img class="device__shot" src="screenshots/thumbs/ipad-client-investigation.png" data-full="screenshots/ipad-client-investigation.png"
-               loading="lazy" decoding="async" width="460" alt="iPad investigation: The list stays beside the device you are reading about.">
-        </button>
-        <figcaption><b>iPad investigation</b> The list stays beside the device you are reading about.</figcaption>
+        <figcaption><b>Appearance</b> Four Catppuccin flavours, automatic light and dark, accent colours and alternate app icons.</figcaption>
       </figure>
     </div>
   </div>
