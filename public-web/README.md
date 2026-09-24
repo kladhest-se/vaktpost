@@ -71,8 +71,9 @@ limiting.
 
 ## Screenshots
 
-The website uses iPhone screenshots only, in the showcase panels, each with a
+The website uses iPhone screenshots in the showcase panels, each with a
 sentence about that screen. An iPad screenshot of the same screen would say the
+same thing twice; the App Store set in `app-store-screenshots/` still has both. An iPad screenshot of the same screen would say the
 same thing twice; the App Store set in `app-store-screenshots/` still has both.
 
 `screenshots/` holds the page's images at 990 px wide. Files it does not

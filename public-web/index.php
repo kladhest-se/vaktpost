@@ -102,6 +102,28 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
 
       <div class="showcase__panel">
         <div class="showcase__media device">
+          <img class="device__shot" src="screenshots/firewall-rules.png"
+               alt="The Firewall screen: a Rules and NAT switch, interface filters for Floating, LAN, OPENVPN1 and WAN, and three rules — a LAN pass to an alias on 443, a WAN block, and an OpenVPN pass to a DNS alias on 53 — each showing its action, protocol, source, destination and description.">
+        </div>
+        <div class="showcase__text">
+          <h3>Rules, readable at a glance</h3>
+          <p>Filter rules and NAT port forwards, filtered by interface or searched by description, address or port. Each rule shows its action, protocol, source, destination and description without being opened, and a coloured rail on the left says pass or block without relying on the colour alone.</p>
+        </div>
+      </div>
+
+      <div class="showcase__panel showcase__panel--reverse">
+        <div class="showcase__media device">
+          <img class="device__shot" src="screenshots/rule-editor.png"
+               alt="The rule editor: description, action, interface, protocol and IP version, then source and destination sections with address pickers, ports, and a Choose alias button showing the selected alias.">
+        </div>
+        <div class="showcase__text">
+          <h3>An editor that stages its work</h3>
+          <p>Every field pfSense has for a rule, with aliases picked from the firewall's own list rather than typed from memory. Edits are staged the way pfSense stages its own, shown in a review beside any other administrator's pending work, and applied only when you say so.</p>
+        </div>
+      </div>
+
+      <div class="showcase__panel">
+        <div class="showcase__media device">
           <img class="device__shot" src="screenshots/client-investigation.png"
                alt="A client investigation: the device's names and addresses, its manufacturer from the offline IEEE registry, its leases and neighbour entries, and the firewall log lines that match it.">
         </div>
@@ -133,8 +155,8 @@ $labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https:
         <p>OpenVPN, WireGuard, and IPsec, each with its connected peers.</p>
       </div>
       <div class="capability">
-        <h4>Staged changes</h4>
-        <p>The review also flags any other administrators' pending work before you apply.</p>
+        <h4>Quick Block</h4>
+        <p>Block an address from wherever you found it — an incident, an interface, a log line — as a staged rule like any other.</p>
       </div>
       <div class="capability">
         <h4>More than one firewall</h4>
