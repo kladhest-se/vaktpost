@@ -7,8 +7,11 @@ $releaseVersion = '1.0.0';
 require __DIR__ . '/lib/LatestRelease.php';
 $latestVersion = LatestRelease::version($releaseVersion);
 $demoPassword = getenv('VAKTPOST_DEMO_PASSWORD') ?: 'vaktpost-demo';
-$labOrigin = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https://' : 'http://')
-    . ($_SERVER['HTTP_HOST'] ?? 'this site');
+// Always https. The app refuses plain HTTP, so an http:// address here would
+// be one somebody could only fail to connect to — and behind a reverse proxy
+// that terminates TLS, $_SERVER['HTTPS'] is not set on this side of it, which
+// is exactly where this was printing the wrong scheme.
+$labOrigin = 'https://' . ($_SERVER['HTTP_HOST'] ?? 'vaktpost.kladhest.se');
 ?>
 <!doctype html>
 <html lang="en" data-flavor="macchiato" data-accent="mauve">
