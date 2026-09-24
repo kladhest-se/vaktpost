@@ -134,7 +134,8 @@ public-web/    the project website and test lab
 
 ## Contributing
 
-See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md). Security problems are covered
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md), and
+[AGENTS.md](AGENTS.md) if the contributor is automated. Security problems are covered
 in [SECURITY.md](SECURITY.md).
 
 ## Licence
