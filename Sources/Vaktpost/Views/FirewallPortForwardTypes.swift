@@ -564,10 +564,9 @@ struct PortForwardEditSheet: View {
                             EditField(label: "Description", text: $edited.descr,
                                       prompt: "What this forward is for", mono: false)
                             EditChoice(label: "Interface", options: interfaceKeys,
-                                       selection: $edited.interface,
-                                       display: { key in
-                                           interfaces.first { $0.internalName == key }?.name ?? key
-                                       })
+                                       selection: $edited.interface) { key in
+                                interfaces.first { $0.internalName == key }?.name ?? key
+                            }
                             EditChoice(label: "Protocol", options: FirewallVocabulary.protocols,
                                        selection: $edited.proto)
                             EditChoice(label: "IP version",

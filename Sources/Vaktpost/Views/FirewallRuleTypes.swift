@@ -753,10 +753,9 @@ struct RuleEditSheet: View {
                             EditChoice(label: "Action", options: FirewallVocabulary.ruleTypes,
                                        selection: $edited.type)
                             EditChoice(label: "Interface", options: interfaceKeys,
-                                       selection: $edited.interface,
-                                       display: { key in
-                                           interfaces.first { $0.internalName == key }?.name ?? key
-                                       })
+                                       selection: $edited.interface) { key in
+                                interfaces.first { $0.internalName == key }?.name ?? key
+                            }
                             EditChoice(label: "Protocol", options: FirewallVocabulary.protocols,
                                        selection: $edited.proto)
                             EditChoice(label: "IP version",
