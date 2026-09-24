@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Observation
 
 /// The active theme and accent, persisted to UserDefaults.
@@ -67,6 +68,17 @@ final class ThemeManager {
 
     /// Pushed in by the root view so Auto can resolve.
     var systemScheme: ColorScheme = .dark
+
+    /// Re-read the appearance from UIKit.
+    ///
+    /// `@Environment(\.colorScheme)` is the usual source, but it is the scheme
+    /// of a particular view, and a view that is covered by a full-screen
+    /// presentation — the lock screen — does not necessarily see a change
+    /// while it is covered. Asking UIKit directly when the app comes back is
+    /// how Auto avoids being left on whatever it last heard.
+    func refreshSystemScheme() {
+        systemScheme = UITraitCollection.current.userInterfaceStyle == .light ? .light : .dark
+    }
 
     init() {
         let defaults = UserDefaults.standard

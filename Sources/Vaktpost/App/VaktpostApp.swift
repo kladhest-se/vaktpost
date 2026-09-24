@@ -286,8 +286,6 @@ struct RootView: View {
                 NavigationStack { OnboardingView().appToolbar() }
             }
         }
-        .tint(theme.accentColor)
-        .preferredColorScheme(theme.preferredColorScheme)
         .onAppear {
             theme.systemScheme = systemScheme
             store.themeName = theme.selection.storageValue
@@ -296,6 +294,11 @@ struct RootView: View {
             store.startAutoRefresh()
         }
         .onChange(of: systemScheme) { _, newValue in
+            // Not while the lock screen covers this view. What a covered view
+            // reports during a transition is not what the person is looking
+            // at, and Auto would be left resolving against it; the value is
+            // re-read from UIKit when the cover goes away.
+            guard !isLocked, !isObscured else { return }
             theme.systemScheme = newValue
         }
         // A request to open the firewall log switches tabs here; the Logs
@@ -311,6 +314,11 @@ struct RootView: View {
             case .active:
                 // Uncover, but do not unlock. `isLocked` is cleared only by a
                 // successful authentication.
+                //
+                // The appearance is re-read here too: coming back from Safari
+                // or the app switcher is exactly when it may have changed
+                // while this view was not on screen to be told.
+                theme.refreshSystemScheme()
                 isObscured = false
                 guard store.isConfigured else { return }
                 store.startAutoRefresh()
@@ -344,11 +352,23 @@ struct RootView: View {
             get: { isLocked || isObscured },
             set: { shown in if !shown { isLocked = false; isObscured = false } }
         )) {
+            // A full-screen cover is presented outside this view's hierarchy,
+            // so it inherits neither the tint nor the forced colour scheme:
+            // both are stated again here, and the appearance is re-read on the
+            // way out, when the app has been away and may have missed a change.
             BiometricLockView(requiresAuthentication: isLocked) {
+                theme.refreshSystemScheme()
                 isLocked = false
                 isObscured = false
             }
+            .tint(theme.accentColor)
+            .preferredColorScheme(theme.preferredColorScheme)
         }
+        // Outermost, so the window itself carries them rather than only the
+        // tab content: what showed through after the lock screen was dismissed
+        // was the window, in the system's appearance rather than the theme's.
+        .tint(theme.accentColor)
+        .preferredColorScheme(theme.preferredColorScheme)
         .onAppear {
             if shouldLock { isLocked = true }
             guard store.isConfigured else { return }
