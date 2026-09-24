@@ -214,7 +214,7 @@ extension FirewallView {
                             .scaledFont(10, weight: .semibold)
                             .foregroundStyle(theme.labelFaint)
                     }
-                    natField("TO", pf.destinationSide.address)
+                    natField("TO", store.addressLabel(for: pf.destinationSide))
                     natField("SENDS", pf.target)
                     if let port = natPorts(pf) { natField("PORT", port) }
                     if !pf.descr.isEmpty { natField("DESC", pf.descr, mono: false) }

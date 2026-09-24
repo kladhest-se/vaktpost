@@ -155,8 +155,8 @@ struct PortForwardDetailView: View {
                         // Source is usually `any`; shown here regardless,
                         // because on a detail screen a field that is always
                         // the same is still worth confirming.
-                        detailField("From", forward.sourceSide.address)
-                        detailField("To", forward.destinationSide.address)
+                        detailField("From", store.addressLabel(for: forward.sourceSide))
+                        detailField("To", store.addressLabel(for: forward.destinationSide))
                         if let port = forward.destinationSide.port, !port.isEmpty {
                             detailField("Port", port)
                         }
@@ -564,7 +564,10 @@ struct PortForwardEditSheet: View {
                             EditField(label: "Description", text: $edited.descr,
                                       prompt: "What this forward is for", mono: false)
                             EditChoice(label: "Interface", options: interfaceKeys,
-                                       selection: $edited.interface)
+                                       selection: $edited.interface,
+                                       display: { key in
+                                           interfaces.first { $0.internalName == key }?.name ?? key
+                                       })
                             EditChoice(label: "Protocol", options: FirewallVocabulary.protocols,
                                        selection: $edited.proto)
                             EditChoice(label: "IP version",

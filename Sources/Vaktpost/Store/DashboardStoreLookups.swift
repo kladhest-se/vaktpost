@@ -13,6 +13,46 @@ extension DashboardStore {
     ///
     /// Falls back to the raw value, so an interface the app has not seen is
     /// still identified rather than blank.
+    /// What a rule's source or destination should read as.
+    ///
+    /// pfSense stores a system selector by its internal key: `lan`, `opt4`,
+    /// `lanip`, `self`. The rule list showed those raw, so a rule read
+    /// "from lan to opt4" while the tab above it, the rule's own Interface
+    /// field, and the editor's pickers all said VLAN_100 — the same thing
+    /// under three names, only one of which is in the webConfigurator.
+    ///
+    /// Only selectors are translated. An alias or a literal address is what
+    /// somebody typed, and is left exactly as typed.
+    func addressLabel(for side: FilterAddress) -> String {
+        guard side.storageKind == .network else { return side.address }
+        let raw = side.address
+        let lowered = raw.lowercased()
+        switch lowered {
+        case "any": return "any"
+        case "self": return "this firewall"
+        case "pptp": return "PPTP clients"
+        case "pppoe": return "PPPoE clients"
+        case "l2tp": return "L2TP clients"
+        default: break
+        }
+        // `lanip` is the interface's own address; `lan` is the subnets behind
+        // it. The suffix is pfSense's, and the wording is the editor's.
+        if lowered.hasSuffix("ip"), let name = interfaceName(forKey: String(raw.dropLast(2))) {
+            return "\(name) address"
+        }
+        if let name = interfaceName(forKey: raw) {
+            return "\(name) subnets"
+        }
+        return raw
+    }
+
+    /// The administrator's name for pfSense's internal interface key.
+    private func interfaceName(forKey key: String) -> String? {
+        let lowered = key.lowercased()
+        guard !lowered.isEmpty else { return nil }
+        return interfaces.first { $0.internalName?.lowercased() == lowered }?.name
+    }
+
     func interfaceLabel(for raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
 

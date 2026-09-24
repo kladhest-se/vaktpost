@@ -113,7 +113,7 @@ struct SystemView: View {
                         ForEach(store.configuredHostBlocks.prefix(25)) { rule in
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
-                                    Text(rule.sourceSide.address)
+                                    Text(store.addressLabel(for: rule.sourceSide))
                                         .scaledFont(12, weight: .semibold, design: .monospaced)
                                         .foregroundStyle(theme.label)
                                     Spacer()

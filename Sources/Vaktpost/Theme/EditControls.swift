@@ -62,6 +62,16 @@ struct EditChoice: View {
     @Binding var selection: String
     /// Shown for the empty option, which usually means "any".
     var emptyLabel = "any"
+    /// How an option reads, when the stored value is not what to show.
+    ///
+    /// pfSense stores an interface as `lan` or `opt4`; the webConfigurator,
+    /// the tab bar and the address pickers all say LAN and VLAN_100. The
+    /// picker stores the key and shows the name.
+    var display: ((String) -> String)?
+
+    private func displayText(for option: String) -> String {
+        display?(option) ?? option
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -71,13 +81,13 @@ struct EditChoice: View {
 
             Picker("", selection: $selection) {
                 ForEach(options, id: \.self) { option in
-                    Text(option.isEmpty ? emptyLabel : option).tag(option)
+                    Text(option.isEmpty ? emptyLabel : displayText(for: option)).tag(option)
                 }
                 // A value the firewall already holds that is not in the list
                 // stays selectable rather than being silently rewritten to the
                 // first option the moment somebody opens the editor.
                 if !options.contains(selection) {
-                    Text(selection.isEmpty ? emptyLabel : selection).tag(selection)
+                    Text(selection.isEmpty ? emptyLabel : displayText(for: selection)).tag(selection)
                 }
             }
             .pickerStyle(.menu)

@@ -124,8 +124,8 @@ struct RuleRow: View {
                 // alias name, never the address it expands to — resolving it
                 // here made the list disagree with the firewall's own about
                 // what a rule literally says.
-                field("FROM", rule.sourceSide.address)
-                field("TO", rule.destinationSide.address)
+                field("FROM", store.addressLabel(for: rule.sourceSide))
+                field("TO", store.addressLabel(for: rule.destinationSide))
 
                 if let port = ports {
                     field("PORT", port)
@@ -222,11 +222,11 @@ struct RuleDetailView: View {
                 GroupHeading(text: "Source and destination")
                 Slab(rail: .info) {
                     VStack(alignment: .leading, spacing: 8) {
-                        detailField("Source", rule.sourceSide.address)
+                        detailField("Source", store.addressLabel(for: rule.sourceSide))
                         if let port = rule.sourceSide.port, !port.isEmpty {
                             detailField("Source port", port)
                         }
-                        detailField("Destination", rule.destinationSide.address)
+                        detailField("Destination", store.addressLabel(for: rule.destinationSide))
                         if let port = rule.destinationSide.port, !port.isEmpty {
                             detailField("Destination port", port)
                         }
@@ -753,7 +753,10 @@ struct RuleEditSheet: View {
                             EditChoice(label: "Action", options: FirewallVocabulary.ruleTypes,
                                        selection: $edited.type)
                             EditChoice(label: "Interface", options: interfaceKeys,
-                                       selection: $edited.interface)
+                                       selection: $edited.interface,
+                                       display: { key in
+                                           interfaces.first { $0.internalName == key }?.name ?? key
+                                       })
                             EditChoice(label: "Protocol", options: FirewallVocabulary.protocols,
                                        selection: $edited.proto)
                             EditChoice(label: "IP version",
