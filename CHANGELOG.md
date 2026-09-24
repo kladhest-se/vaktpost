@@ -28,14 +28,16 @@ First public release, for iPhone and iPad.
 - System notices, certificates, ACME, Dynamic DNS, HAProxy, pfBlockerNG,
   package and firmware status.
 - Network Tools: ping, traceroute, DNS lookup and a speed test, plus
-  Investigate for searching everything that references one address.
+  Investigate for searching everything that references one address, with each
+  result opening what it found.
 
 ### Administration
 
 - Monitor-only by default; administration is enabled per firewall.
 - Filter rules and NAT port forwards: create, edit, duplicate, delete and
   reorder.
-- Filter and NAT separators, and host, network and port aliases.
+- Filter and NAT separators, and host, network, port and URL-table aliases,
+  where the firewall fetches the list itself on the interval you set.
 - Quick Block, prefilled from wherever it was opened, and new rules prefilled
   from a firewall-log entry.
 - Service restart and state-table flush, each separately confirmed.

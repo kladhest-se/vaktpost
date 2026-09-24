@@ -43,7 +43,7 @@ Seventeen operations, named in `PHPSnippet.writeOperations`:
 | Filter rules | `save_rule`, `delete_rule`, `reorder_filter_rules` |
 | NAT port forwards | `save_nat_rule`, `delete_nat_rule`, `reorder_nat_rules` |
 | Separators | `save_filter_separator`, `delete_filter_separator`, `save_nat_separator`, `delete_nat_separator` |
-| Aliases | `save_alias`, `delete_alias` |
+| Aliases | `save_alias`, `delete_alias` — including URL tables, where only the URL and interval are written; pfSense fetches the list itself |
 | Immediate actions | `reload_firewall`, `restart_service`, `flush_states`, `quick_block` |
 | Updates | `start_update` |
 

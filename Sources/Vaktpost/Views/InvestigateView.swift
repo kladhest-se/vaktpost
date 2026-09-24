@@ -104,13 +104,69 @@ struct InvestigateView: View {
             ForEach(groups, id: \.kind) { group in
                 GroupHeading(text: group.kind.title)
                 ForEach(group.items) { finding in
-                    row(finding)
+                    // A result that has a screen opens it; one that does not
+                    // stays exactly as it was, rather than looking tappable
+                    // and doing nothing.
+                    if canOpen(finding) {
+                        NavigationLink {
+                            destination(for: finding)
+                        } label: {
+                            row(finding, isLink: true)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Opens this \(finding.kind.title.lowercased())")
+                    } else {
+                        row(finding)
+                    }
                 }
             }
         }
     }
 
-    private func row(_ finding: Investigation.Finding) -> some View {
+    /// Whether the thing this result names is still in the tables.
+    ///
+    /// A rule deleted since the search was typed stops being a link rather
+    /// than opening an empty screen.
+    private func canOpen(_ finding: Investigation.Finding) -> Bool {
+        switch finding.reference {
+        case let .rule(id): return store.rules.contains { $0.id == id }
+        case let .portForward(id): return store.portForwards.contains { $0.id == id }
+        case let .alias(name): return store.aliases.contains { $0.name == name }
+        case let .client(id): return store.overviewLayout.clients.contains { $0.id == id }
+        case nil: return false
+        }
+    }
+
+    /// The screen behind a result, when the thing it names is still here.
+    ///
+    /// Resolved against the store rather than carried in the finding, so a
+    /// rule deleted since the search stops being a link instead of opening
+    /// a copy of something that no longer exists.
+    @ViewBuilder
+    private func destination(for finding: Investigation.Finding) -> some View {
+        switch finding.reference {
+        case let .rule(id):
+            if let rule = store.rules.first(where: { $0.id == id }) {
+                RuleDetailView(rule: rule, selection: .constant(nil))
+            }
+        case let .portForward(id):
+            if let forward = store.portForwards.first(where: { $0.id == id }) {
+                PortForwardDetailView(forward: forward, selection: .constant(nil))
+            }
+        case let .alias(name):
+            if store.aliases.contains(where: { $0.name == name }) {
+                AliasDetailView(aliasName: name)
+            }
+        case let .client(id):
+            if let client = store.overviewLayout.clients.first(where: { $0.id == id }) {
+                ClientDetailView(client: client)
+            }
+        case nil:
+            EmptyView()
+        }
+    }
+
+    private func row(_ finding: Investigation.Finding, isLink: Bool = false) -> some View {
         Slab(rail: .info) {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: finding.kind.symbol)
@@ -136,6 +192,12 @@ struct InvestigateView: View {
                     }
                 }
                 Spacer(minLength: 0)
+                if isLink {
+                    Image(systemName: "chevron.right")
+                        .scaledFont(10, weight: .semibold)
+                        .foregroundStyle(theme.labelFaint)
+                        .accessibilityHidden(true)
+                }
             }
         }
     }

@@ -50,6 +50,19 @@ enum Investigation {
             }
         }
 
+        /// What this result points at, when the app has a screen for it.
+        ///
+        /// A result is usually the beginning of a question — which rule is
+        /// that, what else is in the alias — and answering it meant finding
+        /// the thing again on another screen. Kinds with no screen of their
+        /// own (an ARP row, a lease) carry nothing and stay as text.
+        enum Reference: Equatable {
+            case client(id: String)
+            case alias(name: String)
+            case rule(id: String)
+            case portForward(id: String)
+        }
+
         let id: String
         let kind: Kind
         let title: String
@@ -59,6 +72,7 @@ enum Investigation {
         /// it names. A result somebody cannot account for is one they have to
         /// go and check, which is the work this was meant to save.
         let via: String?
+        var reference: Reference?
     }
 
     /// What a query is, decided once rather than guessed at per table.
@@ -179,7 +193,8 @@ enum Investigation {
             out.append(Finding(id: "client-\(client.id)", kind: .client,
                                title: client.name,
                                detail: [client.ip, client.mac].joined(separator: " · "),
-                               via: nil))
+                               via: nil,
+                               reference: .client(id: client.id)))
         }
 
         for entry in sources.arp where matches(subject, entry.ip) || matches(subject, entry.mac)
@@ -224,7 +239,8 @@ enum Investigation {
             out.append(Finding(id: "alias-\(alias.id)", kind: .alias,
                                title: alias.name,
                                detail: alias.descr ?? alias.type,
-                               via: member.map { "contains \($0)" }))
+                               via: member.map { "contains \($0)" },
+                               reference: .alias(name: alias.name)))
         }
 
         for rule in sources.rules {
@@ -242,7 +258,8 @@ enum Investigation {
                                title: rule.descr.isEmpty ? "\(rule.type) \(rule.source) → \(rule.destination)" : rule.descr,
                                detail: "\(rule.interfaceName) · \(rule.type) · \(rule.source) → \(rule.destination)",
                                via: alias.map { "via alias \($0)" }
-                                    ?? (rule.disabled ? "rule is disabled" : nil)))
+                                    ?? (rule.disabled ? "rule is disabled" : nil),
+                               reference: .rule(id: rule.id)))
         }
 
         for forward in sources.portForwards {
@@ -257,7 +274,8 @@ enum Investigation {
                                title: forward.descr.isEmpty ? forward.target : forward.descr,
                                detail: "\(forward.interfaceName) · \(forward.destination) → \(forward.target)",
                                via: alias.map { "via alias \($0)" }
-                                    ?? (forward.disabled ? "rule is disabled" : nil)))
+                                    ?? (forward.disabled ? "rule is disabled" : nil),
+                               reference: .portForward(id: forward.id)))
         }
 
         for server in sources.openvpnServers {

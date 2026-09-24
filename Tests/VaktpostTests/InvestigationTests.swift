@@ -168,4 +168,31 @@ final class InvestigationTests: XCTestCase {
                                 rule(source: "B", destination: "any", descr: "two")])
         XCTAssertEqual(Set(hits.map(\.id)).count, hits.count)
     }
+    // MARK: Opening what was found
+
+    /// A result is usually the start of a question. The reference is what
+    /// lets the screen answer it without making somebody find the thing
+    /// again by hand.
+    func testRuleAndAliasResultsPointAtWhatTheyFound() throws {
+        let hits = find("172.16.1.32",
+                        aliases: [alias("SERVERS", ["172.16.1.32"])],
+                        rules: [rule(source: "SERVERS", destination: "any", descr: "web")])
+
+        let aliasHit = try XCTUnwrap(hits.first { $0.kind == .alias })
+        XCTAssertEqual(aliasHit.reference, .alias(name: "SERVERS"))
+
+        let ruleHit = try XCTUnwrap(hits.first { $0.kind == .rule })
+        guard case .rule(let id)? = ruleHit.reference else {
+            return XCTFail("expected a rule reference, got \(String(describing: ruleHit.reference))")
+        }
+        XCTAssertFalse(id.isEmpty)
+    }
+
+    func testAResultWithNoScreenCarriesNoReference() {
+        // ARP has no screen of its own, so the row stays text rather than
+        // looking tappable and doing nothing.
+        let hits = find("172.16.1.32", arp: [arp(ip: "172.16.1.32", mac: "ac:10:01:01:02:03")])
+        XCTAssertEqual(hits.filter { $0.kind == .arp }.count, 1)
+        XCTAssertNil(hits.first { $0.kind == .arp }?.reference)
+    }
 }

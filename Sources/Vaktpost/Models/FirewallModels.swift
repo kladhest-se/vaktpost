@@ -198,11 +198,15 @@ struct FirewallAliasEntry: Identifiable {
     var descr: String?
     var addresses: [String]
     var details: [String]
+    /// How often pfSense re-fetches a URL table, in days. Nil for every other
+    /// type, and for a table alias that has never been given one.
+    var updateFrequencyDays: Int?
 
     init(_ d: JSONDict) {
         name = d.string("name") ?? "—"
         type = d.string("type") ?? ""
         descr = d.string("descr", "description")
+        updateFrequencyDays = d.int("updatefreq")
         addresses = Self.addressList(d.value("address"))
         details = Self.detailList(d.value("detail"))
     }

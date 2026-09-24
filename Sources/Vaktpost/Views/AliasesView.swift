@@ -45,13 +45,12 @@ struct AliasesView: View {
     }
 
     /// The type a new alias should start as, given which tab created it.
-    /// URLs has no creatable type of its own -- the "+" button hides there
-    /// instead of offering a type this app's editor cannot actually save.
     private var newAliasType: String {
         switch selectedTab {
         case .ip: return "host"
         case .ports: return "port"
-        case .urls, .all: return "host"
+        case .urls: return "urltable"
+        case .all: return "host"
         }
     }
 
@@ -78,16 +77,10 @@ struct AliasesView: View {
         .navigationTitle("Aliases")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                // URLs has nothing this app's editor can create -- host,
-                // network, and port are the only types AliasEditSheet
-                // offers, so the button hides rather than promising a type
-                // that tab can't actually produce.
-                if selectedTab != .urls {
-                    Button { showingNewAlias = true } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("New alias")
+                Button { showingNewAlias = true } label: {
+                    Image(systemName: "plus")
                 }
+                .accessibilityLabel("New alias")
             }
         }
         .sheet(isPresented: $showingNewAlias) {
@@ -226,7 +219,8 @@ struct AliasRow: View {
     }
 }
 
-private struct AliasDetailView: View {
+/// Not private: Investigate links to it, from another file.
+struct AliasDetailView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
     @Environment(\.dismiss) private var dismiss
@@ -243,7 +237,7 @@ private struct AliasDetailView: View {
 
     private var canEdit: Bool {
         guard let alias else { return false }
-        return ["host", "network", "port"].contains(alias.type.lowercased())
+        return AliasEditForm.editableTypes.contains(alias.type.lowercased())
     }
 
     var body: some View {
@@ -370,11 +364,25 @@ private struct AliasEditForm: Equatable {
     var descr: String
     var members: [AliasMemberDraft]
     var isCreating: Bool
+    /// How often pfSense re-fetches a URL table, in days. Ignored by every
+    /// other type.
+    var updateFrequencyDays: Int
+
+    /// The types this editor can write: pfSense has more, but the rest either
+    /// need the firewall to fetch something at save time or are maintained by
+    /// a package.
+    static let editableTypes = ["host", "network", "port", "urltable", "urltable_ports"]
+
+    static func isURLTable(_ type: String) -> Bool {
+        type == "urltable" || type == "urltable_ports"
+    }
+
+    var isURLTable: Bool { Self.isURLTable(type) }
 
     static func blank(type: String) -> AliasEditForm {
         AliasEditForm(
             name: "", originalName: "", type: type, descr: "",
-            members: [AliasMemberDraft()], isCreating: true
+            members: [AliasMemberDraft()], isCreating: true, updateFrequencyDays: 7
         )
     }
 
@@ -392,16 +400,19 @@ private struct AliasEditForm: Equatable {
         }
         if members.isEmpty { members = [AliasMemberDraft()] }
         isCreating = false
+        // pfSense's own default when the field is missing.
+        updateFrequencyDays = alias.updateFrequencyDays ?? 7
     }
 
     private init(name: String, originalName: String, type: String, descr: String,
-                 members: [AliasMemberDraft], isCreating: Bool) {
+                 members: [AliasMemberDraft], isCreating: Bool, updateFrequencyDays: Int) {
         self.name = name
         self.originalName = originalName
         self.type = type
         self.descr = descr
         self.members = members
         self.isCreating = isCreating
+        self.updateFrequencyDays = updateFrequencyDays
     }
 
     func payload() -> JSONDict {
@@ -416,7 +427,8 @@ private struct AliasEditForm: Equatable {
             "details": .array(members.map {
                 .string($0.detail.trimmingCharacters(in: .whitespacesAndNewlines))
             }),
-            "create": .bool(isCreating)
+            "create": .bool(isCreating),
+            "updatefreq": .number(Double(isURLTable ? updateFrequencyDays : 0))
         ])
     }
 }
@@ -457,12 +469,70 @@ private struct AliasEditSheet: View {
     private var isValid: Bool {
         FieldValidator.isAliasName(normalizedName)
             && nameIsUnique
-            && ["host", "network", "port"].contains(edited.type)
+            && AliasEditForm.editableTypes.contains(edited.type)
             && !edited.members.isEmpty
-            && edited.members.allSatisfy {
+            && membersAreValid
+    }
+
+    /// One URL, and how often pfSense should re-fetch it.
+    ///
+    /// pfSense downloads the list itself on reload and keeps the addresses in
+    /// its own table file; this app writes the URL and the interval and never
+    /// fetches anything. The member rows the other types use would be
+    /// misleading here, since a second URL would be written and then ignored.
+    private var urlTableSlab: some View {
+        Slab(rail: .info, title: "URL") {
+            VStack(alignment: .leading, spacing: 12) {
+                EditField(label: edited.type == "urltable_ports" ? "URL of a port list" : "URL of an address list",
+                          text: Binding(
+                            get: { edited.members.first?.value ?? "" },
+                            set: { value in
+                                if edited.members.isEmpty { edited.members = [AliasMemberDraft()] }
+                                edited.members[0].value = value
+                                edited.members = [edited.members[0]]
+                            }
+                          ),
+                          prompt: "https://example.com/list.txt")
+
+                if let url = edited.members.first?.value,
+                   !url.trimmingCharacters(in: .whitespaces).isEmpty,
+                   !FieldValidator.isURL(url) {
+                    Text("Enter an http or https URL.")
+                        .scaledFont(11)
+                        .foregroundStyle(theme.bad)
+                }
+
+                Stepper(value: $edited.updateFrequencyDays, in: 1...365) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("UPDATE EVERY")
+                            .scaledFont(9, weight: .semibold)
+                            .foregroundStyle(theme.labelFaint)
+                        Text(edited.updateFrequencyDays == 1 ? "1 day" : "\(edited.updateFrequencyDays) days")
+                            .scaledFont(14, design: .monospaced)
+                            .foregroundStyle(theme.label)
+                    }
+                }
+                .accessibilityLabel("Update every \(edited.updateFrequencyDays) days")
+
+                Text("The firewall fetches the list itself, on this interval and when the ruleset reloads. Vaktpost stores only the address above.")
+                    .scaledFont(10)
+                    .foregroundStyle(theme.labelFaint)
+            }
+        }
+    }
+
+    /// A URL table holds one URL and a fetch interval; everything else holds
+    /// the members it was already holding.
+    private var membersAreValid: Bool {
+        guard edited.isURLTable else {
+            return edited.members.allSatisfy {
                 let value = $0.value.trimmingCharacters(in: .whitespacesAndNewlines)
                 return !value.isEmpty && value != normalizedName
             }
+        }
+        guard edited.members.count == 1,
+              (1...365).contains(edited.updateFrequencyDays) else { return false }
+        return FieldValidator.isURL(edited.members[0].value)
     }
 
     private var isDirty: Bool { edited.isCreating || edited != original }
@@ -492,7 +562,7 @@ private struct AliasEditSheet: View {
                                 }
                             }
                             if edited.isCreating {
-                                EditChoice(label: "Type", options: ["host", "network", "port"],
+                                EditChoice(label: "Type", options: AliasEditForm.editableTypes,
                                            selection: $edited.type)
                             } else {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -512,40 +582,44 @@ private struct AliasEditSheet: View {
                         }
                     }
 
-                    Slab(rail: .info, title: "Members", trailing: "\(edited.members.count)") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach($edited.members) { $member in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    EditField(label: edited.type == "port" ? "Port or port alias" : "Address, network, host, or alias",
-                                              text: $member.value,
-                                              prompt: edited.type == "port" ? "443" : "192.0.2.10")
-                                    HStack(alignment: .bottom, spacing: 8) {
-                                        EditField(label: "Member description", text: $member.detail,
-                                                  prompt: "Optional", mono: false)
-                                        Button(role: .destructive) {
-                                            let id = member.id
-                                            edited.members.removeAll { $0.id == id }
-                                            if edited.members.isEmpty {
-                                                edited.members.append(AliasMemberDraft())
+                    if edited.isURLTable {
+                        urlTableSlab
+                    } else {
+                        Slab(rail: .info, title: "Members", trailing: "\(edited.members.count)") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach($edited.members) { $member in
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        EditField(label: edited.type == "port" ? "Port or port alias" : "Address, network, host, or alias",
+                                                  text: $member.value,
+                                                  prompt: edited.type == "port" ? "443" : "192.0.2.10")
+                                        HStack(alignment: .bottom, spacing: 8) {
+                                            EditField(label: "Member description", text: $member.detail,
+                                                      prompt: "Optional", mono: false)
+                                            Button(role: .destructive) {
+                                                let id = member.id
+                                                edited.members.removeAll { $0.id == id }
+                                                if edited.members.isEmpty {
+                                                    edited.members.append(AliasMemberDraft())
+                                                }
+                                            } label: {
+                                                Image(systemName: "trash")
+                                                    .frame(width: 36, height: 36)
                                             }
-                                        } label: {
-                                            Image(systemName: "trash")
-                                                .frame(width: 36, height: 36)
+                                            .buttonStyle(.bordered)
+                                            .accessibilityLabel("Remove this member")
                                         }
-                                        .buttonStyle(.bordered)
-                                        .accessibilityLabel("Remove this member")
+                                    }
+                                    if member.id != edited.members.last?.id {
+                                        Divider().overlay(theme.hairline)
                                     }
                                 }
-                                if member.id != edited.members.last?.id {
-                                    Divider().overlay(theme.hairline)
+                                Button {
+                                    edited.members.append(AliasMemberDraft())
+                                } label: {
+                                    Label("Add member", systemImage: "plus")
                                 }
+                                .buttonStyle(.bordered)
                             }
-                            Button {
-                                edited.members.append(AliasMemberDraft())
-                            } label: {
-                                Label("Add member", systemImage: "plus")
-                            }
-                            .buttonStyle(.bordered)
                         }
                     }
 

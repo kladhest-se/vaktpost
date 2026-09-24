@@ -191,6 +191,9 @@ struct PHPSnippet: Sendable {
         "file_exists", "file_get_contents", "filemtime", "glob", "basename",
         "sort", "usort", "strval", "substr", "function_exists", "config_get_path", "strpos", "strlen", "filesize",
         "strtoupper", "strtolower",
+        // Case-insensitive prefix test, used to require http or https on a
+        // URL-table alias. A string comparison and nothing else.
+        "stripos",
         "array_key_exists", "intval",
         // Pure, built-in string conversion — no side effects, no file or
         // system access. Used once, to show a submitted interface value as
@@ -212,6 +215,10 @@ struct PHPSnippet: Sendable {
         // snippets before they touch `$config`.
         "get_specialnet", "is_ipaddroralias", "is_ipaddrv4", "is_ipaddrv6",
         "is_subnet", "is_iprange", "is_fqdn",
+        // URL-table aliases hold a URL that pfSense fetches itself on reload.
+        // This app writes the URL and the update frequency and nothing else:
+        // it never downloads anything.
+        "is_URL",
         "is_port_or_alias", "is_port_or_range_or_alias", "is_alias_inuse",
         "return_gateways_status", "return_gateways_array",
         "get_services", "get_service_status",
@@ -3646,8 +3653,8 @@ struct PHPSnippet: Sendable {
         $vaktpost_error = "";
         if ($vaktpost_name === "" || preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/D', $vaktpost_name) !== 1) {
           $vaktpost_error = "Alias names must start with a letter or underscore and contain only letters, numbers, and underscores";
-        } elseif (!in_array($vaktpost_type, ["host", "network", "port"], true)) {
-          $vaktpost_error = "Only host, network, and port aliases can be edited in Vaktpost";
+        } elseif (!in_array($vaktpost_type, ["host", "network", "port", "urltable", "urltable_ports"], true)) {
+          $vaktpost_error = "Only host, network, port, and URL table aliases can be edited in Vaktpost";
         } elseif (!is_array($vaktpost_members) || count($vaktpost_members) < 1 || count($vaktpost_members) > 5000) {
           $vaktpost_error = "At least one alias member is required";
         } elseif (!is_array($vaktpost_details)) {
@@ -3680,6 +3687,19 @@ struct PHPSnippet: Sendable {
           }
         }
 
+        $vaktpost_is_urltable = ($vaktpost_type === "urltable" || $vaktpost_type === "urltable_ports");
+        $vaktpost_updatefreq = intval($vaktpost_input["updatefreq"] ?? 0);
+        if ($vaktpost_error === "" && $vaktpost_is_urltable) {
+          if (count($vaktpost_members) !== 1) {
+            // pfSense stores one URL per table alias, and its own editor
+            // offers one row. More than one would be written and then
+            // silently ignored.
+            $vaktpost_error = "A URL table alias holds exactly one URL";
+          } elseif ($vaktpost_updatefreq < 1 || $vaktpost_updatefreq > 365) {
+            $vaktpost_error = "The update frequency must be between 1 and 365 days";
+          }
+        }
+
         $vaktpost_clean_members = [];
         $vaktpost_clean_details = [];
         if ($vaktpost_error === "") {
@@ -3693,10 +3713,18 @@ struct PHPSnippet: Sendable {
               $vaktpost_error = "An alias cannot include itself";
               break;
             }
-            $vaktpost_valid = $vaktpost_type === "port"
-              ? is_port_or_range_or_alias($vaktpost_member)
-              : (is_ipaddroralias($vaktpost_member) || is_subnet($vaktpost_member)
-                || is_iprange($vaktpost_member) || is_fqdn($vaktpost_member));
+            if ($vaktpost_type === "urltable" || $vaktpost_type === "urltable_ports") {
+              // The alias holds the URL; pfSense downloads it on reload and
+              // keeps the results in its own table file. Nothing here fetches.
+              $vaktpost_valid = is_URL($vaktpost_member)
+                && (stripos($vaktpost_member, "http://") === 0
+                  || stripos($vaktpost_member, "https://") === 0);
+            } elseif ($vaktpost_type === "port") {
+              $vaktpost_valid = is_port_or_range_or_alias($vaktpost_member);
+            } else {
+              $vaktpost_valid = is_ipaddroralias($vaktpost_member) || is_subnet($vaktpost_member)
+                || is_iprange($vaktpost_member) || is_fqdn($vaktpost_member);
+            }
             if (!$vaktpost_valid) {
               $vaktpost_error = "One or more alias members are invalid for this alias type";
               break;
@@ -3714,6 +3742,9 @@ struct PHPSnippet: Sendable {
           $vaktpost_entry["type"] = $vaktpost_type;
           $vaktpost_entry["address"] = implode(" ", $vaktpost_clean_members);
           $vaktpost_entry["detail"] = implode("||", $vaktpost_clean_details);
+          if ($vaktpost_is_urltable) {
+            $vaktpost_entry["updatefreq"] = strval($vaktpost_updatefreq);
+          }
           if ($vaktpost_descr === "") {
             unset($vaktpost_entry["descr"]);
           } else {

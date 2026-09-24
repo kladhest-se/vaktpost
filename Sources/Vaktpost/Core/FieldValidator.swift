@@ -32,6 +32,23 @@ enum FieldValidator {
     /// pfSense alias names: letters, digits and underscore, not starting with
     /// a digit. Checked against the aliases this firewall actually has, so a
     /// name that looks right but does not exist is still caught.
+    /// A URL a URL-table alias can hold.
+    ///
+    /// Deliberately narrow: http or https, a host, and nothing that would only
+    /// be discovered when pfSense tried to fetch it. The firewall validates it
+    /// again with `is_URL` before the alias is written.
+    static func isURL(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count <= 2000,
+              !trimmed.contains(where: { $0.isWhitespace }),
+              let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty
+        else { return false }
+        return true
+    }
+
     static func isAliasName(_ text: String) -> Bool {
         guard let first = text.first, first.isLetter || first == "_" else { return false }
         return text.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }

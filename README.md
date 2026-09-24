@@ -35,7 +35,8 @@ from, report what you see, and take a small set of deliberate actions.
   firmware.
 - Network Tools: ping, traceroute, DNS lookup and a speed test run from the
   firewall itself. Investigate searches rules, aliases, leases and logs for one
-  address.
+  address, and each result opens the rule, alias, port forward or client it
+  found.
 
 ## Administration
 
@@ -43,7 +44,7 @@ Every firewall starts in **monitor-only mode**. With administration enabled:
 
 - Filter rules and NAT port forwards: create, edit, duplicate, delete and
   reorder.
-- Filter and NAT separators, and host, network and port aliases.
+- Filter and NAT separators, and host, network, port and URL-table aliases.
 - Quick Block, prefilled from wherever it was opened, and new rules prefilled
   from a firewall-log entry.
 - Service restart and state-table flush.

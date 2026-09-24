@@ -379,4 +379,18 @@ final class FirewallAliasPickerTests: XCTestCase {
         }
         XCTAssertFalse(item.matches(search: "database"))
     }
+
+    // MARK: URL-table aliases
+
+    func testAURLTableAcceptsOnlyHTTPURLs() {
+        XCTAssertTrue(FieldValidator.isURL("https://example.com/list.txt"))
+        XCTAssertTrue(FieldValidator.isURL("http://example.com/a?b=c"))
+        XCTAssertFalse(FieldValidator.isURL("ftp://example.com/list.txt"))
+        XCTAssertFalse(FieldValidator.isURL("example.com/list.txt"))
+        XCTAssertFalse(FieldValidator.isURL("https://"))
+        XCTAssertFalse(FieldValidator.isURL("192.0.2.10"))
+        XCTAssertFalse(FieldValidator.isURL(""))
+        // A space is how a second URL would arrive in a field meant for one.
+        XCTAssertFalse(FieldValidator.isURL("https://a.example/x https://b.example/y"))
+    }
 }
