@@ -19,8 +19,12 @@ First public release, for iPhone and iPad.
 - OpenVPN, WireGuard and IPsec status with connected peers.
 - Filter, system, authentication, DHCP and OpenVPN logs, live firewall-log
   following, and a combined incident timeline.
+- The overview's blocked, rejected and passed counts open the log they count,
+  and a log entry opens the rule that decided it.
+- Starred interfaces and gateways choose what the overview shows.
 - Alerts for gateways, services, capacity, certificates, CARP, VPNs, updates
-  and Dynamic DNS, with optional notifications before a certificate expires.
+  and Dynamic DNS. The certificate alert also schedules expiry warnings, which
+  arrive whether or not the app is open.
 - System notices, certificates, ACME, Dynamic DNS, HAProxy, pfBlockerNG,
   package and firmware status.
 - Network Tools: ping, traceroute, DNS lookup and a speed test, plus

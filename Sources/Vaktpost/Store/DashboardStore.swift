@@ -2,6 +2,12 @@ import Foundation
 import SwiftUI
 import Observation
 
+/// Which filter the Logs tab should open with, when another screen asks for
+/// it. The three actions the Overview counts.
+enum FirewallLogJump: String, Sendable {
+    case blocked, rejected, passed
+}
+
 /// Holds every dashboard section independently so one failing endpoint (an
 /// uninstalled package, a privilege the key lacks) degrades that card rather
 /// than the whole screen.
@@ -72,6 +78,8 @@ final class DashboardStore: Observable {
         case hostTrafficInterval = "traffic.interval"
         case favouriteInterfaces = "interfaces.favourites"
         case favouritesSeeded = "interfaces.favouritesSeeded"
+        case favouriteGateways = "gateways.favourites"
+        case gatewayFavouritesSeeded = "gateways.favouritesSeeded"
         case mutedAlerts = "alerts.hidden.v2"
         case alertsSilenced = "alerts.silenced"
         case acknowledgedAlerts = "alerts.acknowledged"
@@ -245,6 +253,17 @@ final class DashboardStore: Observable {
             UserDefaults.standard.set(Array(favouriteInterfaces), forKey: UDKey.favouriteInterfaces.rawValue)
         }
     }
+    /// Which gateways the Overview shows, by name.
+    ///
+    /// The same choice as the interfaces above and for the same reason: a
+    /// firewall with several uplinks, a VPN gateway and a couple of gateway
+    /// groups has two or three worth a glance, and which ones is a matter of
+    /// what you run.
+    var favouriteGateways: Set<String> = [] {
+        didSet {
+            defaults.set(Array(favouriteGateways), forKey: UDKey.favouriteGateways.rawValue)
+        }
+    }
     var services: [ServiceStatus] = []
     var leases: [DHCPLease] = []
     var arp: [ARPEntry] = []
@@ -403,6 +422,11 @@ final class DashboardStore: Observable {
     /// firewall menu, which owns that sheet, presents it and clears this.
     var wantsActiveFirewallSettings = false
 
+    /// Set by a screen that wants the firewall log opened, filtered to one
+    /// action. The tab bar switches to Logs, and Logs applies it and clears
+    /// this — a request, not a piece of state anything reads later.
+    var wantsFirewallLog: FirewallLogJump?
+
     /// The theme the person chose, kept so a relaunch restores it.
     var themeName: String = "auto"
 
@@ -491,6 +515,7 @@ final class DashboardStore: Observable {
         overviewLayout.alertManager = alertManager
         overviewLayout.gatewayManager = gatewayManager
         favouriteInterfaces = Set(defaults.stringArray(forKey: "interfaces.favourites") ?? [])
+        favouriteGateways = Set(defaults.stringArray(forKey: UDKey.favouriteGateways.rawValue) ?? [])
         let checkedAt = defaults.double(forKey: "packages.lastCheck")
         lastPackageCheck = checkedAt > 0 ? Date(timeIntervalSince1970: checkedAt) : nil
         self.registry = registry
@@ -1864,6 +1889,35 @@ extension DashboardStore {
 
     func isFavourite(_ iface: InterfaceStat) -> Bool {
         favouriteInterfaces.contains(iface.seriesKey)
+    }
+
+    // MARK: Favourite gateways
+
+    func toggleFavourite(_ gateway: GatewayStatus) {
+        // The first star is also the moment the choice stops being the app's.
+        defaults.set(true, forKey: UDKey.gatewayFavouritesSeeded.rawValue)
+        if favouriteGateways.contains(gateway.name) {
+            favouriteGateways.remove(gateway.name)
+        } else {
+            favouriteGateways.insert(gateway.name)
+        }
+    }
+
+    func isFavourite(_ gateway: GatewayStatus) -> Bool {
+        favouriteGateways.contains(gateway.name)
+    }
+
+    /// The gateways the Overview shows.
+    ///
+    /// Every gateway until somebody chooses, which is what the Overview did
+    /// before this existed. Once anything is starred the choice is theirs,
+    /// including starring none — an empty gateway card says so rather than
+    /// quietly showing all of them again.
+    var overviewGateways: [GatewayStatus] {
+        guard defaults.bool(forKey: UDKey.gatewayFavouritesSeeded.rawValue) else {
+            return gatewayManager.gateways
+        }
+        return gatewayManager.gateways.filter { favouriteGateways.contains($0.name) }
     }
 
     /// What the Overview shows.

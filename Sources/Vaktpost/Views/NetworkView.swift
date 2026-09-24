@@ -336,6 +336,7 @@ struct InterfaceCard: View {
 /// One gateway, as a card.
 struct GatewayCard: View {
     @Environment(\.themeManager) private var theme: ThemeManager
+    @Environment(\.dashboardStore) private var store: DashboardStore
     let gateway: GatewayStatus
     let gatewayMetrics: GatewayMetricTracker
 
@@ -351,6 +352,21 @@ struct GatewayCard: View {
         Slab(rail: gateway.health) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
+                    // The same star as an interface card, choosing which
+                    // gateways the Overview shows.
+                    Button {
+                        store.toggleFavourite(gateway)
+                    } label: {
+                        Image(systemName: store.isFavourite(gateway) ? "star.fill" : "star")
+                            .scaledFont(12)
+                            .foregroundStyle(store.isFavourite(gateway)
+                                             ? theme.accentColor : theme.labelFaint)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(store.isFavourite(gateway)
+                                        ? "Remove \(gateway.name) from the overview"
+                                        : "Show \(gateway.name) on the overview")
+
                     Text(gateway.name)
                         .scaledFont(15, weight: .semibold)
                         .foregroundStyle(theme.label)

@@ -12,7 +12,10 @@ struct LogsView: View {
     }
 
     enum ActionFilter: String, CaseIterable, Identifiable {
-        case all = "All", blocked = "Blocked", passed = "Passed"
+        // Reject is its own action in the log and its own count on the
+        // Overview, so it is its own filter here rather than being folded
+        // into blocked.
+        case all = "All", blocked = "Blocked", rejected = "Rejected", passed = "Passed"
         var id: String { rawValue }
     }
 
@@ -50,6 +53,25 @@ struct LogsView: View {
     /// would be four inert buttons on the other four sources.
     private var showsActionFilter: Bool { source == .firewall }
 
+    /// Which filter each jump asks for.
+    private static let filterFor: [FirewallLogJump: ActionFilter] = [
+        .blocked: .blocked, .rejected: .rejected, .passed: .passed,
+    ]
+
+    private func applyRequestedFilter() {
+        guard let request = store.wantsFirewallLog else { return }
+        store.wantsFirewallLog = nil
+        source = .firewall
+        query = ""
+        interfaceFilter = nil
+        protocolFilter = nil
+        sourceFilter = ""
+        destinationFilter = ""
+        portFilter = ""
+        action = Self.filterFor[request] ?? .all
+        filterLines()
+    }
+
     private func filterLines() {
         var list: [LogLine]
         switch source {
@@ -68,6 +90,7 @@ struct LogsView: View {
         switch action {
         case .all: actionValue = nil
         case .blocked: actionValue = "block"
+        case .rejected: actionValue = "reject"
         case .passed: actionValue = "pass"
         }
         let filter = FirewallLogFilter(query: query, action: actionValue,
@@ -179,6 +202,10 @@ struct LogsView: View {
                     unseenCount += additions
                 }
             }
+            // Another screen asked for this log, filtered. Applied here and
+            // cleared, so returning to the tab later shows what was left
+            // rather than repeating somebody else's question.
+            .task(id: store.wantsFirewallLog) { applyRequestedFilter() }
             .onChange(of: source) { unseenCount = 0; filterLines() }
             .onChange(of: followsNewest) {
                 guard followsNewest else { return }
@@ -517,9 +544,24 @@ struct LogDetailView: View {
                     // reading the line.
                     FieldRow(key: "Tracker", value: tracker)
                     if let rule = store.rules.first(where: { $0.tracker == tracker }) {
-                        FieldRow(key: "Rule",
-                                 value: rule.descr.isEmpty ? "(no description)" : rule.descr,
-                                 mono: false)
+                        // The rule opens from here. Reading which rule decided
+                        // this and then finding it by hand in the rule list was
+                        // the same question asked twice.
+                        NavigationLink {
+                            RuleDetailView(rule: rule, selection: .constant(nil))
+                        } label: {
+                            HStack(spacing: 6) {
+                                FieldRow(key: "Rule",
+                                         value: rule.descr.isEmpty ? "(no description)" : rule.descr,
+                                         mono: false)
+                                Image(systemName: "chevron.right")
+                                    .scaledFont(10, weight: .semibold)
+                                    .foregroundStyle(theme.labelFaint)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Rule: \(rule.descr.isEmpty ? "no description" : rule.descr)")
+                        .accessibilityHint("Opens this rule")
                     }
                 }
             }

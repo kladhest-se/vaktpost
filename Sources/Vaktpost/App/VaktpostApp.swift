@@ -177,6 +177,13 @@ class URLDelegate: NSObject, UIApplicationDelegate {
 }
 
 struct RootView: View {
+    /// The tabs, tagged so another screen can ask for one.
+    enum Tab: Hashable {
+        case overview, clients, network, logs, more
+    }
+
+    @State private var tab: Tab = .overview
+
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
     @Environment(\.colorScheme) private var systemScheme
@@ -226,13 +233,14 @@ struct RootView: View {
                 }
             } else if store.isConfigured {
                 ZStack(alignment: .top) {
-                    TabView {
+                    TabView(selection: $tab) {
                         NavigationStack {
                             OverviewView()
                                 .appToolbar()
                                 .toolbar { ToolbarItem(placement: .confirmationAction) { DoneButton() } }
                         }
                         .tabItem { Label("Overview", systemImage: "square.grid.2x2") }
+                        .tag(Tab.overview)
 
                         // Wrapped like every other tab. MasterDetail no
                         // longer creates a stack of its own — it cannot, since
@@ -243,24 +251,28 @@ struct RootView: View {
                                 .appToolbar()
                         }
                         .tabItem { Label("Clients", systemImage: "person.2") }
+                        .tag(Tab.clients)
 
                         NavigationStack {
                             NetworkView()
                                 .appToolbar()
                         }
                         .tabItem { Label("Network", systemImage: "network") }
+                        .tag(Tab.network)
 
                         NavigationStack {
                             LogsView()
                                 .appToolbar()
                         }
                         .tabItem { Label("Logs", systemImage: "text.alignleft") }
+                        .tag(Tab.logs)
 
                         NavigationStack {
                             MoreView()
                                 .appToolbar()
                         }
                         .tabItem { Label("More", systemImage: "ellipsis.circle") }
+                        .tag(Tab.more)
                     }
 
                     // No refresh indicator here at all.
@@ -285,6 +297,11 @@ struct RootView: View {
         }
         .onChange(of: systemScheme) { _, newValue in
             theme.systemScheme = newValue
+        }
+        // A request to open the firewall log switches tabs here; the Logs
+        // screen applies the filter and clears the request.
+        .onChange(of: store.wantsFirewallLog) { _, request in
+            if request != nil { tab = .logs }
         }
         .onChange(of: theme.selection) { _, _ in
             store.themeName = theme.selection.storageValue

@@ -4,9 +4,6 @@ struct SettingsView: View {
     @Environment(\.themeManager) private var theme: ThemeManager
     @Environment(\.dashboardStore) private var store: DashboardStore
 
-    /// How many expiry notifications are pending, or nil while counting.
-    @State private var pending: Int?
-
     var body: some View {
         ScrollView {
             PageHeader(title: "Settings", subtitle: nil)
@@ -81,82 +78,29 @@ struct SettingsView: View {
     /// Alerts are derived on the device, so silencing changes what is shown
     /// rather than what is measured — everything stays visible on the Alerts
     /// screen, it just stops driving the badge and the Overview banner.
-    /// The one alert this app can deliver while it is not running.
+    /// Certificate expiry warnings follow the Certificates alert.
     ///
     /// Everything else on the Alerts screen is derived from status the app has
     /// to ask the firewall for, and an app that is not running cannot ask. A
     /// certificate is different: it says months in advance exactly when it
-    /// will become a problem, so the notification can be scheduled for that
-    /// date and arrives whether or not this app is ever opened again.
-    private var expiryNotifications: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle(isOn: Binding(
-                get: { store.expiryNotifier.isEnabled },
-                set: { on in
-                    store.expiryNotifier.isEnabled = on
-                    guard on else { return }
-                    Task {
-                        // Asked here rather than at launch. A permission
-                        // prompt on first run, before the app has shown
-                        // what it would use it for, is the reliable way to
-                        // be refused permanently.
-                        await store.expiryNotifier.requestPermission()
-                        store.scheduleExpiryNotifications()
-                    }
-                }
-            )) {
-                Text("Notify before expiry")
-                    .scaledFont(13)
-                    .foregroundStyle(theme.label)
+    /// will become a problem, so the warning can be scheduled — 30, 14, 7, 3
+    /// and 1 days ahead, at 9am — and arrives whether or not this app is ever
+    /// opened again. That is the same thing the alert itself is for, so it is
+    /// the same switch rather than a second one to find.
+    ///
+    /// Permission is asked for here, the first time somebody turns the alert
+    /// on, rather than at launch: a prompt on first run, before the app has
+    /// shown what it would use it for, is the reliable way to be refused
+    /// permanently.
+    private func setExpiryNotifications(_ enabled: Bool) {
+        store.expiryNotifier.isEnabled = enabled
+        Task {
+            if enabled {
+                await store.expiryNotifier.requestPermission()
+                store.scheduleExpiryNotifications()
+            } else {
+                await store.expiryNotifier.refreshPermission()
             }
-            .tint(theme.accentColor)
-
-            Text("Scheduled 30, 14, 7, 3 and 1 days before a certificate expires, at 9am. Each notification names the firewall.")
-                .scaledFont(12)
-                .foregroundStyle(theme.labelMuted)
-
-            if store.expiryNotifier.isEnabled, store.expiryNotifier.permission == .denied {
-                // A toggle that is on and does nothing is worse than one
-                // that is off. The app cannot re-ask once refused; only
-                // iOS Settings can grant it back.
-                Text("Notifications are turned off for Vaktpost in iOS Settings, so nothing will be delivered until they are turned back on there.")
-                    .scaledFont(12)
-                    .foregroundStyle(theme.warn)
-            }
-
-            if store.expiryNotifier.isEnabled, store.expiryNotifier.permission == .granted {
-                Hairline()
-                // A count says something is scheduled and nothing about
-                // whether it is still true. The list behind this is the
-                // only way to see what reconciling actually did.
-                NavigationLink {
-                    ScheduledNotificationsView()
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(pendingDescription)
-                            .scaledFont(11, design: .monospaced)
-                            .foregroundStyle(theme.labelFaint)
-                        Spacer(minLength: 8)
-                        Image(systemName: "chevron.right")
-                            .scaledFont(10, weight: .semibold)
-                            .foregroundStyle(theme.labelFaint)
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .task {
-            await store.expiryNotifier.refreshPermission()
-            pending = await store.expiryNotifier.pendingCount()
-        }
-    }
-
-    private var pendingDescription: String {
-        switch pending {
-        case nil: return "Counting what is scheduled…"
-        case 0: return "Nothing scheduled — no certificate on this firewall expires within 30 days."
-        case 1: return "1 notification scheduled."
-        default: return "\(pending ?? 0) notifications scheduled."
         }
     }
 
@@ -200,6 +144,7 @@ struct SettingsView: View {
                             set: { shown in
                                 if shown { store.alertManager.mutedAlertCategories.remove(category.rawValue) }
                                 else { store.alertManager.mutedAlertCategories.insert(category.rawValue) }
+                                if category == .certificate { setExpiryNotifications(shown) }
                             }
                         )) {
                             HStack(spacing: 8) {
@@ -218,18 +163,34 @@ struct SettingsView: View {
                             if category == .capacity { capacityMenus }
                         }
 
-                        // Certificate expiry is the one alert that is worth
-                        // knowing about before the app is next opened, so it
-                        // is also the one with a scheduled notification. It
-                        // belongs under the alert it extends rather than in a
-                        // section of its own.
+                        // The only alert that can arrive while the app is not
+                        // running, and the only one that needs iOS to agree.
+                        // Said once, and only when iOS has refused, because a
+                        // switch that is on and delivers nothing is worse
+                        // than one that is off.
                         if category == .certificate,
-                           !store.alertManager.mutedAlertCategories.contains(category.rawValue) {
-                            expiryNotifications
+                           !store.alertManager.mutedAlertCategories.contains(category.rawValue),
+                           store.expiryNotifier.permission == .denied {
+                            Text("Notifications are turned off for Vaktpost in iOS Settings, "
+                                 + "so expiry warnings will not be delivered until they are turned back on there.")
+                                .scaledFont(11)
+                                .foregroundStyle(theme.warn)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
             }
+        }
+        // The Certificates alert is on by default, so a fresh install would
+        // otherwise never reach the code that turns scheduling on. Asked here,
+        // where the person is looking at alert settings, and only once: iOS
+        // prompts for notification permission a single time.
+        .task {
+            await store.expiryNotifier.refreshPermission()
+            let wanted = !store.alertManager.mutedAlertCategories.contains(
+                VaktpostAlert.Category.certificate.rawValue)
+            guard wanted != store.expiryNotifier.isEnabled else { return }
+            setExpiryNotifications(wanted)
         }
     }
 
@@ -379,6 +340,15 @@ struct SettingsView: View {
         }
     }
 
+    /// "1.0.0 (12)", from the bundle rather than a constant, so it cannot
+    /// describe a build other than the one running.
+    private static var versionLine: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info?["CFBundleVersion"] as? String
+        return build.map { "\(version) (\($0))" } ?? version
+    }
+
     private var aboutSlab: some View {
         Slab(rail: .info, title: "Vaktpost") {
             VStack(alignment: .leading, spacing: 8) {
@@ -386,15 +356,37 @@ struct SettingsView: View {
                     .scaledFont(13)
                     .foregroundStyle(theme.labelMuted)
                 Hairline()
+                // The build number belongs next to the version: it is what a
+                // bug report needs in order to name one particular build, and
+                // the only place it is otherwise visible is App Store Connect.
+                FieldRow(key: "Version", value: Self.versionLine, mono: false)
+                FieldRow(key: "Made by", value: "Tommy Frössman", mono: false)
+                FieldRow(key: "Website", value: "vaktpost.kladhest.se", mono: false)
+                FieldRow(key: "Licence", value: "GPL-3.0-or-later", mono: false)
+                Hairline()
                 FieldRow(key: "Transport", value: "xmlrpc.php", mono: false)
                 FieldRow(key: "Auth", value: "webConfigurator login", mono: false)
                 FieldRow(key: "Privilege", value: "System - HA node sync", mono: false)
                 FieldRow(key: "Active mode", value: store.canAdminister ? "administration enabled" : "monitor only", mono: false)
                 FieldRow(key: "Writes", value: "confirmed admin actions", mono: false)
                 FieldRow(key: "Firewalls", value: "\(store.registry.servers.count)", mono: false)
-                Text("Not affiliated with Netgate or the Catppuccin project. pfSense is a trademark of Netgate.")
+                Hairline()
+                Link(destination: URL(string: "https://vaktpost.kladhest.se")!) {
+                    HStack(spacing: 6) {
+                        Text("Project website and source")
+                            .scaledFont(12, weight: .semibold)
+                        Image(systemName: "arrow.up.right")
+                            .scaledFont(10, weight: .semibold)
+                    }
+                    .foregroundStyle(theme.accentColor)
+                }
+                .accessibilityLabel("Open the project website")
+                Text("Free software under the GNU General Public License, version 3 or later. "
+                     + "Not affiliated with Netgate or the Catppuccin project. pfSense is a "
+                     + "trademark of Netgate.")
                     .scaledFont(11)
                     .foregroundStyle(theme.labelFaint)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

@@ -25,9 +25,12 @@ from, report what you see, and take a small set of deliberate actions.
 - OpenVPN, WireGuard and IPsec status with connected peers.
 - Filter, system, authentication, DHCP and OpenVPN logs, live log following,
   and a combined incident timeline.
+- The overview's blocked, rejected and passed counts open the log they count,
+  and a log entry opens the rule that decided it.
+- Starred interfaces and gateways choose what the overview shows.
 - On-device alerts for gateways, services, capacity, certificates, CARP, VPNs,
-  updates and Dynamic DNS, with optional notifications before a certificate
-  expires.
+  updates and Dynamic DNS. The certificate alert also schedules expiry
+  warnings, which arrive whether or not the app is open.
 - Notices, certificates, ACME, Dynamic DNS, HAProxy, pfBlockerNG, packages and
   firmware.
 - Network Tools: ping, traceroute, DNS lookup and a speed test run from the

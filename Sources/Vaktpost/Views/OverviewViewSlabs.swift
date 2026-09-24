@@ -411,8 +411,16 @@ extension OverviewView {
                     .foregroundStyle(theme.labelMuted)
             })
         }
+        let shown = store.overviewGateways
+        if shown.isEmpty {
+            return AnyView(Slab(rail: .idle) {
+                Text("No gateways starred. Star one on the Network tab to show it here.")
+                    .scaledFont(13)
+                    .foregroundStyle(theme.labelMuted)
+            })
+        }
         return AnyView(VStack(alignment: .leading, spacing: 8) {
-            ForEach(store.gatewayManager.gateways, id: \.name) { gw in
+            ForEach(shown, id: \.name) { gw in
                 GatewayRow(gateway: gw, gatewayMetrics: store.gatewayManager.gatewayMetrics)
             }
         })
@@ -425,10 +433,16 @@ extension OverviewView {
                 placeholder(.firewallLog)
             } else {
                 VStack(alignment: .leading, spacing: 10) {
+                    // Each count opens the log it counts. Reading "43 blocked"
+                    // and then filtering the Logs tab by hand was the same
+                    // question asked twice.
                     HStack(spacing: 18) {
-                        deltaCounter("Blocked", store.overviewLayout.blockedRecently, store.overviewLayout.blockedDelta, .bad)
-                        deltaCounter("Rejected", store.overviewLayout.rejectedRecently, store.overviewLayout.rejectedDelta, .warn)
-                        deltaCounter("Passed", store.overviewLayout.passedRecently, store.overviewLayout.passedDelta, .ok)
+                        counterButton("Blocked", store.overviewLayout.blockedRecently,
+                                      store.overviewLayout.blockedDelta, .bad, jump: .blocked)
+                        counterButton("Rejected", store.overviewLayout.rejectedRecently,
+                                      store.overviewLayout.rejectedDelta, .warn, jump: .rejected)
+                        counterButton("Passed", store.overviewLayout.passedRecently,
+                                      store.overviewLayout.passedDelta, .ok, jump: .passed)
                         Spacer()
                     }
                     Hairline()
@@ -737,6 +751,21 @@ extension OverviewView {
                 }
             }
         }
+    }
+
+    /// A count that opens the Logs tab filtered to what it counted.
+    func counterButton(_ label: String, _ value: Int, _ delta: Int?, _ health: Health,
+                       jump: FirewallLogJump) -> some View {
+        Button {
+            store.wantsFirewallLog = jump
+        } label: {
+            deltaCounter(label, value, delta, health)
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(value) \(label.lowercased())")
+        .accessibilityHint("Opens the firewall log, filtered")
+        .accessibilityAddTraits(.isButton)
     }
 
     func deltaCounter(_ label: String, _ value: Int, _ delta: Int?, _ health: Health) -> some View {

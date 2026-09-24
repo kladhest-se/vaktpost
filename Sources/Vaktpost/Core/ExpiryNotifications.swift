@@ -277,41 +277,4 @@ final class ExpiryNotifier {
         let ours = pending.map(\.identifier).filter { $0.hasPrefix("cert.") }
         center.removePendingNotificationRequests(withIdentifiers: ours)
     }
-
-    /// Everything this app has pending, soonest first.
-    ///
-    /// The screen showing these is the only way to tell whether reconciling is
-    /// behaving. A count says something is scheduled; it cannot say whether
-    /// what is scheduled is still true — a renewed certificate leaving a stale
-    /// "expires in 7 days" behind looks identical to a correct one until you
-    /// read the date on it.
-    func pending() async -> [ScheduledNotification] {
-        guard let center else { return [] }
-        return await center.pendingNotificationRequests()
-            .filter { $0.identifier.hasPrefix("cert.") }
-            .map { request in
-                ScheduledNotification(
-                    id: request.identifier,
-                    title: request.content.title,
-                    body: request.content.body,
-                    fireAt: (request.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate()
-                )
-            }
-            .sorted { lhs, rhs in
-                switch (lhs.fireAt, rhs.fireAt) {
-                case let (l?, r?): return l < r
-                // A trigger that will not resolve to a date sorts last. It is
-                // the one worth looking at, and burying it at the top of a
-                // list of ordinary ones would be worse.
-                case (nil, _?): return false
-                case (_?, nil): return true
-                case (nil, nil): return lhs.id < rhs.id
-                }
-            }
-    }
-
-    /// What is currently scheduled, for the Settings screen to report.
-    func pendingCount() async -> Int {
-        await pending().count
-    }
 }
